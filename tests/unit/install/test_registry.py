@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -9,10 +10,12 @@ from agent_harness.install.registry import (
     BLOCK_START,
     agents_block,
     codex_command,
+    codex_file,
     codex_matcher,
     is_own,
     project_entries,
     registry,
+    settings_file,
     splice_top_level_key,
     with_agents_block,
     with_ignored,
@@ -106,6 +109,27 @@ def test_gives_each_hook_one_group_per_event_in_plan_order() -> None:
     assert [g.get("matcher") for g in codex["PreToolUse"]] == ["Bash", "Edit|apply_patch"]
     assert "matcher" not in claude["SessionStart"][0]
     assert json.dumps(claude).count('"timeout": 5') == 5
+
+
+def test_puts_the_project_entry_after_the_harness_entry_and_keeps_the_text() -> None:
+    plan = Plan(hooks=[hook("a", ("Stop",), None)])
+    own = {"hooks": [{"type": "command", "command": "bash x.sh"}]}
+    first = settings_file('{"hooks": {"Stop": [' + json.dumps(own) + "]}}\n", plan)
+
+    assert json.loads(first)["hooks"]["Stop"][-1] == own
+    assert settings_file(first, plan) == first
+
+
+def test_merges_the_codex_entries_into_the_file_the_project_holds(tmp_path: Path) -> None:
+    plan = Plan(hooks=[hook("a", ("Stop",), None)])
+    own = {"hooks": [{"type": "command", "command": "python3 own.py"}]}
+    current = json.dumps({"other": 1, "hooks": {"Stop": [own]}}, indent=2) + "\n"
+
+    merged = json.loads(codex_file(current, plan, tmp_path))
+    fresh = json.loads(codex_file(None, plan, tmp_path))
+
+    assert merged["other"] == 1
+    assert merged["hooks"]["Stop"] == [*fresh["hooks"]["Stop"], own]
 
 
 def test_lists_each_rule_and_skill_in_the_agents_block() -> None:

@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import sys
+import tomllib
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -208,6 +209,174 @@ def test_removes_the_files_and_entries_of_a_disabled_item(
     assert ah("check").returncode == 0
 
 
+PROJECT_ENTRY = {
+    "matcher": "Bash",
+    "hooks": [{"type": "command", "command": 'bash "$CLAUDE_PROJECT_DIR/.claude/hooks/own.sh"'}],
+}
+CODEX_PROJECT_ENTRY = {
+    "hooks": [{"type": "command", "command": 'python3 "$(git rev-parse --show-toplevel)/own.py"'}],
+    "matcher": "Bash",
+}
+OWN_ENTRIES = ((".claude/settings.json", PROJECT_ENTRY), (".codex/hooks.json", CODEX_PROJECT_ENTRY))
+
+
+def add_project_entries(repo: Path) -> None:
+    """Add a project entry last in PreToolUse and in Notification of both registries."""
+    for rel, own in OWN_ENTRIES:
+        data = read_json(repo / rel)
+        data["hooks"]["PreToolUse"].append(own)
+        data["hooks"]["Notification"] = [own]
+        (repo / rel).write_text(json.dumps(data, indent=2) + "\n")
+
+
+def test_keeps_a_project_entry_of_both_registries_across_installs(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    ah("install", "--project", FROM, str(package))
+    add_project_entries(repo)
+    edited = snapshot(repo)
+
+    checked = ah("check")
+    again = ah("install", "--project", FROM, str(package))
+
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+    assert again.stdout.splitlines()[-1].endswith("nothing changed"), again.stdout
+    assert snapshot(repo) == edited
+    claude = read_json(repo / ".claude/settings.json")["hooks"]
+    codex = read_json(repo / ".codex/hooks.json")["hooks"]
+    assert claude["PreToolUse"][-1] == PROJECT_ENTRY
+    assert claude["Notification"] == [PROJECT_ENTRY]
+    assert codex["PreToolUse"][-1] == CODEX_PROJECT_ENTRY
+    assert codex["Notification"] == [CODEX_PROJECT_ENTRY]
+
+
+def test_moves_a_project_entry_above_a_harness_entry_below_it(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    ah("install", "--project", FROM, str(package))
+    settings = repo / ".claude/settings.json"
+    data = read_json(settings)
+    data["hooks"]["PreToolUse"].insert(0, PROJECT_ENTRY)
+    settings.write_text(json.dumps(data, indent=2) + "\n")
+
+    checked = ah("check")
+    ah("install", "--project", FROM, str(package))
+
+    assert checked.returncode == 1
+    assert ".claude/settings.json differs" in checked.stdout.splitlines()
+    assert read_json(settings)["hooks"]["PreToolUse"][-1] == PROJECT_ENTRY
+    assert ah("check").returncode == 0
+
+
+def test_removes_a_disabled_harness_entry_and_keeps_the_project_entry(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    ah("install", "--project", FROM, str(package))
+    add_project_entries(repo)
+    (repo / ".agents/harness.toml").write_text('[harness]\ndisable = ["rm-guard"]\n')
+
+    stale = ah("check")
+    ah("install", "--project", FROM, str(package))
+
+    assert stale.returncode == 1
+    assert ".claude/settings.json differs" in stale.stdout.splitlines()
+    assert ".codex/hooks.json differs" in stale.stdout.splitlines()
+    for rel, own in OWN_ENTRIES:
+        hooks = read_json(repo / rel)["hooks"]
+        assert (rel, hooks["PreToolUse"]) == (rel, [own])
+        assert "rm_guard" not in (repo / rel).read_text()
+    assert ah("check").returncode == 0
+
+
+def test_names_an_edited_harness_entry_beside_a_project_entry(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    ah("install", "--project", FROM, str(package))
+    add_project_entries(repo)
+    settings = repo / ".claude/settings.json"
+    data = read_json(settings)
+    data["hooks"]["PreToolUse"][0]["hooks"][0]["timeout"] = 99
+    settings.write_text(json.dumps(data, indent=2) + "\n")
+
+    checked = ah("check")
+    ah("install", "--project", FROM, str(package))
+
+    found = [line for line in checked.stdout.splitlines() if "a project hook" not in line]
+    assert found[0] == ".claude/settings.json differs"
+    assert ".codex/hooks.json differs" not in found
+    pre = read_json(settings)["hooks"]["PreToolUse"]
+    assert pre[-1] == PROJECT_ENTRY
+    assert pre[0]["hooks"][0]["timeout"] == 5
+
+
+def write_project_githook(repo: Path) -> Path:
+    """A project manifest that `harness.manifests` names, with a pre-commit git hook."""
+    folder = repo / "tools" / "githooks"
+    (folder / "githooks").mkdir(parents=True)
+    (folder / "harness.toml").write_text(
+        '[[githook]]\nid = "own-pre-commit"\nsummary = "A check of the project"\n'
+        'name = "pre-commit"\nscript = "githooks/pre-commit"\n'
+    )
+    script = folder / "githooks/pre-commit"
+    script.write_text('#!/bin/sh\ntouch "$(git rev-parse --show-toplevel)/ran"\n')
+    script.chmod(0o755)
+    (repo / ".agents").mkdir()
+    (repo / ".agents/harness.toml").write_text(
+        '[harness]\nmanifests = ["tools/githooks/harness.toml"]\n'
+    )
+    return script
+
+
+IDENTITY = {
+    "GIT_AUTHOR_NAME": "t",
+    "GIT_AUTHOR_EMAIL": "t@example.com",
+    "GIT_COMMITTER_NAME": "t",
+    "GIT_COMMITTER_EMAIL": "t@example.com",
+}
+
+
+def test_runs_a_project_git_hook_of_a_project_manifest_through_the_dispatcher(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    script = write_project_githook(repo)
+
+    installed = ah("install", "--project", FROM, str(package))
+    again = ah("install", "--project", FROM, str(package))
+    checked = ah("check")
+    commit = subprocess.run(
+        ["git", "-C", str(repo), "commit", "--allow-empty", "-q", "-m", "x"],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, **IDENTITY},
+    )
+
+    assert installed.returncode == 0, installed.stderr
+    assert (repo / ".githooks/harness/pre-commit").read_bytes() == script.read_bytes()
+    assert (repo / ".githooks/pre-commit").read_bytes() == (
+        package / "src/agent_harness/install/githook-dispatch.sh"
+    ).read_bytes()
+    assert again.stdout.splitlines()[-1].endswith("nothing changed"), again.stdout
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+    assert commit.returncode == 0, commit.stderr
+    assert (repo / "ran").is_file()
+
+
+def test_refuses_a_hand_written_git_hook_where_the_dispatcher_goes(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    own = repo / ".githooks/pre-commit"
+    own.parent.mkdir()
+    own.write_text("#!/usr/bin/env bash\nexit 0\n")
+    own.chmod(0o755)
+
+    done = ah("install", "--project", FROM, str(package))
+
+    assert done.returncode == 1
+    assert ".githooks/pre-commit" in done.stderr
+    assert own.read_text() == "#!/usr/bin/env bash\nexit 0\n"
+    assert not (repo / ".claude/agent-harness").exists()
+
+
 def test_writes_a_starter_config_once_and_never_rewrites_it(
     repo: Path, package: Path, ah: Ah
 ) -> None:
@@ -218,6 +387,8 @@ def test_writes_a_starter_config_once_and_never_rewrites_it(
     ah("install", "--project", FROM, str(package))
 
     assert starter.startswith("# The project facts of agent-harness.")
+    assert tomllib.loads(starter) == {"harness": {}, "specs": {}, "deploy": {}}
+    assert '# [specs.kinds."docs/qa"]\n# kind = "qa"\n' in starter
     assert (repo / ".agents/harness.toml").read_text() == '[harness]\nbaseBranch = "trunk"\n'
 
 

@@ -237,3 +237,66 @@ def test_refuses_rows_that_skip_a_done_means_id(root: Path, projects: Path) -> N
     assert done.returncode == 2
     assert done.stderr == "ah spec audit: the Done means rows have no audit row: R1\n"
     assert saved(root) is None
+
+
+def with_qa_report(root: Path) -> None:
+    (root / ".agents" / "harness.toml").write_text(
+        '[harness]\nbaseBranch = "trunk"\n\n[specs]\nauditDir = "state"\n'
+        'dirs = ["docs/specs", "docs/qa"]\n\n[specs.kinds."docs/qa"]\nkind = "qa"\n',
+        encoding="utf-8",
+    )
+    (root / "docs" / "qa").mkdir()
+    (root / "docs" / "qa" / "r.md").write_text(
+        "# R\n\nDate: 2026-01-01\nStatus: untested\n", encoding="utf-8"
+    )
+
+
+def digest(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    env = {k: v for k, v in os.environ.items() if k != "AGENT_STATE_DIR"}
+    return subprocess.run(
+        [sys.executable, str(LAUNCHER), "spec", "audit", "digest", *args],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+
+def test_refuses_to_digest_a_named_qa_report(root: Path) -> None:
+    with_qa_report(root)
+
+    done = digest(root, "docs/qa/r.md")
+
+    assert done.returncode == 1
+    assert done.stderr.endswith("docs/qa/r.md is a QA report, which has no rows to audit\n")
+
+
+def test_leaves_a_qa_report_out_of_the_open_sweep(root: Path) -> None:
+    with_qa_report(root)
+
+    done = digest(root, "--open", "--json")
+
+    assert done.returncode == 0, done.stderr
+    assert [spec["stem"] for spec in json.loads(done.stdout)["specs"]] == [STEM]
+
+
+def test_leaves_a_qa_report_that_the_session_named_out_of_the_digest(
+    root: Path, projects: Path
+) -> None:
+    with_qa_report(root)
+    text = f"I wrote docs/qa/r.md and {SPEC}."
+    line = {
+        "type": "assistant",
+        "sessionId": SESSION,
+        "timestamp": "2026-01-02T10:00:00.000Z",
+        "message": {"role": "assistant", "content": [{"type": "text", "text": text}]},
+    }
+    transcript = projects / "slug" / f"{SESSION}.jsonl"
+    transcript.parent.mkdir(parents=True)
+    transcript.write_text(json.dumps(line) + "\n", encoding="utf-8")
+
+    done = digest(root, "--session", SESSION, "--json", "--projects-root", str(projects))
+
+    assert done.returncode == 0, done.stderr
+    assert [spec["stem"] for spec in json.loads(done.stdout)["specs"]] == [STEM]

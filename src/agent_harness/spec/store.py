@@ -135,6 +135,18 @@ def resolve_spec(arg: str, cwd: Path | None = None) -> Path | None:
     return None
 
 
+def qa_report(spec: Path, cwd: Path | None = None) -> bool:
+    """Whether `spec` sits in a `qa` folder of the checkout that holds it. A QA report has no
+    requirement rows, so the audit leaves it out."""
+    full = spec.resolve()
+    for root in checkout_roots(cwd):
+        if full.is_relative_to(root.resolve()):
+            rel = full.relative_to(root.resolve()).as_posix()
+            domain = layout.for_root(root).domain_at(rel)
+            return domain is not None and not domain.settles
+    return False
+
+
 def audit_path(stem: str, cwd: Path | None = None) -> Path:
     return state_dir(cwd) / "spec-audit" / f"{stem}.json"
 

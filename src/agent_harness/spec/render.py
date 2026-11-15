@@ -46,8 +46,9 @@ STATUS_VALUES = (
     "answered",
 )
 
-# The chip of these statuses reads as live. The others read as not final.
-LIVE_STATUSES = frozenset({"approved", "in-progress", "implemented"})
+# The chip of these statuses reads as live. The others read as not final. `tested` is a QA
+# report whose pass is done.
+LIVE_STATUSES = frozenset({"approved", "in-progress", "implemented", "tested"})
 
 # The JavaScript whitespace set (`\s` and `trim`) and its line terminators (what `.` stops at).
 _WS_CHARS = (
@@ -182,16 +183,10 @@ def _basename(path: str) -> str:
     return path.rstrip("/").rsplit("/", 1)[-1]
 
 
-def _domain_re(layout: Layout) -> re.Pattern[str]:
-    names = "|".join(re.escape(folder) for folder in layout.longest_first())
-    return re.compile(rf"(?:^|/)({names})/")
-
-
 def domain_of(source: str, layout: Layout) -> Domain:
     """The spec folder of `source`: the longest folder of the layout that holds it. A source
     outside every folder has no kind, so it fails."""
-    match = _domain_re(layout).search(_posix(source))
-    found = next((d for d in layout.domains if match and d.dir == match.group(1)), None)
+    found = layout.domain_at(source)
     if found is None:
         listed = ", ".join(f"{folder}/" for folder in layout.dirs)
         raise SpecError(f"{source}: not under {listed}, so it has no document kind")
@@ -201,7 +196,7 @@ def domain_of(source: str, layout: Layout) -> Domain:
 def dist_for(source: str, layout: Layout) -> str:
     """The page of `source`: `docs/specs/a.md` gives `docs/specs/dist/a.html`."""
     domain_of(source, layout)
-    inserted = _domain_re(layout).sub(lambda m: f"{m.group(0)}{layout.out}/", _posix(source), 1)
+    inserted = layout.folder_re().sub(lambda m: f"{m.group(0)}{layout.out}/", _posix(source), 1)
     return EXTENSION_RE.sub("", inserted, 1) + ".html"
 
 

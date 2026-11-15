@@ -3,7 +3,8 @@
     ah spec check
 
 `[specs] checks` picks the checks, and any finding exits 1. `archive`: a settled document in an
-active folder, or an unsettled one in the archive. `superseded`: a `superseded-by` path that does
+active folder, or an unsettled one in the archive. A `qa` folder has no archive, so `archive`
+leaves it out. `superseded`: a `superseded-by` path that does
 not resolve. `pointers`: a spec path in a file of `[specs] pointerFiles` that does not exist.
 `assets`: a file in `<folder>/assets/` whose name no document of the folder holds.
 
@@ -40,7 +41,7 @@ def status_word(root: Path, name: str) -> str | None:
 
 def archive_findings(root: Path, layout: Layout, docs: Docs) -> list[str]:
     found: list[str] = []
-    for folder in layout.domain_dirs:
+    for folder in layout.settling():
         archive = f"{folder}/{layout.archive}"
         for name in docs[folder]:
             status = status_word(root, name)

@@ -3,6 +3,7 @@
 Every key has a default, so a repository with no config file works. This module owns the
 defaults of `[harness]` and `[specs]`. An area module registers the defaults of its own section
 with `register_defaults` when it is imported, for example `register_defaults("env", {...})`.
+`agent_harness.comments` registers `harness.comments` the same way.
 
 A default can be a function of the repository root. `get` calls it with the root, so
 `harness.baseBranch` reads the origin HEAD branch of the repository it runs in.
@@ -31,6 +32,7 @@ AREAS = (
     "agent_harness.env",
     "agent_harness.deploy",
     "agent_harness.work",
+    "agent_harness.comments",
 )
 
 DEFAULT_DIRECTIVES = {
@@ -141,37 +143,6 @@ SECTION_DEFAULTS: dict[str, dict[str, Any]] = {
         "scratchCap": {"memoryMax": "8G", "cpuMax": "400%"},
         "envDrift": {"envs": ["production"], "stores": []},
         "lint": {"words": [], "allow": []},
-        # The comment budget of `ah comments` and the `comment-budget` hook. A file that the base
-        # branch does not hold is new: its blocks stop at `maxBlock` and its comment share at
-        # `maxShare` once it has `shareFloor` code lines. Every file stops at `longBlock`.
-        "comments": {
-            "maxBlock": 12,
-            "longBlock": 25,
-            "maxShare": 0.35,
-            "shareFloor": 60,
-            "minLines": 20,
-            "include": [
-                "**/*.ts",
-                "**/*.mts",
-                "**/*.cts",
-                "**/*.tsx",
-                "**/*.js",
-                "**/*.mjs",
-                "**/*.cjs",
-                "**/*.py",
-            ],
-            "exclude": [
-                "**/tests/**",
-                "**/*.test.*",
-                "**/test_*.py",
-                "**/*.d.ts",
-                "**/*.d.mts",
-                "**/node_modules/**",
-                "**/dist/**",
-                "docs/**",
-                ".claude/**",
-            ],
-        },
     },
     "specs": {
         "dirs": ["docs/specs", "docs/superpowers/plans"],

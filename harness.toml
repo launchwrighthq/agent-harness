@@ -673,6 +673,105 @@ command = "find . -not -name '.e?v' -o -print | xargs cat"
 expect = "deny"
 contains = "credential file"
 
+[[hook.fixture]]
+tool = "Bash"
+command = "jq '.[].name' file.json"
+expect = "silent"
+
+[[hook.fixture]]
+tool = "Bash"
+command = "echo ${p%%:*}"
+expect = "silent"
+
+[[hook.fixture]]
+tool = "Bash"
+command = "grep -rn x --include=*.json dir"
+expect = "silent"
+
+[[hook.fixture]]
+tool = "Bash"
+command = "grep -rn x --include=*.yml dir"
+expect = "silent"
+
+[[hook.fixture]]
+tool = "Bash"
+command = "grep -o '[^\"]*' file"
+expect = "silent"
+
+[[hook.fixture]]
+tool = "Bash"
+command = "ls apps/*/docs"
+expect = "silent"
+
+[[hook.fixture]]
+tool = "Bash"
+command = "find dir -not -path \"*/skills/*\""
+expect = "silent"
+
+[[hook.fixture]]
+tool = "Bash"
+command = "find . -name '**'"
+expect = "silent"
+
+[[hook.fixture]]
+tool = "Bash"
+command = "grep -n -A12 \"[harness.comments]\" harness.toml"
+expect = "silent"
+
+[[hook.fixture]]
+tool = "Bash"
+command = "wc -c $H/rules/*.md"
+expect = "silent"
+
+[[hook.fixture]]
+tool = "Bash"
+command = "python3 -c \"print(m['hooks'])\""
+expect = "silent"
+
+[[hook.fixture]]
+tool = "Bash"
+command = "grep -o 'hooks/[a-z-]*.[a-z]*' settings.json"
+expect = "silent"
+
+[[hook.fixture]]
+tool = "Bash"
+command = "echo $?"
+expect = "silent"
+
+[[hook.fixture]]
+tool = "Bash"
+command = "echo ${PIPESTATUS[0]}"
+expect = "silent"
+
+[[hook.fixture]]
+tool = "Bash"
+command = "gh api x --jq '.commits[].commit.message'"
+expect = "silent"
+
+[[hook.fixture]]
+tool = "Bash"
+command = "cat .en?"
+expect = "deny"
+contains = "credential file"
+
+[[hook.fixture]]
+tool = "Bash"
+command = "cat .env*"
+expect = "deny"
+contains = "credential file"
+
+[[hook.fixture]]
+tool = "Bash"
+command = "cat $(ls -a | grep env)"
+expect = "deny"
+contains = "credential file"
+
+[[hook.fixture]]
+tool = "Bash"
+command = "ls -a | xargs cat"
+expect = "deny"
+contains = "credential file"
+
 [[hook]]
 id = "env-drift"
 summary = "Say at session start when a local env file holds edits a secret store has not received"
@@ -839,8 +938,13 @@ file = "rules/instance-agnostic.md"
 
 [[rule]]
 id = "code-limits"
-summary = "Code limits: one concern per file, small functions, layer boundaries and the comment budget"
+summary = "Code limits: one concern per file, small functions, layer boundaries, the comment budget and error handling"
 file = "rules/code-limits.md"
+
+[[rule]]
+id = "core-principles"
+summary = "Core principles: truth over optimism, verify before done, ask before an uncertain change"
+file = "rules/core-principles.md"
 
 # Skills
 

@@ -186,7 +186,8 @@ def unrendered(root: Path, since: float | None) -> list[Path]:
     """Spec Markdown this working tree changed whose page is missing or older.
 
     `git status` instead of a walk, so a fresh checkout does not render every spec on its first
-    turn. `-uall`, because git folds a wholly untracked folder into one entry.
+    turn. `-uall`, because git folds a wholly untracked folder into one entry. A QA folder is
+    often gitignored, so `--ignored` lists its files too. An ignored file elsewhere is skipped.
     """
     where = layout.for_root(root)
     present = [folder for folder in where.dirs if (root / folder).is_dir()]
@@ -194,7 +195,7 @@ def unrendered(root: Path, since: float | None) -> list[Path]:
         return []
     try:
         listed = subprocess.run(
-            ["git", "status", "--porcelain", "-uall", "-z", "--", *present],
+            ["git", "status", "--porcelain", "-uall", "--ignored", "-z", "--", *present],
             cwd=root,
             capture_output=True,
             text=True,
@@ -211,6 +212,9 @@ def unrendered(root: Path, since: float | None) -> list[Path]:
         # path in a second record, which this skips by taking the name as written.
         name = entry[3:] if len(entry) > 3 else ""
         if not name.endswith(".md") or Path(name).name in NOT_A_SPEC:
+            continue
+        domain = where.domain_at(name)
+        if entry.startswith("!!") and (domain is None or domain.settles):
             continue
         source = root / name
         try:
