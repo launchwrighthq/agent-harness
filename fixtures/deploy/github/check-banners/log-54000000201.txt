@@ -1,0 +1,14 @@
+verify	UNKNOWN STEP	2026-11-12T13:01:38.0000000Z Current runner version: '2.300.0'
+verify	UNKNOWN STEP	2026-11-12T13:01:40.0000000Z Complete job name: verify
+verify	UNKNOWN STEP	2026-11-12T13:01:40.0000000Z ##[group]Run actions/checkout@v4
+verify	UNKNOWN STEP	2026-11-12T13:01:46.0000000Z ##[group]Run npm ci && npm run verify
+verify	UNKNOWN STEP	2026-11-12T13:04:16.0000000Z [150.00 s] 2 still running: test build
+verify	UNKNOWN STEP	2026-11-12T13:07:46.0000000Z [360.00 s] every step finished
+verify	UNKNOWN STEP	2026-11-12T13:07:46.0000000Z ===== format:check: passed in 10.00 s =====
+verify	UNKNOWN STEP	2026-11-12T13:07:46.0000000Z ===== typecheck: passed in 25.00 s =====
+verify	UNKNOWN STEP	2026-11-12T13:07:46.0000000Z ===== lint: passed in 13.00 s =====
+verify	UNKNOWN STEP	2026-11-12T13:07:46.0000000Z ===== test: passed in 200.00 s =====
+verify	UNKNOWN STEP	2026-11-12T13:07:46.0000000Z ===== build: passed in 1.20 s =====
+verify	UNKNOWN STEP	2026-11-12T13:07:46.0000000Z ===== docs:check: passed in 1.00 s =====
+verify	UNKNOWN STEP	2026-11-12T13:07:47.0000000Z Post job cleanup.
+verify	UNKNOWN STEP	2026-11-12T13:07:48.0000000Z Cleaning up orphan processes

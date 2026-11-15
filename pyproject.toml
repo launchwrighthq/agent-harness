@@ -1,0 +1,37 @@
+[project]
+name = "agent-harness"
+version = "0.1.1"
+description = "Agent skills, hooks, rules and an installer for any git repository"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent_harness"]
+
+# Ruff takes the closest config, so these rules apply to every file in this folder.
+# The package runs on Python 3.11, so the target is py311.
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S110", "S112", "BLE001", "SIM", "RUF", "PT", "TID251"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"time.sleep".msg = "A test never sleeps. Wait on a condition, or pass a clock to the code."
+"pytest.skip".msg = "A skip hides a test. Fix the cause or use a strict xfail with a SPEC-ID reason."
+"pytest.mark.skip".msg = "Fix the cause. An expected failure is pytest.mark.xfail(strict=True, reason=\"SPEC-ID: text\")."
+"pytest.mark.skipif".msg = "Fix the cause. An expected failure is pytest.mark.xfail(strict=True, reason=\"SPEC-ID: text\")."
+
+[tool.ruff.lint.per-file-ignores]
+"src/**" = ["PT", "TID251"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+mypy_path = "src"

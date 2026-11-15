@@ -1,0 +1,44 @@
+[
+  {
+    "attempt": 1,
+    "conclusion": "failure",
+    "createdAt": "2026-11-12T15:00:02Z",
+    "databaseId": 19000000103,
+    "displayTitle": "deploy production",
+    "event": "push",
+    "headBranch": "main",
+    "headSha": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+    "startedAt": "2026-11-12T15:00:05Z",
+    "status": "completed",
+    "updatedAt": "2026-11-12T15:06:45Z",
+    "workflowName": "deploy"
+  },
+  {
+    "attempt": 1,
+    "conclusion": "success",
+    "createdAt": "2026-11-12T11:00:01Z",
+    "databaseId": 19000000102,
+    "displayTitle": "deploy production",
+    "event": "push",
+    "headBranch": "main",
+    "headSha": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "startedAt": "2026-11-12T11:00:04Z",
+    "status": "completed",
+    "updatedAt": "2026-11-12T11:03:45Z",
+    "workflowName": "deploy"
+  },
+  {
+    "attempt": 1,
+    "conclusion": "success",
+    "createdAt": "2026-11-12T08:59:20Z",
+    "databaseId": 19000000101,
+    "displayTitle": "deploy production",
+    "event": "push",
+    "headBranch": "main",
+    "headSha": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+    "startedAt": "2026-11-12T09:00:05Z",
+    "status": "completed",
+    "updatedAt": "2026-11-12T09:11:45Z",
+    "workflowName": "deploy"
+  }
+]

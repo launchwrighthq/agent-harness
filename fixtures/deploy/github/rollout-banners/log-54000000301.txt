@@ -1,0 +1,10 @@
+deploy / rollout	UNKNOWN STEP	2026-11-07T10:00:02.0000000Z Current runner version: '2.300.0'
+deploy / rollout	UNKNOWN STEP	2026-11-07T10:01:00.0000000Z ##[group]Run deploy/rollout.sh
+deploy / rollout	UNKNOWN STEP	2026-11-07T10:01:10.0000000Z == step 1/2: build
+deploy / rollout	UNKNOWN STEP	2026-11-07T10:03:00.0000000Z xx node-2 answered late
+deploy / rollout	UNKNOWN STEP	2026-11-07T10:04:00.0000000Z == note: the release notes are ready
+deploy / rollout	UNKNOWN STEP	2026-11-07T10:04:30.0000000Z == step 2/2: deploy
+a wrapped line with no time
+deploy / rollout	UNKNOWN STEP	2026-11-07T10:10:50.0000000Z == rollout: production is on release r2
+deploy / rollout	UNKNOWN STEP	2026-11-07T10:11:00.0000000Z Post job cleanup.
+deploy / rollout	UNKNOWN STEP	2026-11-07T10:11:01.0000000Z Cleaning up orphan processes

@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Put the commit just made into its `<name>@users.noreply.github.com` form. It EDITS, never
+# refuses: a refusal costs the author a retry and removes nothing, and an agent committing from
+# a template would hit the same wall on every attempt.
+#
+# This hook is the NET, not the mechanism. `user.email` in the repository config is the
+# mechanism: git reads it when it writes the commit object, so it reaches every path. Measured:
+#
+#   git commit          committer from config   post-commit fires    amend works
+#   git commit --amend  committer from config   post-commit fires    amend works
+#   git cherry-pick     committer from config   post-commit fires    amend works
+#   git merge --no-ff   both from config        post-merge instead   amend fails
+#   git rebase          committer from config   nothing fires        n/a
+#
+# So this hook exists for the one case config cannot reach: an author supplied from somewhere
+# else, by `--author=` or by an old commit that a cherry-pick replays.
+#
+# There is no `post-merge` twin. `post-merge` runs while MERGE_HEAD is on disk, so
+# `git commit --amend` dies with "You are in the middle of a merge". A merge commit takes its
+# author and its committer from config, so it is already right. `git rebase` runs no per-commit
+# hook at all, so a gate that reads the history is the real check.
+set -euo pipefail
+
+# The amend below runs this hook again. Without the guard it would recurse.
+[ -n "${LW_IDENT_REWRITE:-}" ] && exit 0
+
+DOMAIN="users.noreply.github.com"
+
+an=$(git log -1 --format='%an')
+ae=$(git log -1 --format='%ae')
+cn=$(git log -1 --format='%cn')
+ce=$(git log -1 --format='%ce')
+
+# A name with an @ or whitespace cannot become an address. Leave it and say so, rather than
+# invent an identity nobody chose.
+case "$an$cn" in *@* | *[[:space:]]*)
+  echo "post-commit: the name '$an' or '$cn' cannot become a noreply address; identity left as is" >&2
+  exit 0
+  ;;
+esac
+
+want_a="${an}@${DOMAIN}"
+want_c="${cn}@${DOMAIN}"
+[ "$ae" = "$want_a" ] && [ "$ce" = "$want_c" ] && exit 0
+
+# NEVER rewrite a commit that is already published. After a `git pull` that fast-forwards, HEAD
+# is somebody else's commit, and amending it here would fork the history.
+[ -n "$(git branch -r --contains HEAD 2>/dev/null)" ] && exit 0
+
+echo "post-commit: identity -> ${an} <${want_a}>" >&2
+LW_IDENT_REWRITE=1 \
+  GIT_COMMITTER_NAME="$cn" GIT_COMMITTER_EMAIL="$want_c" \
+  git commit --amend --no-edit --no-verify --author="$an <$want_a>" --quiet

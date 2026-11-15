@@ -1,0 +1,6 @@
+{
+  "name": "agent-harness",
+  "version": "0.1.1",
+  "description": "Agent skills, hooks, rules and an installer for any git repository",
+  "private": true
+}

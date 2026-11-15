@@ -1,0 +1,21 @@
+#!/usr/bin/env python3
+"""The agent-harness launcher: python3 bin/ah <command> [args].
+
+ROOT is the folder above bin/. The same file runs in the source tree and in an installed copy
+(<project>/.claude/agent-harness/ or ~/.claude/agent-harness/), because the engine sits in
+ROOT/src in each of them.
+"""
+
+import sys
+from pathlib import Path
+
+# Any python3 can start this file, so the check runs before the engine imports tomllib.
+if sys.version_info < (3, 11):  # noqa: UP036
+    sys.exit(f"ah needs Python 3.11 or newer; this is Python {sys.version.split()[0]}")
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "src"))
+
+from agent_harness import cli  # noqa: E402
+
+sys.exit(cli.run(sys.argv[1:], own_root=ROOT))

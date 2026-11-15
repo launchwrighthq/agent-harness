@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Take every mark of agent authorship out of the message before it becomes a commit.
+#
+# Not two named trailers: `Co-Authored-By:`, `Claude-Session:`, an invented key, a
+# generated-with credit, a bare session link. The rules are in `strip_commit_trailers.py`
+# beside this file, so a history check that imports it applies the same ones.
+#
+# `ah install --project` installs it in `.githooks/`; `git config core.hooksPath .githooks` turns
+# it on. `git commit --no-verify` walks past it, so a gate that reads the history is the real check.
+set -euo pipefail
+
+msg_file="${1:-}"
+[ -n "$msg_file" ] && [ -f "$msg_file" ] || exit 0
+
+# Never blocks a commit. A missing python3 or a broken rule leaves the message unedited and says
+# so: a hook that can refuse every commit on this machine is a worse failure than one trailer.
+python3 "$(dirname "$0")/strip_commit_trailers.py" "$msg_file" ||
+  echo "commit-msg: strip_commit_trailers.py failed; the message is unedited" >&2

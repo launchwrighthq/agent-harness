@@ -1,0 +1,16 @@
+[
+  {
+    "attempt": 1,
+    "conclusion": "success",
+    "createdAt": "2026-11-12T13:00:45Z",
+    "databaseId": 19000000201,
+    "displayTitle": "fix(app): correct a label",
+    "event": "push",
+    "headBranch": "env/production",
+    "headSha": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+    "startedAt": "2026-11-12T13:00:45Z",
+    "status": "completed",
+    "updatedAt": "2026-11-12T13:20:02Z",
+    "workflowName": "deploy"
+  }
+]

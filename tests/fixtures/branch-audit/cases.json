@@ -1,0 +1,2906 @@
+{
+  "schema": 1,
+  "notes": [
+    "Each case builds its own scratch root $ROOT. The audited repository is $ROOT/repo on branch main. A worktree named N is at $ROOT/repo/.claude/worktrees/N.",
+    "Each `at` is hours relative to the moment the step runs, negative for the past, and -240 when it is absent. A git step runs with GIT_AUTHOR_DATE and GIT_COMMITTER_DATE set to it, so its commits and reflog entries carry it. A written file gets it as atime and mtime.",
+    "After init the runner writes `config` below, merged with each `config` step, to $ROOT/repo/.agents/harness.toml. The file stays untracked.",
+    "`ah branch-audit` runs with `--json --projects-root $ROOT/claude-projects`, then the args of the case, from `cwd` (a worktree name, else the main checkout). NO_COLOR is 1, and the global and system git config are /dev/null. The `env` of a case adds variables, $ROOT replaced.",
+    "`shell_in` names a worktree: bash starts there and runs the command from `cwd` in a subshell, so a parent process works inside that worktree. `text: true` runs without `--json`, and `expect.stdout` lists strings that the standard output holds.",
+    "`before_apply` is a shell command that the case runner gives `branches.main` as its `before_apply` function. It runs from the main checkout after the audit and before `--apply` runs anything, and stands in for a peer that writes while the plan waits.",
+    "`expect` holds `exit` (0 when absent), and per report key a value or a map of rows by name (worktrees, strays), ref (branches, remotes) or id (plan). A row given as null must be absent. A row matches in part: a null field is absent or null, an object whose keys start with $ is a matcher ($gte, $lte, $type), and any other value compares equal after $ROOT is replaced.",
+    "`names` lists the exact set of row names per section. `order` lists names that appear in that order. `after` states what exists once the run ends: `paths` under $ROOT, `refs` as <folder under $ROOT>:<full ref>, and `processes_alive` when each process of the setup still runs.",
+    "A transcript folder name is the real path of the worktree with each UTF-16 code unit outside A-Z, a-z and 0-9 replaced by '-'.",
+    "`mb` is bytes / 1048576, rounded half up to one decimal, over every file under the folder without following a symlink. `idle_hours` and `session_idle_hours` round the same way."
+  ],
+  "ops": {
+    "init": "{files?, at?}: git init -b main at $ROOT/repo, commit `files` (default {\"src/a.txt\": \"base\\n\"}) on main as \"base\", then write the config file",
+    "branch": "{name, from?, at?}: git branch <name> <from>, `from` defaulting to main",
+    "commit": "{branch, files?, many?, message?, at?}: in the checkout holding `branch` (else the main checkout after checking it out, back on main after), write each file, remove each whose value is null, stage exactly those paths in one git add and commit. `many` {prefix, count, text} adds `count` files named `prefix` plus the index zero-padded to the width of count-1, each holding `text`",
+    "land": "{branch, how, at?}: on main in the main checkout. merge: git merge --no-ff --no-edit <branch>. rebase: git cherry-pick <merge-base>..<branch>. cherry-pick: git cherry-pick <branch>. The branch ref never moves",
+    "worktree": "{name, branch? | new_branch + from? | detach, at?}: git worktree add $ROOT/repo/.claude/worktrees/<name> with <branch>, with -b <new_branch> <from> (from defaulting to main), or with --detach <detach>",
+    "detach": "{worktree, rev?, at?}: git checkout --detach <rev> inside the worktree, `rev` defaulting to HEAD",
+    "write": "{path, text, repeat?, in?, mode?, at?}: write `text` repeated `repeat` times (default 1) to `path` inside the checkout `in` (a worktree name, the main checkout when absent), creating folders, then chmod to octal `mode` when given",
+    "folder": "{name, files, at?}: create $ROOT/repo/.claude/worktrees/<name>/ holding `files`, a folder git does not know",
+    "remove_folder": "{worktree}: delete the worktree's folder from disk and leave git's entry, so git lists it prunable",
+    "lock": "{worktree, owner}: start a process that waits, from $ROOT, and git worktree lock --reason \"claude session <worktree> (pid P start T)\", T being field 22 of /proc/P/stat. owner live: that pid and T. reused: that pid and T+1. dead: the pid of a process that already exited, and T 1",
+    "hold": "{worktree, exe?}: start a process that waits, with its working directory in the worktree. With `exe`, copy the system's `sleep` program to that path inside the worktree and start the copy from $ROOT instead",
+    "transcript": "{worktree, at}: write session.jsonl, aged `at`, into $ROOT/claude-projects/<the worktree's transcript folder name>",
+    "remote": "{name?, push}: create a bare repository $ROOT/<name>.git (name defaulting to origin), add it as remote <name>, push the listed branches, fetch",
+    "git": "{args, in?, at?}: run git with `args`, $ROOT replaced, inside the checkout `in`",
+    "link": "{path, target, in?}: create a symbolic link at `path` inside the checkout `in`, pointing at `target` with $ROOT replaced",
+    "fifo": "{path}: create a named pipe at $ROOT/<path>",
+    "chmod": "{path, mode, in?}: chmod `path` inside the checkout `in` to octal `mode`. Cleanup restores every mode before it deletes $ROOT",
+    "use": "{fixture}: run the named fixture's steps here",
+    "config": "{values?, remove?}: merge `values` over the case file's `config`, section by section, and rewrite $ROOT/repo/.agents/harness.toml, or delete that file when `remove` is true"
+  },
+  "config": {
+    "harness": {
+      "baseBranch": "main",
+      "landCommand": "true"
+    },
+    "specs": {
+      "dirs": [
+        "docs/specs",
+        "docs/plans"
+      ]
+    },
+    "branches": {
+      "remoteBase": "origin/main",
+      "protect": [
+        "main",
+        "master",
+        "develop",
+        "env/production",
+        "env/staging"
+      ],
+      "worktreeRoot": ".claude/worktrees",
+      "rebuildable": [
+        "node_modules",
+        ".venv",
+        "__pycache__"
+      ]
+    }
+  },
+  "fixtures": {
+    "classic": [
+      {
+        "op": "init"
+      },
+      {
+        "op": "branch",
+        "name": "rebased"
+      },
+      {
+        "op": "commit",
+        "branch": "rebased",
+        "files": {
+          "src/a.txt": "one\ntwo\n"
+        },
+        "message": "rebased: both lines at once"
+      },
+      {
+        "op": "commit",
+        "branch": "main",
+        "files": {
+          "src/a.txt": "one\n"
+        },
+        "message": "main: line one"
+      },
+      {
+        "op": "commit",
+        "branch": "main",
+        "files": {
+          "src/a.txt": "one\ntwo\n"
+        },
+        "message": "main: line two"
+      },
+      {
+        "op": "commit",
+        "branch": "main",
+        "files": {
+          "src/leftover.txt": "a committed line\n"
+        },
+        "message": "main: a file the branch never had"
+      },
+      {
+        "op": "branch",
+        "name": "draft",
+        "from": "main~2"
+      },
+      {
+        "op": "commit",
+        "branch": "draft",
+        "files": {
+          "docs/specs/x.md": "# X\nDate: 2026-01-01\nStatus: draft\n\nbody\n"
+        },
+        "message": "the draft"
+      },
+      {
+        "op": "commit",
+        "branch": "main",
+        "files": {
+          "docs/specs/archive/x.md": "# X\nDate: 2026-01-01\nStatus: implemented\n\nbody\n"
+        },
+        "message": "archive it"
+      },
+      {
+        "op": "branch",
+        "name": "real"
+      },
+      {
+        "op": "commit",
+        "branch": "real",
+        "files": {
+          "src/b.txt": "new\n"
+        },
+        "message": "a real feature"
+      },
+      {
+        "op": "branch",
+        "name": "env/production"
+      },
+      {
+        "op": "branch",
+        "name": "ancestor"
+      },
+      {
+        "op": "worktree",
+        "name": "wt-rebased",
+        "branch": "rebased"
+      },
+      {
+        "op": "worktree",
+        "name": "wt-real",
+        "branch": "real"
+      }
+    ],
+    "one": [
+      {
+        "op": "init",
+        "files": {
+          "src/a.txt": "base\n",
+          ".gitignore": "data/\n*.log\n.env*\n!.env.example\nnode_modules/\n.claude/worktrees/\n",
+          "tools/cases.txt": "cases A\n"
+        }
+      },
+      {
+        "op": "worktree",
+        "name": "w1",
+        "new_branch": "feat"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "a branch landed by rebase is absorbed, and git's own ancestry is the only risk none",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "classic"
+        }
+      ],
+      "args": [],
+      "expect": {
+        "names": {
+          "worktrees": [
+            "wt-real",
+            "wt-rebased"
+          ],
+          "branches": [
+            "ancestor",
+            "draft",
+            "env/production",
+            "real",
+            "rebased"
+          ]
+        },
+        "branches": {
+          "rebased": {
+            "verdict": "absorbed",
+            "risk": "low",
+            "agrees": true,
+            "worktree": "wt-rebased"
+          },
+          "draft": {
+            "verdict": "absorbed",
+            "risk": "low",
+            "agrees": true
+          },
+          "real": {
+            "verdict": "unmerged",
+            "risk": "high",
+            "agrees": true,
+            "worktree": "wt-real"
+          },
+          "ancestor": {
+            "verdict": "merged",
+            "risk": "none",
+            "agrees": true,
+            "protected": false,
+            "worktree": null
+          },
+          "env/production": {
+            "verdict": "merged",
+            "risk": "high",
+            "protected": true
+          }
+        },
+        "worktrees": {
+          "wt-rebased": {
+            "verdict": "absorbed",
+            "risk": "low",
+            "branch": "rebased",
+            "lock": "none",
+            "caller": false
+          },
+          "wt-real": {
+            "verdict": "unmerged",
+            "risk": "high"
+          }
+        },
+        "plan": {
+          "branch:ancestor": {
+            "kind": "branch_delete",
+            "argv": [
+              "git",
+              "branch",
+              "-d",
+              "ancestor"
+            ],
+            "risk": "none",
+            "runnable": true
+          },
+          "branch:rebased": {
+            "kind": "branch_delete",
+            "argv": [
+              "git",
+              "branch",
+              "-D",
+              "rebased"
+            ],
+            "risk": "low"
+          },
+          "remove:wt-rebased": {
+            "kind": "worktree_remove",
+            "argv": [
+              "git",
+              "worktree",
+              "remove",
+              "$ROOT/repo/.claude/worktrees/wt-rebased"
+            ],
+            "risk": "low",
+            "runnable": true
+          },
+          "branch:env/production": null,
+          "branch:real": null,
+          "remove:wt-real": null
+        }
+      }
+    },
+    {
+      "name": "the protected list is read from the command line over the config",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "classic"
+        }
+      ],
+      "args": [
+        "--protect",
+        "nothing"
+      ],
+      "expect": {
+        "branches": {
+          "env/production": {
+            "protected": false,
+            "verdict": "merged",
+            "risk": "none"
+          }
+        },
+        "plan": {
+          "branch:env/production": {
+            "risk": "none"
+          }
+        }
+      }
+    },
+    {
+      "name": "the protected list is read from the config",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "classic"
+        },
+        {
+          "op": "config",
+          "values": {
+            "branches": {
+              "protect": [
+                "main",
+                "ancestor"
+              ]
+            }
+          }
+        }
+      ],
+      "args": [],
+      "expect": {
+        "branches": {
+          "env/production": {
+            "protected": false,
+            "risk": "none"
+          },
+          "ancestor": {
+            "protected": true,
+            "risk": "high"
+          }
+        },
+        "plan": {
+          "branch:ancestor": null
+        }
+      }
+    },
+    {
+      "name": "a draft spec the base archived is absorbed only while its folder is a spec root",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "classic"
+        },
+        {
+          "op": "config",
+          "values": {
+            "specs": {
+              "dirs": [
+                "docs/plans"
+              ]
+            }
+          }
+        }
+      ],
+      "args": [],
+      "expect": {
+        "branches": {
+          "draft": {
+            "verdict": "unmerged",
+            "risk": "high"
+          },
+          "rebased": {
+            "verdict": "absorbed"
+          }
+        }
+      }
+    },
+    {
+      "name": "a loose copy of a committed file is a stray, and the worktree is stalled at risk medium",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "classic"
+        },
+        {
+          "op": "write",
+          "in": "wt-rebased",
+          "path": "src/leftover.txt",
+          "text": "a committed line\n"
+        }
+      ],
+      "args": [],
+      "expect": {
+        "worktrees": {
+          "wt-rebased": {
+            "verdict": "stalled",
+            "risk": "medium",
+            "files": {
+              "src/leftover.txt": {
+                "state": "stray"
+              }
+            }
+          }
+        },
+        "plan": {
+          "remove:wt-rebased": {
+            "argv": [
+              "git",
+              "worktree",
+              "remove",
+              "--force",
+              "$ROOT/repo/.claude/worktrees/wt-rebased"
+            ],
+            "risk": "medium"
+          }
+        }
+      }
+    },
+    {
+      "name": "a status line keeps its leading column, so the first path is not shifted",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "classic"
+        },
+        {
+          "op": "write",
+          "in": "wt-real",
+          "path": "src/a.txt",
+          "text": "edited in the worktree\n"
+        }
+      ],
+      "args": [],
+      "expect": {
+        "worktrees": {
+          "wt-real": {
+            "verdict": "uncommitted",
+            "risk": "high",
+            "files": {
+              "src/a.txt": {
+                "state": "tracked_change"
+              },
+              "rc/a.txt": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "content that exists nowhere else is unsaved, and its worktree is never offered",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "classic"
+        },
+        {
+          "op": "write",
+          "in": "wt-real",
+          "path": "src/only-here.txt",
+          "text": "nowhere else\n"
+        }
+      ],
+      "args": [],
+      "expect": {
+        "worktrees": {
+          "wt-real": {
+            "verdict": "uncommitted",
+            "files": {
+              "src/only-here.txt": {
+                "state": "unsaved"
+              }
+            }
+          }
+        },
+        "plan": {
+          "remove:wt-real": null
+        }
+      }
+    },
+    {
+      "name": "a file inside an untracked folder is read, so nothing is judged unread",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "classic"
+        },
+        {
+          "op": "write",
+          "in": "wt-rebased",
+          "path": "buried/deep/note.txt",
+          "text": "the only copy\n"
+        }
+      ],
+      "args": [],
+      "expect": {
+        "worktrees": {
+          "wt-rebased": {
+            "verdict": "uncommitted",
+            "files": {
+              "buried/deep/note.txt": {
+                "state": "unsaved"
+              }
+            }
+          }
+        },
+        "plan": {
+          "remove:wt-rebased": null,
+          "branch:rebased": null
+        }
+      }
+    },
+    {
+      "name": "a branch landed by merge, by rebase and by cherry-pick",
+      "setup": [
+        {
+          "op": "init"
+        },
+        {
+          "op": "branch",
+          "name": "by-merge"
+        },
+        {
+          "op": "commit",
+          "branch": "by-merge",
+          "files": {
+            "src/m.txt": "m\n"
+          }
+        },
+        {
+          "op": "branch",
+          "name": "by-rebase"
+        },
+        {
+          "op": "commit",
+          "branch": "by-rebase",
+          "files": {
+            "src/r1.txt": "r1\n"
+          }
+        },
+        {
+          "op": "commit",
+          "branch": "by-rebase",
+          "files": {
+            "src/r2.txt": "r2\n"
+          }
+        },
+        {
+          "op": "branch",
+          "name": "by-pick"
+        },
+        {
+          "op": "commit",
+          "branch": "by-pick",
+          "files": {
+            "src/p.txt": "p\n"
+          }
+        },
+        {
+          "op": "commit",
+          "branch": "main",
+          "files": {
+            "src/main.txt": "main moved\n"
+          }
+        },
+        {
+          "op": "land",
+          "branch": "by-merge",
+          "how": "merge"
+        },
+        {
+          "op": "land",
+          "branch": "by-rebase",
+          "how": "rebase"
+        },
+        {
+          "op": "land",
+          "branch": "by-pick",
+          "how": "cherry-pick"
+        }
+      ],
+      "args": [],
+      "expect": {
+        "base": {
+          "name": "main",
+          "remote": "origin/main",
+          "ahead": null,
+          "behind": null
+        },
+        "branches": {
+          "by-merge": {
+            "verdict": "merged",
+            "risk": "none"
+          },
+          "by-rebase": {
+            "verdict": "absorbed",
+            "risk": "low",
+            "agrees": true
+          },
+          "by-pick": {
+            "verdict": "absorbed",
+            "risk": "low",
+            "agrees": true
+          }
+        }
+      }
+    },
+    {
+      "name": "a process working inside a worktree keeps it in use",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "hold",
+          "worktree": "w1"
+        }
+      ],
+      "args": [],
+      "expect": {
+        "worktrees": {
+          "w1": {
+            "verdict": "in_use",
+            "risk": "high",
+            "lock": "none"
+          }
+        },
+        "branches": {
+          "feat": {
+            "verdict": "merged",
+            "worktree": "w1"
+          }
+        },
+        "plan": {
+          "remove:w1": null,
+          "branch:feat": null
+        }
+      }
+    },
+    {
+      "name": "a lock whose owner is alive keeps the worktree in use",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "lock",
+          "worktree": "w1",
+          "owner": "live"
+        }
+      ],
+      "args": [],
+      "expect": {
+        "worktrees": {
+          "w1": {
+            "verdict": "in_use",
+            "risk": "high",
+            "lock": "live",
+            "session_idle_hours": null
+          }
+        },
+        "plan": {
+          "remove:w1": null,
+          "unlock:w1": null
+        }
+      }
+    },
+    {
+      "name": "a lock naming a live pid with another start time is a reused pid, and dead",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "lock",
+          "worktree": "w1",
+          "owner": "reused"
+        }
+      ],
+      "args": [],
+      "expect": {
+        "worktrees": {
+          "w1": {
+            "verdict": "merged",
+            "lock": "dead",
+            "risk": "low"
+          }
+        },
+        "plan": {
+          "unlock:w1": {
+            "kind": "worktree_unlock",
+            "argv": [
+              "git",
+              "worktree",
+              "unlock",
+              "$ROOT/repo/.claude/worktrees/w1"
+            ],
+            "risk": "low",
+            "runnable": true
+          },
+          "remove:w1": {
+            "risk": "low"
+          }
+        }
+      }
+    },
+    {
+      "name": "a dead lock is unlocked before its worktree is removed",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "lock",
+          "worktree": "w1",
+          "owner": "dead"
+        }
+      ],
+      "args": [
+        "--apply",
+        "--only",
+        "unlock:w1,remove:w1"
+      ],
+      "expect": {
+        "worktrees": {
+          "w1": {
+            "verdict": "merged",
+            "lock": "dead"
+          }
+        },
+        "after": {
+          "paths": {
+            "gone": [
+              "repo/.claude/worktrees/w1"
+            ]
+          },
+          "refs": {
+            "exist": [
+              "repo:refs/heads/feat"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "a live lock whose session is idle past the limit is a stale session, and no apply stops it",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "lock",
+          "worktree": "w1",
+          "owner": "live"
+        },
+        {
+          "op": "transcript",
+          "worktree": "w1",
+          "at": -72
+        }
+      ],
+      "args": [
+        "--apply"
+      ],
+      "expect": {
+        "worktrees": {
+          "w1": {
+            "verdict": "stale_session",
+            "lock": "stale_session",
+            "risk": "high",
+            "session_idle_hours": {
+              "$gte": 71
+            }
+          }
+        },
+        "plan": {
+          "remove:w1": null,
+          "unlock:w1": null
+        },
+        "after": {
+          "paths": {
+            "exist": [
+              "repo/.claude/worktrees/w1"
+            ]
+          },
+          "processes_alive": true
+        }
+      }
+    },
+    {
+      "name": "a live lock whose session wrote an hour ago stays in use",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "lock",
+          "worktree": "w1",
+          "owner": "live"
+        },
+        {
+          "op": "transcript",
+          "worktree": "w1",
+          "at": -1
+        }
+      ],
+      "args": [
+        "--session-idle-days",
+        "2"
+      ],
+      "expect": {
+        "worktrees": {
+          "w1": {
+            "verdict": "in_use",
+            "lock": "live",
+            "session_idle_hours": {
+              "$lte": 2
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "a merged worktree holding unique ignored data holds data, and no apply removes it",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "write",
+          "in": "w1",
+          "path": "data/run.bin",
+          "text": "0123456789abcdef",
+          "repeat": 131072
+        }
+      ],
+      "args": [
+        "--apply"
+      ],
+      "expect": {
+        "worktrees": {
+          "w1": {
+            "verdict": "holds_data",
+            "risk": "high",
+            "mb": {
+              "$gte": 2
+            },
+            "files": {
+              "data/": {
+                "state": "data",
+                "mb": 2
+              }
+            }
+          }
+        },
+        "plan": {
+          "remove:w1": null,
+          "branch:feat": null
+        },
+        "after": {
+          "paths": {
+            "exist": [
+              "repo/.claude/worktrees/w1/data/run.bin"
+            ]
+          },
+          "refs": {
+            "exist": [
+              "repo:refs/heads/feat"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "ignored bytes the main checkout holds at the same path are a copy, and the worktree is stalled at risk medium",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "write",
+          "path": "data/run.bin",
+          "text": "0123456789abcdef",
+          "repeat": 131072
+        },
+        {
+          "op": "write",
+          "in": "w1",
+          "path": "data/run.bin",
+          "text": "0123456789abcdef",
+          "repeat": 131072
+        }
+      ],
+      "args": [
+        "--apply",
+        "--only",
+        "remove:w1,branch:feat"
+      ],
+      "expect": {
+        "worktrees": {
+          "w1": {
+            "verdict": "stalled",
+            "risk": "medium",
+            "files": {
+              "data/": {
+                "state": "copy"
+              }
+            }
+          }
+        },
+        "plan": {
+          "remove:w1": {
+            "argv": [
+              "git",
+              "worktree",
+              "remove",
+              "$ROOT/repo/.claude/worktrees/w1"
+            ],
+            "risk": "medium",
+            "mb": {
+              "$gte": 2
+            }
+          },
+          "branch:feat": {
+            "risk": "none"
+          }
+        },
+        "after": {
+          "paths": {
+            "gone": [
+              "repo/.claude/worktrees/w1"
+            ],
+            "exist": [
+              "repo/data/run.bin"
+            ]
+          },
+          "refs": {
+            "gone": [
+              "repo:refs/heads/feat"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "a rebuildable folder is cache, lifts no risk, and counts toward the size",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "write",
+          "in": "w1",
+          "path": "node_modules/x/index.js",
+          "text": "0123456789abcdef",
+          "repeat": 131072
+        }
+      ],
+      "args": [],
+      "expect": {
+        "worktrees": {
+          "w1": {
+            "verdict": "merged",
+            "risk": "none",
+            "mb": {
+              "$gte": 2
+            },
+            "files": {
+              "node_modules/": {
+                "state": "cache",
+                "mb": 2
+              }
+            }
+          }
+        },
+        "plan": {
+          "remove:w1": {
+            "risk": "none",
+            "mb": {
+              "$gte": 2
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "a credential-shaped file is never opened and counts as data",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "write",
+          "path": ".env.local",
+          "text": "A=1\n",
+          "mode": "000"
+        },
+        {
+          "op": "write",
+          "in": "w1",
+          "path": ".env.local",
+          "text": "A=1\n",
+          "mode": "000"
+        },
+        {
+          "op": "write",
+          "in": "w1",
+          "path": "sessions/acct.json",
+          "text": "{}\n",
+          "mode": "000"
+        }
+      ],
+      "args": [],
+      "expect": {
+        "worktrees": {
+          "w1": {
+            "verdict": "holds_data",
+            "risk": "high",
+            "files": {
+              ".env.local": {
+                "state": "credential"
+              },
+              "sessions/acct.json": {
+                "state": "credential"
+              }
+            }
+          }
+        },
+        "plan": {
+          "remove:w1": null
+        }
+      }
+    },
+    {
+      "name": "a folder under the worktree root that git does not list is a stray folder, printed and never removed",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "folder",
+          "name": "scratch-run",
+          "files": {
+            "results/run.txt": "numbers\n"
+          }
+        }
+      ],
+      "args": [
+        "--apply",
+        "--only",
+        "stray:scratch-run"
+      ],
+      "expect": {
+        "names": {
+          "worktrees": [
+            "w1"
+          ],
+          "strays": [
+            "scratch-run"
+          ]
+        },
+        "strays": {
+          "scratch-run": {
+            "path": "$ROOT/repo/.claude/worktrees/scratch-run",
+            "owner": {
+              "$type": "string"
+            },
+            "idle_hours": {
+              "$gte": 239
+            },
+            "mb": 0
+          }
+        },
+        "plan": {
+          "stray:scratch-run": {
+            "kind": "stray_remove",
+            "argv": [
+              "rm",
+              "-rf",
+              "$ROOT/repo/.claude/worktrees/scratch-run"
+            ],
+            "risk": "high",
+            "runnable": false
+          }
+        },
+        "after": {
+          "paths": {
+            "exist": [
+              "repo/.claude/worktrees/scratch-run/results/run.txt"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "a worktree whose folder is gone is pruned at risk none, and its branch goes with it",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "worktree",
+          "name": "w2",
+          "new_branch": "gone-br"
+        },
+        {
+          "op": "remove_folder",
+          "worktree": "w2"
+        }
+      ],
+      "args": [
+        "--apply"
+      ],
+      "expect": {
+        "names": {
+          "worktrees": [
+            "w1"
+          ]
+        },
+        "plan": {
+          "prune": {
+            "kind": "worktree_prune",
+            "subject": "w2",
+            "argv": [
+              "git",
+              "worktree",
+              "prune"
+            ],
+            "risk": "none"
+          },
+          "branch:gone-br": {
+            "risk": "none"
+          }
+        },
+        "after": {
+          "paths": {
+            "gone": [
+              "repo/.git/worktrees/w2"
+            ]
+          },
+          "refs": {
+            "gone": [
+              "repo:refs/heads/gone-br"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "run from the main checkout, every worktree is offered",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "worktree",
+          "name": "w2",
+          "new_branch": "feat2"
+        }
+      ],
+      "args": [],
+      "expect": {
+        "names": {
+          "worktrees": [
+            "w1",
+            "w2"
+          ],
+          "branches": [
+            "feat",
+            "feat2"
+          ]
+        },
+        "worktrees": {
+          "w1": {
+            "caller": false,
+            "verdict": "merged"
+          },
+          "w2": {
+            "caller": false
+          }
+        },
+        "plan": {
+          "remove:w1": {
+            "risk": "none"
+          },
+          "remove:w2": {
+            "risk": "none"
+          }
+        }
+      }
+    },
+    {
+      "name": "run from inside a worktree, the same set is audited from the main checkout, and the caller's worktree is never offered",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "worktree",
+          "name": "w2",
+          "new_branch": "feat2"
+        },
+        {
+          "op": "config",
+          "values": {
+            "branches": {
+              "protect": [
+                "main",
+                "keep"
+              ]
+            }
+          }
+        },
+        {
+          "op": "branch",
+          "name": "keep"
+        },
+        {
+          "op": "write",
+          "path": "data/run.bin",
+          "text": "the main checkout's bytes\n"
+        },
+        {
+          "op": "write",
+          "in": "w2",
+          "path": "data/run.bin",
+          "text": "the main checkout's bytes\n"
+        },
+        {
+          "op": "folder",
+          "name": "junk",
+          "files": {
+            "x.txt": "x\n"
+          }
+        }
+      ],
+      "cwd": "w1",
+      "args": [],
+      "expect": {
+        "names": {
+          "worktrees": [
+            "w1",
+            "w2"
+          ],
+          "branches": [
+            "feat",
+            "feat2",
+            "keep"
+          ],
+          "strays": [
+            "junk"
+          ]
+        },
+        "worktrees": {
+          "w1": {
+            "caller": true,
+            "verdict": "merged",
+            "path": "$ROOT/repo/.claude/worktrees/w1"
+          },
+          "w2": {
+            "caller": false,
+            "verdict": "stalled",
+            "files": {
+              "data/": {
+                "state": "copy"
+              }
+            }
+          }
+        },
+        "branches": {
+          "keep": {
+            "protected": true
+          }
+        },
+        "plan": {
+          "remove:w1": null,
+          "branch:feat": null,
+          "remove:w2": {
+            "risk": "medium"
+          },
+          "branch:keep": null
+        }
+      }
+    },
+    {
+      "name": "a process beside the script in the caller's own worktree, as in a pipeline, does not make it in use",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "hold",
+          "worktree": "w1"
+        }
+      ],
+      "cwd": "w1",
+      "args": [],
+      "expect": {
+        "worktrees": {
+          "w1": {
+            "caller": true,
+            "verdict": "merged",
+            "risk": "high"
+          }
+        },
+        "plan": {
+          "remove:w1": null
+        }
+      }
+    },
+    {
+      "name": "a detached worktree whose commit is in the base is merged",
+      "setup": [
+        {
+          "op": "init"
+        },
+        {
+          "op": "worktree",
+          "name": "probe",
+          "detach": "main"
+        },
+        {
+          "op": "commit",
+          "branch": "main",
+          "files": {
+            "src/later.txt": "later\n"
+          }
+        }
+      ],
+      "args": [],
+      "expect": {
+        "worktrees": {
+          "probe": {
+            "branch": null,
+            "verdict": "merged",
+            "risk": "none",
+            "head": {
+              "$type": "string"
+            }
+          }
+        },
+        "plan": {
+          "remove:probe": {
+            "risk": "none",
+            "runnable": true
+          }
+        }
+      }
+    },
+    {
+      "name": "a worktree detached onto a commit the base lacks is unmerged",
+      "setup": [
+        {
+          "op": "init"
+        },
+        {
+          "op": "branch",
+          "name": "side"
+        },
+        {
+          "op": "commit",
+          "branch": "side",
+          "files": {
+            "src/side.txt": "side\n"
+          }
+        },
+        {
+          "op": "worktree",
+          "name": "probe",
+          "detach": "side"
+        }
+      ],
+      "args": [],
+      "expect": {
+        "worktrees": {
+          "probe": {
+            "branch": null,
+            "verdict": "unmerged",
+            "risk": "high"
+          }
+        }
+      }
+    },
+    {
+      "name": "a branch created an hour ago at the base tip is in progress, and an old one is merged",
+      "setup": [
+        {
+          "op": "init"
+        },
+        {
+          "op": "branch",
+          "name": "old"
+        },
+        {
+          "op": "branch",
+          "name": "fresh",
+          "at": -1
+        }
+      ],
+      "args": [],
+      "expect": {
+        "branches": {
+          "fresh": {
+            "verdict": "in_progress",
+            "risk": "high"
+          },
+          "old": {
+            "verdict": "merged",
+            "risk": "none"
+          }
+        },
+        "plan": {
+          "branch:fresh": null,
+          "branch:old": {
+            "risk": "none"
+          }
+        }
+      }
+    },
+    {
+      "name": "a worktree created an hour ago is in progress",
+      "setup": [
+        {
+          "op": "init"
+        },
+        {
+          "op": "worktree",
+          "name": "w1",
+          "new_branch": "feat",
+          "at": -1
+        }
+      ],
+      "args": [],
+      "expect": {
+        "worktrees": {
+          "w1": {
+            "verdict": "in_progress",
+            "risk": "high",
+            "idle_hours": {
+              "$lte": 2
+            }
+          }
+        },
+        "branches": {
+          "feat": {
+            "verdict": "in_progress"
+          }
+        },
+        "plan": {
+          "remove:w1": null
+        }
+      }
+    },
+    {
+      "name": "an unsaved file whose path the base committed later carries the base_newer hint",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "write",
+          "in": "w1",
+          "path": "notes/plan.md",
+          "text": "mine\n",
+          "at": -100
+        },
+        {
+          "op": "write",
+          "in": "w1",
+          "path": "notes/other.md",
+          "text": "only mine\n",
+          "at": -100
+        },
+        {
+          "op": "commit",
+          "branch": "main",
+          "files": {
+            "notes/plan.md": "theirs\n"
+          },
+          "at": -50
+        }
+      ],
+      "args": [],
+      "expect": {
+        "worktrees": {
+          "w1": {
+            "verdict": "uncommitted",
+            "files": {
+              "notes/plan.md": {
+                "state": "unsaved",
+                "hint": "base_newer"
+              },
+              "notes/other.md": {
+                "state": "unsaved",
+                "hint": null
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "apply only runs the named rows up to medium, and never a high one",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "branch",
+          "name": "picked"
+        },
+        {
+          "op": "commit",
+          "branch": "picked",
+          "files": {
+            "src/p.txt": "p\n"
+          }
+        },
+        {
+          "op": "commit",
+          "branch": "main",
+          "files": {
+            "src/main.txt": "main moved\n"
+          }
+        },
+        {
+          "op": "land",
+          "branch": "picked",
+          "how": "cherry-pick"
+        },
+        {
+          "op": "worktree",
+          "name": "w2",
+          "new_branch": "feat2"
+        },
+        {
+          "op": "folder",
+          "name": "junk",
+          "files": {
+            "x.txt": "x\n"
+          }
+        }
+      ],
+      "args": [
+        "--apply",
+        "--only",
+        "remove:w1,branch:picked,stray:junk"
+      ],
+      "expect": {
+        "branches": {
+          "picked": {
+            "verdict": "absorbed",
+            "risk": "low"
+          }
+        },
+        "plan": {
+          "remove:w1": {
+            "risk": "none"
+          },
+          "remove:w2": {
+            "risk": "none"
+          },
+          "branch:picked": {
+            "risk": "low"
+          },
+          "stray:junk": {
+            "risk": "high",
+            "runnable": false
+          }
+        },
+        "after": {
+          "paths": {
+            "gone": [
+              "repo/.claude/worktrees/w1"
+            ],
+            "exist": [
+              "repo/.claude/worktrees/w2",
+              "repo/.claude/worktrees/junk/x.txt"
+            ]
+          },
+          "refs": {
+            "gone": [
+              "repo:refs/heads/picked"
+            ],
+            "exist": [
+              "repo:refs/heads/feat",
+              "repo:refs/heads/feat2"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "apply only naming an id the plan lacks runs nothing and fails",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        }
+      ],
+      "args": [
+        "--apply",
+        "--only",
+        "remove:w1,remove:nope"
+      ],
+      "expect": {
+        "exit": 1,
+        "plan": {
+          "remove:w1": {
+            "risk": "none"
+          }
+        },
+        "after": {
+          "paths": {
+            "exist": [
+              "repo/.claude/worktrees/w1"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "a remote branch is printed and never deleted, nothing is pushed, and the remote's HEAD is no row",
+      "setup": [
+        {
+          "op": "init"
+        },
+        {
+          "op": "branch",
+          "name": "done"
+        },
+        {
+          "op": "remote",
+          "push": [
+            "main",
+            "done"
+          ]
+        },
+        {
+          "op": "git",
+          "args": [
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/main"
+          ]
+        }
+      ],
+      "args": [
+        "--apply",
+        "--only",
+        "branch:done,remote:origin/done"
+      ],
+      "expect": {
+        "base": {
+          "name": "main",
+          "remote": "origin/main",
+          "ahead": 0,
+          "behind": 0
+        },
+        "names": {
+          "remotes": [
+            "origin/done"
+          ]
+        },
+        "remotes": {
+          "origin/done": {
+            "verdict": "merged",
+            "risk": "high",
+            "worktree": null
+          }
+        },
+        "branches": {
+          "done": {
+            "verdict": "merged",
+            "risk": "none"
+          }
+        },
+        "plan": {
+          "remote:origin/done": {
+            "kind": "remote_delete",
+            "argv": [
+              "git",
+              "push",
+              "origin",
+              "--delete",
+              "done"
+            ],
+            "risk": "high",
+            "runnable": false
+          }
+        },
+        "after": {
+          "refs": {
+            "exist": [
+              "origin.git:refs/heads/done",
+              "origin.git:refs/heads/main"
+            ],
+            "gone": [
+              "repo:refs/heads/done"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "duplicate data inside a kept worktree is printed as a literal removal and never deleted",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "write",
+          "path": "data/run.bin",
+          "text": "0123456789abcdef",
+          "repeat": 131072
+        },
+        {
+          "op": "write",
+          "in": "w1",
+          "path": "data/run.bin",
+          "text": "0123456789abcdef",
+          "repeat": 131072
+        },
+        {
+          "op": "write",
+          "in": "w1",
+          "path": "notes.md",
+          "text": "unsaved\n"
+        }
+      ],
+      "args": [
+        "--apply",
+        "--only",
+        "data:w1/data/"
+      ],
+      "expect": {
+        "worktrees": {
+          "w1": {
+            "verdict": "uncommitted",
+            "files": {
+              "data/": {
+                "state": "copy",
+                "mb": 2
+              }
+            }
+          }
+        },
+        "plan": {
+          "remove:w1": null,
+          "data:w1/data/": {
+            "kind": "data_remove",
+            "argv": [
+              "rm",
+              "-rf",
+              "$ROOT/repo/.claude/worktrees/w1/data"
+            ],
+            "risk": "high",
+            "runnable": false,
+            "mb": 2
+          }
+        },
+        "after": {
+          "paths": {
+            "exist": [
+              "repo/.claude/worktrees/w1/data/run.bin"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "a ref whose two routes disagree is never in any plan",
+      "setup": [
+        {
+          "op": "init"
+        },
+        {
+          "op": "branch",
+          "name": "side"
+        },
+        {
+          "op": "commit",
+          "branch": "side",
+          "files": {
+            "src/side.txt": "side\n"
+          }
+        },
+        {
+          "op": "land",
+          "branch": "side",
+          "how": "merge"
+        },
+        {
+          "op": "worktree",
+          "name": "wx",
+          "new_branch": "x",
+          "from": "main~1"
+        },
+        {
+          "op": "git",
+          "in": "wx",
+          "args": [
+            "merge",
+            "-q",
+            "--no-ff",
+            "--no-commit",
+            "side"
+          ]
+        },
+        {
+          "op": "write",
+          "in": "wx",
+          "path": "evil.txt",
+          "text": "only on x\n"
+        },
+        {
+          "op": "git",
+          "in": "wx",
+          "args": [
+            "add",
+            "evil.txt"
+          ]
+        },
+        {
+          "op": "git",
+          "in": "wx",
+          "args": [
+            "commit",
+            "-qm",
+            "merge side, and one file more"
+          ]
+        }
+      ],
+      "args": [
+        "--apply"
+      ],
+      "expect": {
+        "branches": {
+          "x": {
+            "verdict": "absorbed",
+            "agrees": false,
+            "risk": "high",
+            "worktree": "wx"
+          }
+        },
+        "worktrees": {
+          "wx": {
+            "risk": "high"
+          }
+        },
+        "plan": {
+          "branch:x": null,
+          "remove:wx": null
+        },
+        "after": {
+          "refs": {
+            "exist": [
+              "repo:refs/heads/x"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "a spec draft whose changed lines are markdown bullets is new, not an obsolete draft",
+      "setup": [
+        {
+          "op": "init"
+        },
+        {
+          "op": "commit",
+          "branch": "main",
+          "files": {
+            "docs/specs/archive/x.md": "# X\nStatus: settled\n\n- keep the old rule\n"
+          }
+        },
+        {
+          "op": "branch",
+          "name": "feat"
+        },
+        {
+          "op": "commit",
+          "branch": "feat",
+          "files": {
+            "docs/specs/x.md": "# X\nStatus: draft\n\n- NEW RULE: never delete data\n+ a plus line\n"
+          }
+        }
+      ],
+      "args": [],
+      "expect": {
+        "branches": {
+          "feat": {
+            "verdict": "unmerged",
+            "risk": "high"
+          }
+        },
+        "plan": {
+          "branch:feat": null
+        }
+      }
+    },
+    {
+      "name": "a new file past two thousand changed paths is still read",
+      "setup": [
+        {
+          "op": "init"
+        },
+        {
+          "op": "commit",
+          "branch": "main",
+          "many": {
+            "prefix": "f/",
+            "count": 2100,
+            "text": "v1\n"
+          }
+        },
+        {
+          "op": "branch",
+          "name": "feat"
+        },
+        {
+          "op": "commit",
+          "branch": "main",
+          "many": {
+            "prefix": "f/",
+            "count": 2100,
+            "text": "version two\n"
+          }
+        },
+        {
+          "op": "commit",
+          "branch": "feat",
+          "many": {
+            "prefix": "f/",
+            "count": 2100,
+            "text": "version two\n"
+          },
+          "files": {
+            "f/zzz": "only on feat\n"
+          }
+        }
+      ],
+      "args": [],
+      "expect": {
+        "branches": {
+          "feat": {
+            "verdict": "unmerged",
+            "risk": "high"
+          }
+        },
+        "plan": {
+          "branch:feat": null
+        }
+      }
+    },
+    {
+      "name": "a new file whose name is not ASCII is read by its real name",
+      "setup": [
+        {
+          "op": "init"
+        },
+        {
+          "op": "branch",
+          "name": "feat"
+        },
+        {
+          "op": "commit",
+          "branch": "feat",
+          "files": {
+            "docs/überblick.md": "only on feat\n"
+          }
+        }
+      ],
+      "args": [],
+      "expect": {
+        "branches": {
+          "feat": {
+            "verdict": "unmerged",
+            "risk": "high"
+          }
+        },
+        "plan": {
+          "branch:feat": null
+        }
+      }
+    },
+    {
+      "name": "the base and the remote base are read from the config",
+      "setup": [
+        {
+          "op": "init"
+        },
+        {
+          "op": "branch",
+          "name": "trunk"
+        },
+        {
+          "op": "commit",
+          "branch": "main",
+          "files": {
+            "src/m.txt": "main moved\n"
+          }
+        },
+        {
+          "op": "remote",
+          "push": [
+            "main",
+            "trunk"
+          ]
+        },
+        {
+          "op": "config",
+          "values": {
+            "harness": {
+              "baseBranch": "trunk"
+            },
+            "branches": {
+              "remoteBase": "origin/trunk"
+            }
+          }
+        }
+      ],
+      "args": [],
+      "expect": {
+        "base": {
+          "name": "trunk",
+          "remote": "origin/trunk",
+          "ahead": 0,
+          "behind": 0
+        },
+        "names": {
+          "branches": [
+            "main"
+          ],
+          "remotes": [
+            "origin/main"
+          ]
+        },
+        "branches": {
+          "main": {
+            "verdict": "unmerged",
+            "protected": true
+          }
+        },
+        "remotes": {
+          "origin/main": {
+            "verdict": "unmerged"
+          }
+        }
+      }
+    },
+    {
+      "name": "the worktree root and the rebuildable names are read from the config",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "config",
+          "values": {
+            "branches": {
+              "worktreeRoot": "elsewhere",
+              "rebuildable": [
+                "data"
+              ]
+            }
+          }
+        },
+        {
+          "op": "write",
+          "in": "w1",
+          "path": "data/run.bin",
+          "text": "rebuilt on demand\n"
+        },
+        {
+          "op": "folder",
+          "name": "scratch-run",
+          "files": {
+            "results/run.txt": "numbers\n"
+          }
+        }
+      ],
+      "args": [],
+      "expect": {
+        "names": {
+          "strays": []
+        },
+        "worktrees": {
+          "w1": {
+            "verdict": "merged",
+            "files": {
+              "data/": {
+                "state": "cache"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "the human report totals the plan per risk and names the land command from the config",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "config",
+          "values": {
+            "harness": {
+              "landCommand": "make land-it"
+            }
+          }
+        },
+        {
+          "op": "write",
+          "in": "w1",
+          "path": "node_modules/x/index.js",
+          "text": "0123456789abcdef",
+          "repeat": 131072
+        }
+      ],
+      "text": true,
+      "args": [
+        "--prune"
+      ],
+      "expect": {
+        "stdout": [
+          "plan frees none 2 MB, low 0 MB, medium 0 MB, high 0 MB",
+          "landed with `make land-it` first"
+        ]
+      }
+    },
+    {
+      "name": "a stray folder touched inside the stale window is reported and not offered",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "folder",
+          "name": "fresh-agent",
+          "files": {
+            "notes.md": "just written\n"
+          },
+          "at": -1
+        }
+      ],
+      "args": [],
+      "expect": {
+        "names": {
+          "strays": [
+            "fresh-agent"
+          ]
+        },
+        "strays": {
+          "fresh-agent": {
+            "idle_hours": {
+              "$lte": 2
+            }
+          }
+        },
+        "plan": {
+          "stray:fresh-agent": null
+        }
+      }
+    },
+    {
+      "name": "an untracked file whose bytes only the worktree's own branch committed is unsaved, not a stray",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "commit",
+          "branch": "feat",
+          "files": {
+            "notes.md": "unique notes\n"
+          }
+        },
+        {
+          "op": "commit",
+          "branch": "feat",
+          "files": {
+            "notes.md": null
+          }
+        },
+        {
+          "op": "write",
+          "in": "w1",
+          "path": "notes.md",
+          "text": "unique notes\n"
+        }
+      ],
+      "args": [],
+      "expect": {
+        "worktrees": {
+          "w1": {
+            "verdict": "uncommitted",
+            "files": {
+              "notes.md": {
+                "state": "unsaved"
+              }
+            }
+          }
+        },
+        "plan": {
+          "remove:w1": null,
+          "branch:feat": null
+        }
+      }
+    },
+    {
+      "name": "a shell working inside a worktree holds it while it runs the script from the main checkout",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        }
+      ],
+      "shell_in": "w1",
+      "args": [
+        "--apply"
+      ],
+      "expect": {
+        "worktrees": {
+          "w1": {
+            "verdict": "in_use",
+            "caller": false
+          }
+        },
+        "plan": {
+          "remove:w1": null,
+          "branch:feat": null
+        },
+        "after": {
+          "paths": {
+            "exist": [
+              "repo/.claude/worktrees/w1"
+            ]
+          },
+          "refs": {
+            "exist": [
+              "repo:refs/heads/feat"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "a process running a program from inside a worktree holds it wherever its working directory is",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "hold",
+          "worktree": "w1",
+          "exe": "node_modules/.bin/server"
+        }
+      ],
+      "args": [],
+      "expect": {
+        "worktrees": {
+          "w1": {
+            "verdict": "in_use"
+          }
+        },
+        "plan": {
+          "remove:w1": null
+        }
+      }
+    },
+    {
+      "name": "a file the main checkout reaches only through a symlinked folder is data, not a copy",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "write",
+          "in": "w1",
+          "path": "data/results.bin",
+          "text": "the only copy of the results\n"
+        },
+        {
+          "op": "link",
+          "path": "data",
+          "target": "$ROOT/repo/.claude/worktrees/w1/data"
+        }
+      ],
+      "args": [],
+      "expect": {
+        "worktrees": {
+          "w1": {
+            "verdict": "holds_data",
+            "files": {
+              "data/": {
+                "state": "data"
+              }
+            }
+          }
+        },
+        "plan": {
+          "remove:w1": null
+        }
+      }
+    },
+    {
+      "name": "a credential-shaped file under a rebuildable folder is a credential, not cache",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "write",
+          "in": "w1",
+          "path": "node_modules/pkg/index.js",
+          "text": "x\n"
+        },
+        {
+          "op": "write",
+          "in": "w1",
+          "path": "node_modules/pkg/.env.local",
+          "text": "A=1\n",
+          "mode": "000"
+        }
+      ],
+      "args": [
+        "--apply"
+      ],
+      "expect": {
+        "worktrees": {
+          "w1": {
+            "verdict": "holds_data",
+            "risk": "high",
+            "files": {
+              "node_modules/": {
+                "state": "cache"
+              },
+              "node_modules/pkg/.env.local": {
+                "state": "credential"
+              }
+            }
+          }
+        },
+        "plan": {
+          "remove:w1": null
+        },
+        "after": {
+          "paths": {
+            "exist": [
+              "repo/.claude/worktrees/w1/node_modules/pkg/.env.local"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "an untracked symbolic link is hashed as a link, and the key and certificate family is never opened",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "fifo",
+          "path": "pipe"
+        },
+        {
+          "op": "link",
+          "in": "w1",
+          "path": "pipe-link",
+          "target": "$ROOT/pipe"
+        },
+        {
+          "op": "write",
+          "in": "w1",
+          "path": "id_ed25519",
+          "text": "k\n",
+          "mode": "000"
+        },
+        {
+          "op": "write",
+          "in": "w1",
+          "path": "certs/client.p12",
+          "text": "k\n",
+          "mode": "000"
+        },
+        {
+          "op": "write",
+          "in": "w1",
+          "path": ".git-credentials",
+          "text": "k\n",
+          "mode": "000"
+        }
+      ],
+      "args": [],
+      "expect": {
+        "worktrees": {
+          "w1": {
+            "verdict": "uncommitted",
+            "files": {
+              "pipe-link": {
+                "state": "unsaved"
+              },
+              "id_ed25519": {
+                "state": "credential"
+              },
+              "certs/client.p12": {
+                "state": "credential"
+              },
+              ".git-credentials": {
+                "state": "credential"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "an ignored folder the script cannot read is data, never a copy",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "write",
+          "path": "data/run.bin",
+          "text": "the same bytes\n"
+        },
+        {
+          "op": "write",
+          "in": "w1",
+          "path": "data/run.bin",
+          "text": "the same bytes\n"
+        },
+        {
+          "op": "write",
+          "in": "w1",
+          "path": "data/private/unique.bin",
+          "text": "only here\n"
+        },
+        {
+          "op": "chmod",
+          "in": "w1",
+          "path": "data/private",
+          "mode": "000"
+        }
+      ],
+      "args": [],
+      "expect": {
+        "worktrees": {
+          "w1": {
+            "verdict": "holds_data",
+            "files": {
+              "data/private/": {
+                "state": "data"
+              },
+              "data/run.bin": {
+                "state": "copy"
+              }
+            }
+          }
+        },
+        "plan": {
+          "remove:w1": null
+        }
+      }
+    },
+    {
+      "name": "a tracked edit hidden by assume-unchanged or skip-worktree is a tracked change",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "git",
+          "in": "w1",
+          "args": [
+            "update-index",
+            "--assume-unchanged",
+            "src/a.txt"
+          ]
+        },
+        {
+          "op": "git",
+          "in": "w1",
+          "args": [
+            "update-index",
+            "--skip-worktree",
+            "tools/cases.txt"
+          ]
+        },
+        {
+          "op": "write",
+          "in": "w1",
+          "path": "src/a.txt",
+          "text": "hand edit\n"
+        },
+        {
+          "op": "write",
+          "in": "w1",
+          "path": "tools/cases.txt",
+          "text": "hand edit\n"
+        }
+      ],
+      "args": [
+        "--apply"
+      ],
+      "expect": {
+        "worktrees": {
+          "w1": {
+            "verdict": "uncommitted",
+            "files": {
+              "src/a.txt": {
+                "state": "tracked_change"
+              },
+              "tools/cases.txt": {
+                "state": "tracked_change"
+              }
+            }
+          }
+        },
+        "plan": {
+          "remove:w1": null
+        },
+        "after": {
+          "paths": {
+            "exist": [
+              "repo/.claude/worktrees/w1/src/a.txt"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "a worktree whose status git cannot read is never offered",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "write",
+          "in": "w1",
+          "path": "draft.md",
+          "text": "an unsaved draft\n"
+        },
+        {
+          "op": "write",
+          "path": ".git/worktrees/w1/index",
+          "text": "not an index\n"
+        }
+      ],
+      "args": [
+        "--apply"
+      ],
+      "expect": {
+        "worktrees": {
+          "w1": {
+            "verdict": "uncommitted",
+            "risk": "high"
+          }
+        },
+        "plan": {
+          "remove:w1": null
+        },
+        "after": {
+          "paths": {
+            "exist": [
+              "repo/.claude/worktrees/w1/draft.md"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "apply audits a worktree again before it removes it, so a peer's new data stops the removal",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        }
+      ],
+      "args": [
+        "--apply"
+      ],
+      "expect": {
+        "exit": 1,
+        "plan": {
+          "remove:w1": {
+            "risk": "none"
+          }
+        },
+        "after": {
+          "paths": {
+            "exist": [
+              "repo/.claude/worktrees/w1/data/run.bin"
+            ]
+          },
+          "refs": {
+            "exist": [
+              "repo:refs/heads/feat"
+            ]
+          }
+        }
+      },
+      "before_apply": "mkdir -p '$ROOT/repo/.claude/worktrees/w1/data' && echo peer > '$ROOT/repo/.claude/worktrees/w1/data/run.bin'"
+    },
+    {
+      "name": "apply deletes a branch only at the tip it audited",
+      "setup": [
+        {
+          "op": "init"
+        },
+        {
+          "op": "branch",
+          "name": "picked"
+        },
+        {
+          "op": "commit",
+          "branch": "picked",
+          "files": {
+            "src/p.txt": "p\n"
+          }
+        },
+        {
+          "op": "commit",
+          "branch": "main",
+          "files": {
+            "src/main.txt": "main moved\n"
+          }
+        },
+        {
+          "op": "land",
+          "branch": "picked",
+          "how": "cherry-pick"
+        }
+      ],
+      "args": [
+        "--apply",
+        "--only",
+        "branch:picked"
+      ],
+      "expect": {
+        "exit": 1,
+        "plan": {
+          "branch:picked": {
+            "argv": [
+              "git",
+              "branch",
+              "-D",
+              "picked"
+            ],
+            "risk": "low"
+          }
+        },
+        "after": {
+          "refs": {
+            "exist": [
+              "repo:refs/heads/picked"
+            ]
+          }
+        }
+      },
+      "before_apply": "git update-ref refs/heads/picked \"$(git commit-tree -p picked -m 'a peer commit' 'main^{tree}')\""
+    },
+    {
+      "name": "apply takes no risk flag, so a row above risk none runs only when the operator names it",
+      "setup": [
+        {
+          "op": "init"
+        },
+        {
+          "op": "branch",
+          "name": "picked"
+        },
+        {
+          "op": "commit",
+          "branch": "picked",
+          "files": {
+            "src/p.txt": "p\n"
+          }
+        },
+        {
+          "op": "commit",
+          "branch": "main",
+          "files": {
+            "src/main.txt": "main moved\n"
+          }
+        },
+        {
+          "op": "land",
+          "branch": "picked",
+          "how": "cherry-pick"
+        }
+      ],
+      "args": [
+        "--apply",
+        "--risk",
+        "medium"
+      ],
+      "expect": {
+        "exit": 1,
+        "after": {
+          "refs": {
+            "exist": [
+              "repo:refs/heads/picked"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "an untracked link to the main checkout's own entry at that path is a copy, and the worktree goes at risk medium",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "write",
+          "path": "weights/model.bin",
+          "text": "the weights\n"
+        },
+        {
+          "op": "link",
+          "in": "w1",
+          "path": "weights",
+          "target": "$ROOT/repo/weights"
+        }
+      ],
+      "args": [
+        "--stale-hours",
+        "0",
+        "--apply",
+        "--only",
+        "remove:w1"
+      ],
+      "expect": {
+        "worktrees": {
+          "w1": {
+            "verdict": "stalled",
+            "risk": "medium",
+            "files": {
+              "weights": {
+                "state": "copy"
+              }
+            }
+          }
+        },
+        "plan": {
+          "remove:w1": {
+            "argv": [
+              "git",
+              "worktree",
+              "remove",
+              "--force",
+              "$ROOT/repo/.claude/worktrees/w1"
+            ],
+            "risk": "medium"
+          }
+        },
+        "after": {
+          "paths": {
+            "gone": [
+              "repo/.claude/worktrees/w1"
+            ],
+            "exist": [
+              "repo/weights/model.bin"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "rows sort by code point, so both scripts order names above the Basic Multilingual Plane alike",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "worktree",
+          "name": "Ａwt",
+          "new_branch": "b1"
+        },
+        {
+          "op": "worktree",
+          "name": "𝐀wt",
+          "new_branch": "b2"
+        }
+      ],
+      "args": [],
+      "expect": {
+        "order": {
+          "worktrees": [
+            "w1",
+            "Ａwt",
+            "𝐀wt"
+          ],
+          "plan": [
+            "remove:w1",
+            "remove:Ａwt",
+            "remove:𝐀wt"
+          ]
+        }
+      }
+    },
+    {
+      "name": "a session transcript written an hour ago keeps its worktree in progress",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "transcript",
+          "worktree": "w1",
+          "at": -1
+        }
+      ],
+      "args": [
+        "--apply"
+      ],
+      "expect": {
+        "worktrees": {
+          "w1": {
+            "verdict": "in_progress",
+            "lock": "none",
+            "risk": "high"
+          }
+        },
+        "plan": {
+          "remove:w1": null,
+          "branch:feat": null
+        },
+        "after": {
+          "paths": {
+            "exist": [
+              "repo/.claude/worktrees/w1"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "a repository with no config file is audited with the defaults",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "config",
+          "remove": true
+        }
+      ],
+      "args": [],
+      "expect": {
+        "base": {
+          "name": "main",
+          "remote": "origin/main",
+          "ahead": null,
+          "behind": null
+        },
+        "worktrees": {
+          "w1": {
+            "verdict": "merged",
+            "risk": "none"
+          }
+        },
+        "plan": {
+          "remove:w1": {
+            "risk": "none"
+          },
+          "branch:feat": {
+            "risk": "none"
+          }
+        }
+      }
+    }
+  ]
+}
