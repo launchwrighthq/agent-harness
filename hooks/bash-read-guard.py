@@ -1,17 +1,12 @@
 #!/usr/bin/env python3
-"""Refuse a Bash command that READS a credential file.
+"""Refuse a Bash command that reads a credential file.
 
-`deny-env-reads.py` gates the `guardedFiles` of the harness config against any command, whatever
-it invokes. This one is the complement: it gates on the reader, so every other `.env*`, a session
-file, the key and certificate family and the `secretFiles` of the config are refused to `cat`,
-`awk`, `sed` and the rest.
-
-A command naming no secret gets NO verdict. An `allow` from a PreToolUse hook bypasses the
-permission rules rather than deferring to them, so this hook denies, asks or stays silent.
-It never prints a file's contents, only the path that matched.
-
-The env engine run ALONE is exempt, as in `deny-env-reads.py`: it prints no value. A run with
-`--reveal` prints one, so the hook asks the user to confirm it when no deny applies.
+`deny-env-reads.py` refuses the `guardedFiles` of the config to any command. This hook gates on
+the reader: every other `.env*`, a session file, the key and certificate family and the
+`secretFiles` of the config are refused to `cat`, `awk`, `sed` and the rest. A command that
+names no secret gets no verdict, because an `allow` would bypass the permission rules. The hook
+prints only the path that matched, never the contents of a file. A lone run of the env engine
+passes, and a run with `--reveal` asks (docs/hooks.md, "The env engine exemption").
 """
 
 from __future__ import annotations
@@ -718,19 +713,11 @@ def scanned_text(command: str) -> str:
     """The text this guard scans: the whole command, or only its first line when the command is
     one exempt heredoc.
 
-    A heredoc body is data rather than command line: scanning it would deny a commit whose
-    message names `grep` and a file. The exemption is an allowlist of exact shapes. Anything else
-    on the line (a pipe, `&&`, `;`, `$`, a backtick, a glob, a substitution, another command
-    word, an option, an abbreviation) gets every byte scanned.
-
-    - `cat <<DELIM` or `cat <<'DELIM'`, to the terminal, to `> /dev/null` or to one `> file`
-      whose path is a plain relative path with no segment that starts with `.` and no script
-      extension.
-    - `git commit -F - <<DELIM` or `git tag [-a] <name> -F - <<DELIM`, with the heredoc as stdin
-      and no redirection or other stage.
-
-    The body ends at the first line that equals the delimiter, and only blanks may follow it. An
-    unquoted body with a `$` or a backtick is scanned, because bash expands it.
+    A heredoc body is data: a scan of it would deny a commit whose message names `grep` and a
+    file. The exemption is an allowlist of exact shapes, listed in docs/hooks.md ("Heredocs and
+    key names in the read guard"). Anything else on the line gets every byte scanned. The body
+    ends at the first line that equals the delimiter, and only blanks may follow it. An unquoted
+    body with a `$` or a backtick is scanned, because bash expands it.
     """
     newline = command.find("\n")
     if newline < 0:

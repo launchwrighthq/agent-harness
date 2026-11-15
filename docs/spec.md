@@ -49,14 +49,24 @@ archive, in this checkout first and then in the main checkout.
 ## The renderer
 
 The renderer reads the Markdown constructs that the specs use and refuses every other one with
-the file and the line. `tests/integration/spec/test_render_parity.py` compares the page, byte for
+the file and the line. The constructs are a header block of H1, `Date:` and `Status:`, the
+optional `Subject:` and `Range:` fields and a standfirst, headings h2 to h4, paragraphs, ordered
+and unordered lists with nesting, fenced code blocks, pipe tables, blockquotes, images and videos
+under `assets/`, inline code, bold, italic, strikethrough and links. A literal Markdown mark in a
+finished page is a fact that a reader believes, so the renderer never passes one through.
+`tests/integration/spec/test_render_parity.py` compares the page, byte for
 byte, with the golden pages in `tests/fixtures/spec-render/`. The template is
 `src/agent_harness/spec/spec-template.html`.
 
-The TypeScript renderer that this port copies is its reference, and it refuses a blockquote or a
-fenced code block inside a list item. So this renderer refuses them too, and the refusal says how
-to rewrite the source: end the list with a blank line and start the block at the left margin
-below it.
+A fenced code block or a blockquote indented under a list item renders inside that `<li>`, as in
+CommonMark. The block starts on the item text line below, with or without a blank line between.
+A code block loses the indent of its opening fence, so a line in it that looks like a list
+marker stays code. A paragraph indented under the item after the block stays in the item too.
+A fenced code block in an item refuses a line at or left of the item marker, and the refusal says
+to indent the line under the item text.
+
+The TypeScript renderer of the qa module refuses a block nested in a list item, so a spec that
+nests one renders here and not there.
 
 ## The audit store
 

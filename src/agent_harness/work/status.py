@@ -3,13 +3,11 @@
     ah work-status [--session <id>] [--since 12h] [--all] [--spec <path>] [--json]
     ah work-status --repo [--json]
 
-Compaction drops the middle of a long run, and a message typed while the agent is busy never
-becomes a prompt it sees again. The files under ~/.claude/projects keep both.
-
-A result body can echo a token and the digest is pasted into a chat, so only a spawn's tool
-result is read: one line of an agent's report, a workflow's summary, or an error. The user's own
-shell commands and their output are dropped for the same reason.
-The spec folders come from `[specs] dirs`, the audits from the spec store, the base from config.
+The transcript keeps what compaction drops and what a busy agent never saw (docs/work.md). A
+result body can echo a token and the digest is pasted into a chat, so only a spawn's tool result
+is read: one line of an agent's report, a workflow's summary, or an error. The user's own shell
+commands and their output are dropped for the same reason. The spec folders come from
+`[specs] dirs`, the audits from the spec store, the base from config.
 """
 
 from __future__ import annotations

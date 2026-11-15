@@ -225,29 +225,46 @@ def test_gives_a_file_the_kind_and_page_folder_of_its_longest_kinds_folder() -> 
     )
 
 
-QUOTE_FIX = (
-    "a blockquote cannot nest inside a list. End the list with a blank line and start the"
-    " quote at the left margin below it, or write the quoted words as text of the item"
-)
-FENCE_FIX = (
-    "a fenced code block cannot nest inside a list. End the list with a blank line and start"
-    " the fence at the left margin below it, or put a one-line command in `inline code` in the"
-    " item text"
-)
+CHECK = '<div class="code" data-lang="bash"><pre><code>ah check</code></pre></div>'
+ASK = "<blockquote><p>Is it done?</p></blockquote>"
 
 
 @pytest.mark.parametrize(
-    ("markdown", "line", "reason"),
+    ("markdown", "html"),
     [
-        ("- Ask:\n  > Is it done?\n", 9, QUOTE_FIX),
-        ("1. Ask:\n\n   > Is it done?\n", 10, QUOTE_FIX),
-        ("- Run it:\n\n  ```bash\n  ah check\n  ```\n", 10, FENCE_FIX),
+        ("- Run it:\n\n  ```bash\n  ah check\n  ```\n", f"<ul><li>Run it:{CHECK}</li></ul>"),
+        ("- Run it:\n  ```bash\n  ah check\n  ```\n", f"<ul><li>Run it:{CHECK}</li></ul>"),
+        (
+            "1. Run it:\n\n   ```bash\n   ah check\n   ```\n2. Next\n",
+            f"<ol><li>Run it:{CHECK}</li><li>Next</li></ol>",
+        ),
+        ("- Ask:\n  > Is it done?\n", f"<ul><li>Ask:{ASK}</li></ul>"),
+        ("1. Ask:\n\n   > Is it done?\n", f"<ol><li>Ask:{ASK}</li></ol>"),
+        (
+            "- Steps:\n\n  ```text\n  - not an item\n  1. not either\n  ```\n",
+            '<ul><li>Steps:<div class="code" data-lang="text"><pre><code>- not an item\n'
+            "1. not either</code></pre></div></li></ul>",
+        ),
+        (
+            "- Run it:\n\n  ```bash\n  ah check\n  ```\n\n  It prints the result.\n- Next\n",
+            f"<ul><li>Run it:{CHECK}<p>It prints the result.</p></li><li>Next</li></ul>",
+        ),
     ],
 )
-def test_says_how_to_rewrite_a_block_nested_in_a_list(
-    markdown: str, line: int, reason: str
+def test_renders_a_block_indented_under_a_list_item_inside_that_item(
+    markdown: str, html: str
 ) -> None:
-    with pytest.raises(SpecError) as refused:
-        body_of(HEAD + "## S\n\n" + markdown)
+    body = body_of(HEAD + "## S\n\n" + markdown)
 
-    assert str(refused.value) == f"docs/specs/a.md:{line}: {reason}"
+    assert body.endswith("\n" + html)
+
+
+def test_refuses_a_fenced_code_line_left_of_its_list_item_and_says_how_to_indent_it() -> None:
+    with pytest.raises(SpecError) as refused:
+        body_of(HEAD + "## S\n\n- Run it:\n\n  ```bash\nah check\n  ```\n")
+
+    assert str(refused.value) == (
+        "docs/specs/a.md:11: a fenced code block in a list item has a line at or left of the item"
+        " marker. Indent every line of the block, the closing fence too, under the item text, or"
+        " end the list with a blank line and start the fence at the left margin below it"
+    )

@@ -2,26 +2,12 @@
 """Refuse a live production credential file.
 
 The guarded names are `harness.guardedFiles` of the config (default `.env.production` and any
-`*.secret`). The hook replaces `Read(**/.env*)` deny rules, which made the client resolve every
-path a Bash command reads and prompt when one did not resolve.
-
-The Bash check names no programs. Enumerating readers (cat, grep, sed ...) is a denylist that
-`source`, `< file` and `python3 -c open(...)` walk straight past, so any command CARRYING the
-name is refused, whatever it invokes. The cost is that the name cannot appear in shell prose
-either, a commit message included. In Bash, every other env file is the job of bash-read-guard,
-which refuses it to a reader. The file tools (Read, Edit, Grep ...) are refused every env file
-except a `.example`, the same names.
-
-It also refuses a credential backup in the tree (`.env.production.bak`, `.local/secrets/`): a
-copy outside the secret store that nothing rotates.
-
-The one exemption is the env engine run ALONE: `python3 .claude/agent-harness/bin/ah env ...`,
-`ah env ...` or `harness.envCommand`. It is void on any character that can start a second
-command, expand or hide a quote (see `hookio.lone_env_command`). A run with `--reveal` prints a
-value, so the hook asks the user to confirm it when no deny applies. The reveal test reads the
-command without its quotes and fails closed (see `hookio.env_reveal`). A lone `run` passes only
-for a command of `[env] runCommands` on a plain project file (see `hookio.env_run_verdict`).
-Anything else asks, and a file outside the project is refused.
+`*.secret`). In Bash, a command that holds such a name is refused, whatever program it runs: a
+list of readers misses `source`, `< file` and `python3 -c open(...)`. The file tools are refused
+every env file except a `.example`. A credential backup in the tree (`.env.production.bak`,
+`.local/secrets/`) is refused too. The one exemption is a lone run of the env engine
+(`hookio.lone_env_command`, `hookio.env_reveal`, `hookio.env_run_verdict`). docs/hooks.md, "The
+credential name guard", gives the reasons.
 """
 
 from __future__ import annotations

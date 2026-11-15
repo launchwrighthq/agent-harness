@@ -1,17 +1,7 @@
 """The env-file layout rules L1 to L7, the shape of a master and key placement by that shape.
 
-A finding names a key, a line number, or a
-header title of a committed `.example` file. It never holds a value.
-
-The rules:
-
-- L1: a block opens with a `# Title` header of 1 to 3 words, with no rule characters or colon.
-- L2: one empty line between two blocks, and nowhere else. The file ends in one newline.
-- L3: a plain file holds header and key lines only.
-- L4: a plain file uses the headers and keys of its master, in the master's order.
-- L5: the master opens with a generated `#` block.
-- L6: a key comment in the master sits directly above its key line.
-- L7: no comment on a key line.
+docs/env.md ("Layout") states the rules. A finding names a key, a line number, or a header title
+of a committed `.example` file. It never holds a value.
 """
 
 from __future__ import annotations

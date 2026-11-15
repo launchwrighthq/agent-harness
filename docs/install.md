@@ -123,9 +123,21 @@ directory in the payload is data. A project in a subfolder of its checkout names
 quotes, so the install refuses a folder with a character outside `A-Z`, `a-z`, `0-9`, `.`, `_`,
 `/` and `-`.
 
-Nothing shows that Codex honors the PreToolUse `ask` decision. So the adapter turns an `ask` into
-a `deny` that keeps the reason of the hook. The reason adds that the user runs the reveal
-themselves, or confirms it in Claude Code.
+The adapter maps the payload as follows:
+
+- `CLAUDE_PROJECT_DIR` is the checkout, and `CLAUDE_CODE_SESSION_ID` is the `session_id` of the
+  payload.
+- `exec_command` and `shell_command` become `Bash`, and `cmd` is copied to `command`.
+- An `apply_patch` becomes one `Edit` event for each `*** Add File`, `*** Update File` and
+  `*** Delete File` path.
+- A payload `workdir` or `cwd` inside `<root>/.claude/worktrees/<name>/` selects that worktree
+  only when git reports the same common directory for it and for the root. The copy of the
+  script in that worktree runs when it has one. Any other directory is data for the hooks.
+
+A `deny` or a `block` of a hook passes through at once. Else the first `ask` becomes a `deny`,
+and else the adapter joins every `additionalContext`. Nothing shows that Codex honors the
+PreToolUse `ask` decision. So the adapter turns an `ask` into a `deny` that keeps the reason of
+the hook. The reason adds that the user runs the reveal themselves, or confirms it in Claude Code.
 
 Each hook has one entry per event in both registries. The package manifest comes first, then the
 extra manifests by name, each in the order it declares. The order does not depend on the order of

@@ -1,22 +1,13 @@
 """Render a spec Markdown file into the HTML review page.
 
-    ah spec render docs/specs/<name>.md
-    ah spec render docs/specs/<name>.md --out docs/specs/dist/review
+    ah spec render docs/specs/<name>.md [--out docs/specs/dist/review]
 
-The renderer reads only the constructs the specs use: a header block of H1, Date and Status, the
-optional Subject and Range fields and a standfirst, headings h2 to h4, paragraphs, ordered and
-unordered lists with nesting, fenced code blocks, pipe tables, blockquotes, images and videos
-under `assets/`, inline code, bold, italic, strikethrough and links. Anything outside that set
-fails with a `SpecError` that names the file and the 1-based line. A literal Markdown mark in a
-finished page is a fact a reader believes, so the renderer never passes one through.
-
-The output equals the output of the earlier Node renderer byte for byte. The regular expressions
-therefore copy JavaScript semantics: `\\s` is the JavaScript whitespace set, `.` stops at the
-four JavaScript line terminators, `$` matches only at the end, and `\\d`, `\\w` and `\\b` are
-ASCII. `js_trim` is `String.prototype.trim`.
-
-The page goes to the `out` folder (`dist`) of the source's spec folder, never beside the
-Markdown. Any `archive/` below the folder is mirrored under `dist/`.
+docs/spec.md ("The renderer") lists the constructs that it reads. Anything else fails with a
+`SpecError` that names the file and the 1-based line, so no literal Markdown mark reaches a page.
+The output equals the earlier Node renderer byte for byte, so the regexes copy JavaScript: `\\s`
+is the JavaScript whitespace set, `.` stops at the four JavaScript line terminators, `$` matches
+only at the end, `\\d`, `\\w` and `\\b` are ASCII, and `js_trim` is `String.prototype.trim`. The
+page goes to the `out` folder (`dist`) of the spec folder, and any `archive/` is mirrored there.
 """
 
 from __future__ import annotations
@@ -139,16 +130,10 @@ PLACEHOLDER_RE = re.compile(
 )
 
 
-# The TypeScript renderer that this port copies is its reference, and it refuses these two
-# blocks inside a list item, so the refusal says how to rewrite the source.
-NESTED_QUOTE = (
-    "a blockquote cannot nest inside a list. End the list with a blank line and start the quote"
-    " at the left margin below it, or write the quoted words as text of the item"
-)
-NESTED_FENCE = (
-    "a fenced code block cannot nest inside a list. End the list with a blank line and start"
-    " the fence at the left margin below it, or put a one-line command in `inline code` in the"
-    " item text"
+FENCE_LEAVES_ITEM = (
+    "a fenced code block in a list item has a line at or left of the item marker. Indent every"
+    " line of the block, the closing fence too, under the item text, or end the list with a"
+    " blank line and start the fence at the left margin below it"
 )
 
 
@@ -521,6 +506,11 @@ def _indent_of(line: str) -> int:
     return len(line) - len(LEADING_WS_RE.sub("", line, 1))
 
 
+def _opens_block(line: str) -> bool:
+    """True for the first line of a fenced code block or a blockquote, at any indent."""
+    return js_trim_start(line).startswith(("```", ">"))
+
+
 def _as_block(html: str) -> str:
     """A lone image or video takes the wide figure track. Any other paragraph keeps the measure."""
     return (
@@ -560,9 +550,9 @@ class Renderer:
             if not js_trim(line):
                 self.i += 1
             elif line.startswith("```"):
-                self.code()
+                self.out.append(self.code())
             elif line.startswith(">"):
-                self.quote()
+                self.out.append(self.quote())
             elif line.startswith("#"):
                 self.heading()
             elif line.startswith("| "):
@@ -633,31 +623,46 @@ class Renderer:
             self.i += 1
         self.out.append(_as_block(self.inline(" ".join(buffer))))
 
-    def quote(self) -> None:
+    def quote(self, marker: int = -1) -> str:
+        """A blockquote. In a list item, `marker` is the column of the item marker: each line
+        sits right of it, and its indent is stripped."""
         buffer: list[str] = []
         while True:
             line = self.peek()
-            if line is None or not line.startswith(">"):
+            if line is None or (marker >= 0 and _indent_of(line) <= marker):
+                break
+            text = js_trim_start(line) if marker >= 0 else line
+            if not text.startswith(">"):
                 break
             self.check_line(line, self.i)
-            stripped = js_trim(QUOTE_MARK_RE.sub("", line, 1))
+            stripped = js_trim(QUOTE_MARK_RE.sub("", text, 1))
             if stripped:
                 buffer.append(stripped)
             self.i += 1
-        self.out.append(f"<blockquote><p>{self.inline(' '.join(buffer))}</p></blockquote>")
+        return f"<blockquote><p>{self.inline(' '.join(buffer))}</p></blockquote>"
 
-    def code(self) -> None:
-        lang = js_trim(self.lines[self.i][3:]) or "text"
+    def code(self, marker: int = -1) -> str:
+        """A fenced code block. In a list item, `marker` is the column of the item marker. Each
+        body line loses the indent of the opening fence, as in CommonMark, and a line at or left
+        of the marker is refused."""
+        opening = self.lines[self.i]
+        width = _indent_of(opening) if marker >= 0 else 0
+        lang = js_trim(opening[width + 3 :]) or "text"
         self.i += 1
         body: list[str] = []
         while True:
             line = self.peek()
-            if line is None or line.startswith("```"):
+            if line is None:
                 break
-            body.append(line)
+            if marker >= 0 and js_trim(line) and _indent_of(line) <= marker:
+                self.fail(self.i, FENCE_LEAVES_ITEM)
+            text = line[min(width, _indent_of(line)) :]
+            if (js_trim_start(text) if marker >= 0 else text).startswith("```"):
+                break
+            body.append(text)
             self.i += 1
         self.i += 1
-        self.out.append(
+        return (
             f'<div class="code" data-lang="{esc(lang, True)}"><pre><code>'
             f"{esc(chr(10).join(body))}</code></pre></div>"
         )
@@ -696,17 +701,16 @@ class Renderer:
                 break
             if ANY_ITEM_RE.search(following):
                 break
-            if following.startswith(("```", "#", "|")):
+            if following.startswith(("#", "|")) or _opens_block(following):
                 break
-            if js_trim_start(following).startswith(">"):
-                self.fail(self.i, NESTED_QUOTE)
             self.check_line(following, self.i)
             cont.append(js_trim(following))
             self.i += 1
         return " ".join([text, *cont])
 
     def item_blocks(self, indent: int) -> str:
-        """The nested lists and continuation paragraphs that belong to an open item.
+        """The nested lists, fenced code blocks, blockquotes and continuation paragraphs that
+        belong to an open item.
 
         A line indented deeper than the item's marker belongs to the item and keeps the list
         open, so an ordered list does not restart its numbers.
@@ -723,7 +727,11 @@ class Renderer:
             if cur <= indent:
                 break
             self.i = j
-            if NESTED_UL_RE.search(line):
+            if js_trim_start(line).startswith("```"):
+                html += self.code(indent)
+            elif js_trim_start(line).startswith(">"):
+                html += self.quote(indent)
+            elif NESTED_UL_RE.search(line):
                 html += self.ulist(cur)
             elif NESTED_OL_RE.search(line):
                 html += self.olist(cur)
@@ -737,13 +745,8 @@ class Renderer:
             line = self.peek()
             if line is None or not js_trim(line) or _indent_of(line) <= indent:
                 break
-            if buffer and ANY_ITEM_RE.search(line):
+            if buffer and (ANY_ITEM_RE.search(line) or _opens_block(line)):
                 break
-            trimmed = js_trim_start(line)
-            if trimmed.startswith(">"):
-                self.fail(self.i, NESTED_QUOTE)
-            if trimmed.startswith("```"):
-                self.fail(self.i, NESTED_FENCE)
             self.check_line(line, self.i)
             buffer.append(js_trim(line))
             self.i += 1

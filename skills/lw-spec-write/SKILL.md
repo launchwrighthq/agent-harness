@@ -165,8 +165,7 @@ Markdown.
 | `an inline data: image belongs in the domain's assets/` | Save the image under `assets/` and link it there. |
 | `an image must be referenced as assets/<file>` | Move the image under `assets/`. |
 | `the image assets/<file> has no file at <folder>/assets/<file>` | Fix the name, or add the file. |
-| `a blockquote cannot nest inside a list` | End the list with a blank line and start the quote at the left margin below it, or write the quoted words as text of the item. |
-| `a fenced code block cannot nest inside a list` | End the list with a blank line and start the fence at the left margin below it, or put a one-line command in `inline code` in the item text. |
+| `a fenced code block in a list item has a line at or left of the item marker` | Indent every line of the block, the closing fence too, under the item text. Or end the list with a blank line and start the fence at the left margin below it. |
 | `a rendered page belongs under its domain's dist/` | The destination is wrong. Pass no destination. |
 | `already tracked by git` | A hand-written page has that path. Find out which kind it is. Never remove it only to make the render pass. |
 

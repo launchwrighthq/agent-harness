@@ -1,20 +1,13 @@
 #!/usr/bin/env python3
-"""Inject the project memory index into the model's context, once per session.
+"""Inject the project memory index into the context of the model, once per session.
 
-Registered on SessionStart and PreToolUse through `load-memory.sh`. A SESSION-keyed flag file
-makes it fire exactly once per session. The index path is `harness.memoryIndex` of the config
-(default `.claude/memory/memory.md`). No index means no output.
-
-The key must not be a PID. The client runs each hook in a fresh short-lived shell, so
-`os.getppid()` differs on every call: a PPID-keyed flag never matches its own earlier write, and
-the index is injected again after every tool result. The session id is stable, and it arrives
-two ways: the CLAUDE_CODE_SESSION_ID env var, and `session_id` in the payload on stdin. Read the
-env first, because the shell fast path in `load-memory.sh` can only see that one, and the two
-must agree.
-
-A session that identifies itself neither way falls back to a per-process key. That injects too
-often, which is the safe direction: one shared key would let the first session silence the index
-for all the others.
+`load-memory.sh` runs it on SessionStart and PreToolUse. A flag file keyed on the session id
+makes it fire once per session. The index is `harness.memoryIndex` of the config (default
+`.claude/memory/memory.md`). No index means no output. The key is never a PID: the client runs
+each hook in a new shell, so the parent PID changes on every call. The env var
+CLAUDE_CODE_SESSION_ID comes first, because the shell fast path of `load-memory.sh` sees only
+that one, and the two must agree. Then comes `session_id` of the payload. A session with
+neither gets a per-process key, which injects too often but never silences another session.
 """
 
 from __future__ import annotations

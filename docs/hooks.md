@@ -99,6 +99,17 @@ longer than its cap. A block that the file already holds is the floor, so an edi
 passes. After the write, the hook reports each finding as added context. A Codex `apply_patch`
 gives the hook the path only, so Codex gets the report and not the deny.
 
+## The credential name guard
+
+`deny-env-reads` replaces `Read(**/.env*)` deny rules of the client. With those rules, the client
+resolved every path that a Bash command reads, and prompted when one did not resolve.
+
+The Bash check names no program. A list of readers (`cat`, `grep`, `sed`, ...) misses `source`,
+`< file` and `python3 -c open(...)`, so a command that holds a guarded name is refused, whatever
+it runs. The cost is that the name cannot appear in shell prose either, a commit message
+included. In Bash, every other env file is the job of `bash-read-guard`, which refuses it to a
+reader. A credential backup in the tree is a copy outside the secret store that nothing rotates.
+
 ## The env engine exemption
 
 `deny-env-reads` and `bash-read-guard` let one run of the env engine name a credential file. The
@@ -407,6 +418,37 @@ checkout with `git read-tree -u -m`.
 
 `strip_commit_trailers.py` also gives `strip(message)` and `carries(message)` to a test that
 checks the history, so the hook and the check apply the same rules.
+
+### The commit-msg rules
+
+The rules of `strip_commit_trailers.py` key on the shape of an attribution, so a new wording of a
+client default still matches. An attribution is a trailer whose key or value names Claude, a
+credit sentence, a session link or an `@anthropic.com` address.
+
+The `commit-msg` hook runs `strip` over the message file and edits it. It never rejects a commit.
+A reject costs the author a retry and removes nothing, and a generator that writes the trailer
+from a template fails again on each retry. A project test runs `carries` over the history,
+because `git commit --no-verify` skips every hook. Both read `RULES`. A check stricter than the
+hook fails a commit that the hook already cleaned. A check looser than the hook lets through what
+the hook takes out.
+
+A rule can only be explained with the text that it bans. The module, the rule file, the test and
+a commit message about them write `Co-Authored-By:` and `Claude-Session:` in prose, and `strip`
+must keep each of them byte for byte. A commit body can also cite a `.claude/...` path. So:
+
+- Every inline rule needs a value after the key. A bare key does not match. An inline rule on
+  `Claude-Session[ \t]*:[ \t]*\S+` would take a backtick out of a message whose token after the
+  colon is a backtick and a comma, not a URL.
+- No line rule reads the subject, so a rule never deletes the summary line.
+- A trailer value that only names a path (`.claude/rules`) is no attribution. `IDENTITY` is the
+  shape of an attribution: an address, a product link or a model name.
+- The rule on the value reads only the trailer block, as git defines it: the last paragraph, with
+  every line `Key: value`. Without that limit, a body line such as `Default: claude-opus-5` is
+  deleted, and no history check sees the loss, because the line names a model.
+
+To find a rule that takes too much, run the rules over a commit history. Assert that every line
+they take holds `claude`, `anthropic`, `co-authored` or the robot emoji. This check is coarser
+than the rules on purpose, so a regex that takes prose fails it.
 
 ## Rules
 

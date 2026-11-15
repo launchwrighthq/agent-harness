@@ -1,45 +1,13 @@
 #!/usr/bin/env python3
 """Take every mark of Claude authorship out of a commit message.
 
-Not two named trailers: every SHAPE one can take, including names no harness has emitted yet. A
-harness default that changes its wording next month must still find the wall here. So the rules
-below key on what an attribution IS rather than on the strings seen so far: a trailer whose key
-or value names us, a credit sentence, a session link, an `@anthropic.com` address.
-
-The module is the whole mechanism, and the two callers see the same rules:
-
-- the `commit-msg` git hook runs `strip` over the file git is about to read. It EDITS rather
-  than rejects. A reject costs the author a retry and removes nothing on its own, while a
-  generator emitting the trailer from a template hits the wall on every attempt.
-- a project test can run `carries` over the history, because `git commit --no-verify` walks
-  past any hook and leaves no trace.
-
-Sharing `RULES` between them is the point. A check STRICTER than the hook fails a commit the
-hook has already cleaned, and offers no way left to phrase it. A check LOOSER lets through
-exactly what the hook would have taken.
-
-The line that must not be crossed: a rule can only be explained by naming the thing it bans.
-This file, the rule file, the test and any commit message about them all write
-`Co-Authored-By:` and `Claude-Session:` in prose, and every one of them has to survive a pass
-through `strip` byte for byte. A commit body can also cite a `.claude/...` path. So:
-
-- Every INLINE rule demands a VALUE, never a bare name. An inline rule matching
-  `Claude-Session[ \\t]*:[ \\t]*\\S+` eats a backtick out of a message whose token after the
-  colon is "`," and not a URL.
-- Every LINE rule skips the SUBJECT, so a summary is never deleted whatever it says.
-- A trailer VALUE that only names a path (`.claude/rules`) is not an attribution. `IDENTITY` is
-  what an attribution looks like: an address, a product link, a model name.
-- The catch-all by VALUE reaches only the TRAILER BLOCK, which is git's own definition: the last
-  paragraph, every line of it `Key: value`. Without that, a body line such as
-  `Default: claude-opus-5` is deleted outright, and neither sweep can see the loss, because the
-  line names a model.
-
-To find over-reach, run the rules over a commit history and assert that every line they take
-carries one of `claude`, `anthropic`, `co-authored` or the robot. That check is coarser than the
-rules on purpose: a regex that eats prose fails it.
-
-The regexes spell `\\w` and `\\b` as ASCII classes, so a non-ASCII letter is never a word
-character.
+The rules key on the shape of an attribution, so a new wording still matches: a trailer whose key
+or value names Claude, a credit sentence, a session link, an `@anthropic.com` address. The
+`commit-msg` git hook runs `strip` and edits the message. A history test runs `carries`. Both read
+`RULES`, so the hook and the check cannot disagree. A message that only names a banned trailer in
+prose must pass through `strip` byte for byte. The limits that keep it so are in docs/hooks.md,
+"The commit-msg rules". The regexes spell `\\w` and `\\b` as ASCII classes, so a non-ASCII
+letter is never a word character.
 """
 
 from __future__ import annotations

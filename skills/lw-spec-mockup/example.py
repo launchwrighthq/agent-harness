@@ -14,12 +14,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from boards import DESKTOP_H, DESKTOP_W, GUTTER, PHONE_W, Board, render, tokens
 
+# The quotes close on the last line, so `ah comments` does not read them as a docstring.
 DEMO_TOKENS = """:root {
   --bg: #ffffff; --side: #f4f4f5; --ink: #18181b; --muted: #71717a;
   --accent: #2563eb; --active: #e4e4e7;
 }
-.dark { --bg: #09090b; --side: #18181b; --ink: #fafafa; --muted: #a1a1aa; --active: #27272a; }
-"""
+.dark { --bg: #09090b; --side: #18181b; --ink: #fafafa; --muted: #a1a1aa; --active: #27272a; }\n"""
 
 
 def main(argv: list[str]) -> int:

@@ -3,19 +3,11 @@
 
 Reads `harness.landCommand`, `harness.workspace.worktreesOnly` and
 `harness.workspace.gitConfigAllow` from `.agents/harness.toml` of the project that holds this
-file. With `worktreesOnly`, a mutation in the main checkout is refused too, for projects where
-every session works in its own worktree.
-
-The guard stops accidents by cooperating agents. It is not a sandbox. It does not follow every
-shell trick case by case: a command that involves git must have one of a few simple shapes, which
-the guard reads completely, and every other form is refused with one message that names them.
-
-    cd <literal path> && LANG=C git -C <literal path> <literal args> | head -5; echo "rc=$?"
-
-A reader step (`echo`, `ls`, `grep`, `diff`, ...) writes no file and no variable, so it may stand
-beside git.
-
-The project root is the checkout that holds this file, never a directory that the payload names.
+file, never from a directory that the payload names. With `worktreesOnly`, a mutation in the main
+checkout is refused too. The guard stops accidents by cooperating agents and is no sandbox. A
+command that involves git must have one of a few simple shapes, which the guard reads completely,
+and every other form is refused with one message that names them. docs/hooks.md, "Git command
+shapes", lists them.
 """
 
 from __future__ import annotations

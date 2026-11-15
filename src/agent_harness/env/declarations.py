@@ -1,17 +1,10 @@
 """Optional key declarations: TOML files that say which keys exist and which apps read them.
 
-A file holds `[keys.<NAME>]`, `[families."<NAME>"]` and `[environments.<env>]` tables. The
-engine reads the key fields `block`, `apps`, `secret`, `type`, `enum`, `required`, `summary`,
-`default` and `environments`, and other fields stay unread. An environment table maps a key to a
-one-line string value, which `slice --environment` reads. Several files merge in order, and a
-later file wins for each field and each value.
-
-A family declares the keys whose name holds one variable part, for example
-`[families."API_KEY_<NAME>"]` for `API_KEY_ALPHA`. It takes the key fields and `members`, the
-known parts. The members and each environment key that fits the family join the key list, after
-the last key of the family's block. Another key that fits the family is declared too.
-
-A problem names the file, the key and the field, never a value.
+A file holds `[keys.<NAME>]`, `[families."<NAME>"]` and `[environments.<env>]` tables. The key
+fields are those of docs/env.md ("Declarations"), and other fields stay unread. An environment
+table maps a key to a one-line value for `slice --environment`. Several files merge in order,
+and a later file wins for each field and each value. A key that fits a family is declared,
+member or not. A problem names the file, the key and the field, never a value.
 """
 
 from __future__ import annotations

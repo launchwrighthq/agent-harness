@@ -1,21 +1,14 @@
 #!/usr/bin/env python3
-"""Render a spec to its HTML page, however the Markdown got written.
+"""Render a spec to its HTML page, whatever wrote the Markdown.
 
-The hook runs on two events, because one is not enough:
-
-- PostToolUse on Write and Edit, so the page appears the moment the file does.
-- Stop, which asks the files what changed instead of asking which tool ran. A matcher on tool
-  names cannot see a heredoc, a `sed -i` or a script that writes a file, so the end of the turn
-  compares each changed spec with its page and renders a missing or stale page.
-
-Stop also checks each page link in the reply that ends the turn. A link that opens nothing holds
-the turn (exit 2), with the checkout that holds the page when one does. A page lives in the
-checkout that rendered it, because the page folder stays out of git.
-
-The renderer is the engine beside this hook, so the payload never picks the code that runs. A
-render goes only into the trusted project root (`CLAUDE_PROJECT_DIR`) or one of its
-`.claude/worktrees/`. A failed render is reported, so a spec with no `Date:` or `Status:` line
-is named on the first write. The spec folders and the page folder come from `[specs]`.
+PostToolUse on Write and Edit renders the page when the file appears. A matcher on tool names
+cannot see a heredoc, a `sed -i` or a script, so Stop compares each changed spec with its page
+and renders a missing or stale page. Stop also holds the turn (exit 2) when a page link of the
+reply opens nothing, and names the checkout that holds the page: the page folder stays out of
+git. The renderer is the engine beside this hook, so the payload never picks the code that runs.
+A render goes only into `CLAUDE_PROJECT_DIR` or one of its `.claude/worktrees/`. A failed render
+is reported, so a spec with no `Date:` or `Status:` line is named on the first write. The spec
+folders and the page folder come from `[specs]`.
 """
 
 from __future__ import annotations

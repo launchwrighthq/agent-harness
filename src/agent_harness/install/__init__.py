@@ -41,8 +41,7 @@ def _parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         type=Path,
-        help="an extra harness.toml to install with the package and harness.manifests"
-        " (repeatable)",
+        help="an extra harness.toml to install with the package and harness.manifests (repeatable)",
     )
     parser.add_argument(
         "--replace",

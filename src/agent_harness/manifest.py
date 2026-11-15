@@ -1,6 +1,7 @@
 """The `harness.toml` manifest: the hooks, rules, skills, git hooks and tools of one package.
 
-Paths in a manifest are relative to the folder that holds it. The format:
+Paths in a manifest are relative to the folder that holds it. `docs/install.md` describes each
+key of the format:
 
     [[hook]]          id, summary, events, matcher, script, files, timeout, codex, default
     [[hook.fixture]]  tool, command, file, prompt, content, expect, contains, decoy
@@ -8,8 +9,6 @@ Paths in a manifest are relative to the folder that holds it. The format:
     [[skill]]         id, dir, default
     [[githook]]       id, summary, name, script, files, default
     [[tool]]          id, summary, files, default
-
-`docs/install.md` describes each key.
 """
 
 from __future__ import annotations

@@ -124,9 +124,7 @@ def registries(
         found = sorted(Path(rel).name for rel in previous.links) if previous else []
     else:
         found = list_skill_dirs(root)
-    own = [
-        s for s in found if s not in planned and s not in installed_before and s not in disabled
-    ]
+    own = [s for s in found if s not in planned and s not in installed_before and s not in disabled]
     skills = [*(s.id for s in plan.skills), *own]
     links = {f"{registry.LINK_DIR}/{s}": registry.link_target(s) for s in sorted(skills)}
     adapter_dir = cfg.get("harness.adapterDir")

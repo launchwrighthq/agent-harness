@@ -1,32 +1,13 @@
 #!/usr/bin/env python3
-"""Run a harness hook with Codex's event and session context.
+"""Run a harness hook with the event and session context of Codex.
 
-`ah install --project` installs this file at `.claude/agent-harness/codex/run-hook.py` and points
-every `.codex/hooks.json` entry at it. A project at the top of its checkout gets:
-
-    python3 "$(git rev-parse --show-toplevel)/.claude/agent-harness/codex/run-hook.py" \
-        <script> <event>
-
-A project in the subfolder `<folder>` of the checkout names its own adapter:
-
-    python3 "$(git rev-parse --show-toplevel)/<folder>/.claude/agent-harness/codex/run-hook.py" \
-        <script> <event>
-
-It turns the Codex payload into the Claude Code shape that the hooks read, runs the hook with
-the interpreter of its suffix, and merges the answers:
-
-- the hook scripts come from the project that holds this file, never from a path in the
-  payload. The project is a checkout root, or a project folder inside a checkout (see
-  `own_root`). A payload `workdir` or `cwd` inside `<root>/.claude/worktrees/<name>/` selects that
-  worktree only when git reports the same common directory for it as for the root. That
-  worktree's copy of the script runs when it has one. Any other directory is data that the hooks
-  read from the payload;
-- `CLAUDE_PROJECT_DIR` is that checkout, and `CLAUDE_CODE_SESSION_ID` comes from `session_id`;
-- `exec_command` and `shell_command` become `Bash`, with `cmd` copied to `command`;
-- an `apply_patch` becomes one `Edit` event per `*** Add/Update/Delete File` path;
-- a `deny` or a `block` passes through at once. Else the first `ask` becomes a deny, and else
-  every `additionalContext` is joined. Nothing shows that Codex honors the `ask` decision, so the
-  adapter fails closed: the deny keeps the reason of the hook and says how the user goes on.
+`ah install --project` installs this file at `.claude/agent-harness/codex/run-hook.py`, and each
+`.codex/hooks.json` entry runs it as `run-hook.py <script> <event>`. The hook scripts come only
+from the project that holds this file, or from a worktree of the same repository (`own_root`).
+The adapter turns the Codex payload into the Claude Code shape, runs the hook with the
+interpreter of its suffix and merges the answers. A `deny` or a `block` passes at once, the first
+`ask` becomes a deny, and else every `additionalContext` is joined. The full contract is in
+docs/install.md, "Hook commands".
 """
 
 from __future__ import annotations

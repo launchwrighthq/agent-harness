@@ -1,21 +1,10 @@
 """Secret stores: each kind moves the values of one env file through a provider CLI.
 
-| Kind | Holds | CLI |
-|---|---|---|
-| `aws-secrets-manager` | one JSON secret per environment, named by `name` | `aws` |
-| `aws-ssm` | one SecureString parameter per key under `prefix` | `aws` |
-| `gcp-secret-manager` | one secret per environment, the env file text, named by `name` | `gcloud` |
-| `github` | one Actions secret per key, or a variable for a plain key; push only | `gh` |
-| `infisical` | one secret per key in the Infisical environment `envName` | `infisical` |
-| `file` | a copy of the env file at `path` | none |
-| `digitalocean-app` | the app-level envs of the App Platform app `app`; push only | `doctl` |
-| `ssh-file` | the env file at `path` on the ssh host `host`, backed up before a write | `ssh` |
-
-A `{env}` in `name`, `prefix`, `path`, `environment`, `envName` and `app` is the environment name.
-
-A value never goes into an argument list, because `ps` shows every argument to every account
-on the machine. A value goes on standard input, or in a 0600 temp file that the CLI reads by
-path and that is removed after the call.
+docs/env.md ("Stores") lists the kinds, their keys and their CLIs. A `{env}` in `name`, `prefix`,
+`path`, `environment`, `envName` and `app` is the environment name. A value never goes into an
+argument list, because `ps` shows every argument to every account on the machine. A value goes
+on standard input, or in a 0600 temp file that the CLI reads by path and that is removed after
+the call.
 """
 
 from __future__ import annotations

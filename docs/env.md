@@ -51,7 +51,9 @@ and `[environments.<env>]` tables of one-line values. The key fields:
 right type, as one line, into a file that holds only declared keys. A family table declares
 every key whose name fills the one `<PART>` placeholder, for example `API_KEY_<NAME>` for
 `API_KEY_ALPHA`. It takes the key fields and `members`. The members and each environment key
-of the family join the key list after the last key of the family's block.
+of the family join the key list after the last key of the family's block. Any other key that
+fits the family is declared too. Several declaration files merge in order, and a later file wins
+for each field and each value. The engine reads no other field.
 
 ## Subcommands
 
