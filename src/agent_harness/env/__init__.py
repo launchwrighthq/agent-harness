@@ -31,7 +31,8 @@ config.register_defaults(
             *("*.py", "*.js", "*.jsx", "*.mjs", "*.cjs"),
             *("*.ts", "*.tsx", "*.mts", "*.cts", "*.vue", "*.svelte"),
         ],
-        # Folder names that the reader scan and the stray file check leave out at any depth.
+        # Folders that the reader scan and the stray file check leave out: a name at any depth,
+        # or a path from the root when the entry holds a `/`, such as "app/vendor".
         "skip": [
             *("node_modules", ".venv", "venv", "dist", "build", ".claude", "__pycache__"),
             *(".next", ".nuxt", ".turbo", "coverage", ".tox", ".mypy_cache"),

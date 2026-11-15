@@ -4,6 +4,7 @@
 whose last path part is `plans` holds plans. Every other folder holds specifications. `kinds`
 gives a folder another kind (`spec`, `plan` or `qa`), badge word and status vocabulary. The kind
 decides the badge on a rendered page, and the vocabulary the statuses the renderer accepts.
+A `kinds` folder under a spec folder is a folder of its own, and the longest folder wins.
 
 Each folder can hold an `archive` folder for settled documents, and an `out` folder (`dist`)
 for the rendered pages. Both names come from the config.
@@ -19,6 +20,8 @@ from pathlib import Path
 from agent_harness import HarnessError, config
 
 ASSETS = "assets"
+# The index of a folder describes the folder, so it is no document.
+INDEX_NAME = "README.md"
 # The kinds the page template has a style for.
 KINDS = ("spec", "plan", "qa")
 # The badge word reaches the page, so it takes plain characters only.
@@ -46,14 +49,29 @@ class Layout:
     kinds: tuple[tuple[str, Domain], ...] = ()
 
     @property
+    def domain_dirs(self) -> tuple[str, ...]:
+        """The spec folders, then each `kinds` folder that sits under one of them."""
+        return (*self.dirs, *(folder for folder, _ in self.kinds if folder not in self.dirs))
+
+    @property
     def domains(self) -> tuple[Domain, ...]:
         named = dict(self.kinds)
-        return tuple(named.get(folder) or domain_for(folder) for folder in self.dirs)
+        return tuple(named.get(folder) or domain_for(folder) for folder in self.domain_dirs)
+
+    def longest_first(self) -> list[str]:
+        """The folders of `domain_dirs`, longest first, so a regex alternation or a prefix
+        search takes the most specific folder of a path."""
+        return sorted(self.domain_dirs, key=len, reverse=True)
+
+    def inner(self, folder: str) -> tuple[str, ...]:
+        """`<other>/` for each folder of `domain_dirs` under `folder`: its files are not
+        `folder`'s own."""
+        return tuple(f"{other}/" for other in self.domain_dirs if other.startswith(f"{folder}/"))
 
     def folders(self) -> list[str]:
-        """Each spec folder, then its archive folder, in config order."""
+        """Each folder of `domain_dirs`, then its archive folder, in config order."""
         found: list[str] = []
-        for folder in self.dirs:
+        for folder in self.domain_dirs:
             found += [folder, f"{folder}/{self.archive}"]
         return found
 
@@ -63,15 +81,18 @@ class Layout:
 
     def sources(self, root: Path) -> list[str]:
         """Each Markdown source under the spec folders and their archives, as a path from
-        `root`. The page folder and `assets/` hold no source."""
+        `root`. The page folder and `assets/` hold no source, and a `README.md` is no source."""
         found: list[str] = []
-        for folder in self.dirs:
+        for folder in self.domain_dirs:
             base = root / folder
-            found += sorted(
+            inner = self.inner(folder)
+            names = (
                 path.relative_to(root).as_posix()
                 for path in base.rglob("*.md")
-                if not {self.out, ASSETS} & set(path.relative_to(base).parts[:-1])
+                if path.name != INDEX_NAME
+                and not {self.out, ASSETS} & set(path.relative_to(base).parts[:-1])
             )
+            found += sorted(name for name in names if not (inner and name.startswith(inner)))
         return found
 
     def mention_re(self) -> re.Pattern[str]:
@@ -119,11 +140,19 @@ def from_config(cfg: config.Config) -> Layout:
     kinds = cfg.get("specs.kinds")
     if not isinstance(kinds, dict):
         raise HarnessError(f"specs.kinds must be a table, got {kinds!r}")
+    dirs = _strings(cfg.get("specs.dirs"), "specs.dirs")
+    named = tuple((f.strip("/"), _kind(f, v)) for f, v in kinds.items())
+    for folder, _ in named:
+        if not any(folder == d or folder.startswith(f"{d}/") for d in dirs):
+            raise HarnessError(
+                f'specs.kinds."{folder}" names a folder that is neither in specs.dirs nor under'
+                f" one of them ({', '.join(dirs)}). Add it to specs.dirs, or move the key."
+            )
     return Layout(
-        dirs=_strings(cfg.get("specs.dirs"), "specs.dirs"),
+        dirs=dirs,
         archive=_name(cfg.get("specs.archive"), "specs.archive"),
         out=_name(cfg.get("specs.out"), "specs.out"),
-        kinds=tuple((f.strip("/"), _kind(f, v)) for f, v in kinds.items()),
+        kinds=named,
     )
 
 

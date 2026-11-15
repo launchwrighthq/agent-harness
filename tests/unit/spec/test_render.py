@@ -197,3 +197,57 @@ def test_escapes_the_badge_word_of_the_folder() -> None:
     )
 
     assert html.split("|")[6] == "&lt;b&gt;QA&lt;/b&gt;"
+
+
+NESTED_LAYOUT = Layout(
+    dirs=("docs/specs",),
+    archive="archive",
+    out="dist",
+    kinds=(
+        (
+            "docs/specs/assets",
+            Domain("docs/specs/assets", "qa", "QA REPORT", ("untested", "tested")),
+        ),
+    ),
+)
+
+
+def test_gives_a_file_the_kind_and_page_folder_of_its_longest_kinds_folder() -> None:
+    html, _ = render_with_template(
+        "# R\n\nDate: 2026-01-01\nStatus: tested\n", "docs/specs/assets/r.md", SHELL, NESTED_LAYOUT
+    )
+
+    assert html.split("|")[6:8] == ["QA REPORT", "kind-qa"]
+    assert dist_for("docs/specs/assets/r.md", NESTED_LAYOUT) == "docs/specs/assets/dist/r.html"
+    assert dist_for("docs/specs/a.md", NESTED_LAYOUT) == "docs/specs/dist/a.html"
+    assert source_for("/r/docs/specs/assets/dist/r.html", NESTED_LAYOUT) == (
+        "/r/docs/specs/assets/r.md"
+    )
+
+
+QUOTE_FIX = (
+    "a blockquote cannot nest inside a list. End the list with a blank line and start the"
+    " quote at the left margin below it, or write the quoted words as text of the item"
+)
+FENCE_FIX = (
+    "a fenced code block cannot nest inside a list. End the list with a blank line and start"
+    " the fence at the left margin below it, or put a one-line command in `inline code` in the"
+    " item text"
+)
+
+
+@pytest.mark.parametrize(
+    ("markdown", "line", "reason"),
+    [
+        ("- Ask:\n  > Is it done?\n", 9, QUOTE_FIX),
+        ("1. Ask:\n\n   > Is it done?\n", 10, QUOTE_FIX),
+        ("- Run it:\n\n  ```bash\n  ah check\n  ```\n", 10, FENCE_FIX),
+    ],
+)
+def test_says_how_to_rewrite_a_block_nested_in_a_list(
+    markdown: str, line: int, reason: str
+) -> None:
+    with pytest.raises(SpecError) as refused:
+        body_of(HEAD + "## S\n\n" + markdown)
+
+    assert str(refused.value) == f"docs/specs/a.md:{line}: {reason}"

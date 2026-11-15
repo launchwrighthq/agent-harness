@@ -412,6 +412,58 @@ def env_reveal(command: str, commands: Iterable[str], scope: EnvScope | None = N
     return rest[0] if lone and lone[0] == "get" and rest else "a key"
 
 
+# The subcommands of the engine that never print a value: they print key names, counts, file
+# names, line numbers, layout findings or a short digest. `get`, `run`, `push` and `pull` are
+# not here: `get --reveal` prints a value, `run` starts a command with the values in its
+# environment, and a store command can echo what its tool prints.
+QUIET_SUBCOMMANDS = frozenset(
+    {
+        *("keys", "status", "check", "where", "layout", "diff", "template", "init"),
+        *("set", "unset", "copy", "move", "rename", "merge", "slice"),
+    }
+)
+
+
+def engine_subcommands(words: list[str], commands: Iterable[str]) -> list[str]:
+    """The word after each env engine command and its global options in the normalized
+    `words`: the subcommand of each engine run of the line."""
+    starts: list[int] = []
+    for at in range(len(words) - 1):
+        if basename(words[at]) == "ah" and words[at + 1] == "env":
+            starts.append(at + 2)
+    for prefix in commands:
+        need = normalized_words(prefix)
+        for at in range(len(words)):
+            if need and words[at : at + len(need)] == need:
+                starts.append(at + len(need))
+    found: list[str] = []
+    for at in sorted(set(starts)):
+        while at + 1 < len(words) and words[at] in ENGINE_GLOBALS:
+            at += 2
+        found.append(words[at] if at < len(words) else "")
+    return found
+
+
+def ask_env(command: str, commands: Iterable[str], key: str) -> None:
+    """Print the PreToolUse ask for an `env_reveal` answer, with the reason that applies.
+
+    When every engine run of the line has a subcommand of `QUIET_SUBCOMMANDS` and no word holds
+    `reveal`, the ask comes from an expansion elsewhere in the line, so the reason says that.
+    """
+    words = normalized_words(command)
+    subcommands = engine_subcommands(words, commands)
+    quiet = bool(subcommands) and all(sub in QUIET_SUBCOMMANDS for sub in subcommands)
+    if not quiet or any("reveal" in word for word in words):
+        ask_reveal(key)
+        return
+    shown = ", ".join(f"`env {sub}`" for sub in dict.fromkeys(subcommands))
+    ask(
+        f"The env engine prints no value for {shown}. The env command does not run alone, so "
+        "the guard cannot clear the whole line: another step holds a `$`, a backtick, a glob "
+        "or a brace. Run the env command alone in its own Bash call, then the other steps."
+    )
+
+
 def ask_reveal(key: str) -> None:
     """Print the PreToolUse ask for a `--reveal` of `key`."""
     ask(

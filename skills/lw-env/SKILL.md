@@ -68,6 +68,12 @@ of the file in its environment. The command can print them, so the guards ask th
 argument can run code or expand (`sh -c`, `python3 -c`, `node -e`, `$X`, `/proc`). Never use
 `run` to see a value: `env`, `printenv` and an interpreter always ask.
 
+## Run it alone
+
+Run each `ah env` command alone in its own Bash call: no pipe, no `;`, no `&&` and no
+`$` in another step. A line such as `ah env status; echo "exit=$?"` makes the guards ask the
+user, because they cannot clear the whole line.
+
 ## The reveal rule
 
 `ah env get <KEY> <file> --reveal` prints the value itself. Use it only when the user asks to see

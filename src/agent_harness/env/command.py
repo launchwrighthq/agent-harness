@@ -37,9 +37,11 @@ from agent_harness.env.envfile import EnvFile
 USAGE = """usage: ah env [--root DIR] [--master FILE] [--declarations FILE ...] <subcommand> [args]
 
   keys <file|app>                     the keys of a file, or the keys an app reads
-  status [<file> ...] [--matrix]      per file: key count, empty keys, keys missing against the
-                                      master, keys absent from the master; --matrix prints one
-                                      row per key with set, empty or - per file and its apps
+  status [<file> ...] [--matrix]      per file: key count, empty keys, keys missing against its
+                                      master (its own <file>.example when that is the master,
+                                      else the root master), keys absent from it; --matrix
+                                      prints one row per key with set, empty or - per file
+                                      and its apps
   check                               keys code reads and nothing declares, undeclared keys,
                                       empty required keys, stray and git-tracked env files
   where <KEY>                         each file that sets KEY, each declaration that reads it,
@@ -126,15 +128,19 @@ def cmd_status(ctx: Context, argv: list[str]) -> int:
         parts = [f"{len(values)} keys", f"{len(empty)} empty"]
         missing: list[str] = []
         extra: list[str] = []
-        if master_keys is not None:
-            missing = [k for k in master_keys if k not in values]
-            extra = [k for k in values if k not in master_keys]
+        # The master of a file is its own pair template when it has one, as in check and layout.
+        own = ctx.own_template(path)
+        expected = envfile.read(own).key_names() if own is not None else master_keys
+        against = ctx.show(own) if own is not None else "the master"
+        if expected is not None:
+            missing = [k for k in expected if k not in values]
+            extra = [k for k in values if k not in expected]
             parts += [
-                f"{len(missing)} missing against the master",
-                f"{len(extra)} not in the master",
+                f"{len(missing)} missing against {against}",
+                f"{len(extra)} not in {against}",
             ]
         ctx.out(f"{ctx.show(path)}: {', '.join(parts)}")
-        for label, keys in (("empty", empty), ("missing", missing), ("not in the master", extra)):
+        for label, keys in (("empty", empty), ("missing", missing), (f"not in {against}", extra)):
             if keys:
                 ctx.out(f"  {label}: {' '.join(keys)}")
     return 0

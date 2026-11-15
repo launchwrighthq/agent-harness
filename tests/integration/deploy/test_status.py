@@ -27,6 +27,9 @@ with open(os.environ["FAKE_CALLS"], "a") as log:
     log.write("gh " + " ".join(args) + "\\n")
 if args[:2] == ["auth", "status"]:
     sys.exit(0)
+if args[0] == "api" and args[1].startswith("repos/") and "/actions/" not in args[1]:
+    print('{"full_name": "example-org/example-app"}')
+    sys.exit(0)
 if args[:2] == ["run", "list"]:
     print((data / "runs.json").read_text())
     sys.exit(0)
@@ -143,11 +146,13 @@ def test_makes_only_read_calls(project: Path) -> None:
     run_ah(project, "--json")
 
     calls = (project.parent / "calls.log").read_text().splitlines()
-    assert calls[0] == (
+    assert calls[:2] == [
+        "gh api repos/{owner}/{repo} --jq .full_name",
         "gh run list --workflow=deploy.yml --limit 200 --json attempt,conclusion,createdAt,"
-        "databaseId,displayTitle,event,headBranch,headSha,startedAt,status,updatedAt,workflowName"
-    )
+        "databaseId,displayTitle,event,headBranch,headSha,startedAt,status,updatedAt,workflowName",
+    ]
     reads = (
+        "gh api repos/{owner}/{repo} --jq .full_name",
         "gh run list ",
         "gh api /repos/{owner}/{repo}/actions/runs/",
         "lw deploy status ",

@@ -525,6 +525,45 @@ def test_names_the_key_when_it_asks_to_confirm_a_reveal(project: Path) -> None:
     assert "prints the value of API_KEY" in done.stdout
 
 
+def test_asks_to_run_a_quiet_subcommand_alone_after_a_step_with_an_expansion(
+    project: Path,
+) -> None:
+    command = 'lw env check; echo "exit=$?"'
+
+    done = hook_project.run_hook(
+        project, HOOK, "PreToolUse", hook_project.bash_payload(command, project)
+    )
+
+    assert hook_project.decision(done) == "ask"
+    assert "the guard cannot clear the whole line" in done.stdout
+    assert "prints the value" not in done.stdout
+
+
+# A bracket expression that the guard cannot read as a range, in program text: it stands for one
+# character, so the word cannot match a credential name.
+BRACKET_TEXT = [
+    "python3 - <<'EOF'\nimport subprocess\nprint('disable = [\"instance-agnostic\"]')\nEOF",
+    "python3 - <<'EOF'\nimport subprocess\nfolders = set(path.parts[:-1])\nEOF",
+    'node -e \'require("child_process"); const x = ["instance-agnostic"]\'',
+]
+
+
+def test_lets_a_bracket_word_that_cannot_match_a_credential_name_pass(project: Path) -> None:
+    got = hook_project.verdicts(project, HOOK, BRACKET_TEXT)
+
+    assert list(zip(BRACKET_TEXT, got, strict=True)) == [(c, "silent") for c in BRACKET_TEXT]
+
+
+def test_says_that_a_glob_could_match_a_credential_file(project: Path) -> None:
+    done = hook_project.run_hook(
+        project, HOOK, "PreToolUse", hook_project.bash_payload("cat .e*", project)
+    )
+
+    assert hook_project.decision(done) == "deny"
+    assert "`.e*` could match a credential file" in done.stdout
+    assert "is a credential file" not in done.stdout
+
+
 def test_names_the_matched_path_and_the_env_command_in_a_deny(project: Path) -> None:
     done = hook_project.run_hook(
         project, HOOK, "PreToolUse", hook_project.bash_payload("cat .env.local", project)

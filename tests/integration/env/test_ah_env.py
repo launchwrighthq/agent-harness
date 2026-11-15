@@ -315,3 +315,28 @@ def test_runs_a_command_with_the_keys_of_a_file_and_passes_its_exit_code(repo: P
     assert run(sys.executable, "-c", CHILD) == 0
     assert run(sys.executable, "-c", "raise SystemExit(4)") == 4
     assert ah.printed_values() == []
+
+
+def test_checks_only_files_that_git_does_not_ignore_and_skips_a_vendored_path(
+    repo: Path,
+) -> None:
+    files = {
+        ".gitignore": "/generated/\n",
+        "app/main.py": 'import os\nos.environ["DATABASE_URL"]\n',
+        "generated/client.py": 'import os\nos.environ["IGNORED_READ_KEY"]\n',
+        "generated/sample/.env.local": "",
+        "third_party/lib/conf.py": 'import os\nos.getenv("VENDORED_READ_KEY")\n',
+        "app/vendor/conf.py": 'import os\nos.getenv("NESTED_VENDOR_KEY")\n',
+    }
+    for name, text in files.items():
+        (repo / name).parent.mkdir(parents=True, exist_ok=True)
+        (repo / name).write_text(text, encoding="utf-8")
+    (repo / ".agents").mkdir()
+    (repo / ".agents/harness.toml").write_text(
+        '[env]\nskip = ["node_modules", "third_party", "app/vendor"]\n', encoding="utf-8"
+    )
+    ah = Ah(repo)
+
+    out = ah("check")
+
+    assert out == "env check: no finding\n"

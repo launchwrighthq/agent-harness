@@ -36,6 +36,7 @@ COMMANDS: dict[str, tuple[str, str, str]] = {
     "work-status": ("agent_harness.work", "main", "report the work in progress from evidence"),
     "branch-audit": ("agent_harness.work", "branch_audit", "judge what each branch holds"),
     "land-results": ("agent_harness.land_results", "main", "read the failures of a gate log"),
+    "worktree": ("agent_harness.worktree", "main", "add or remove a worktree in .claude/worktrees"),
 }
 
 

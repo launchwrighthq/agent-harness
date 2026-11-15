@@ -17,6 +17,10 @@ ah deploy-status [--env <env>] [--steps] [--history [<n>h|<n>d]] [--json]
 
 ## The two halves
 
+The CI half first reads the repository with `gh api repos/<owner>/<name>`. A 404 there means
+that the active `gh` account cannot see the repository, and the command says so and names
+`gh auth status` and `gh auth switch`. A workflow error would blame the wrong thing.
+
 The CI half reads the runs of the deploy workflows through `gh`. It folds the jobs of a called
 workflow and of a matrix onto the job key of the workflow file. It maps each job key to a phase
 with `deploy.phases`. The serving half runs the read method of each target of
@@ -52,7 +56,7 @@ Section `[deploy]` of `.agents/harness.toml`. Every key has a default.
 | Key | Default | Meaning |
 |---|---|---|
 | `ci.provider` | `github` | The CI provider. Only `github` (through `gh`) exists. |
-| `ci.workflows` | `["deploy.yml"]` | The deploy workflow files. An empty list leaves out the CI half. |
+| `ci.workflows` | `["deploy.yml"]` | The deploy workflow files. An empty list leaves out the CI half. When the config does not set the key and the repository has no `deploy.yml`, the command prints `no deploy workflow configured` and exits 0. A missing workflow that the config names fails. |
 | `ci.jobPrefix` | `""` | The prefix of the jobs of a called workflow, for example `deploy / `. |
 | `ci.repo` | `""` | The repository as `<owner>/<name>`. Every `gh` call names it, so the command runs outside a checkout of the repository. Empty means the repository of the checkout. |
 | `environments.<env>.match` | none | A table, or a list of tables where any one may hold. A table holds when each of its keys holds: `branch` (a name or a list), `runName` (a glob on the run name), `workflow` (a workflow file), `since` (the earliest creation time), `event` (the trigger, a name or a list, for example `workflow_dispatch`). With no environment, one view covers every run. |
@@ -183,6 +187,6 @@ roles = { web = "app-web-", worker = "app-worker-" }
 
 ## Read-only
 
-The command runs `gh run list`, `gh api` GETs, `gh run view --log` (only for `logPhases`),
+The command runs `gh run list`, `gh api` GETs (the repository and the jobs of a run), `gh run view --log` (only for `logPhases`),
 `gh auth status`, `git cat-file` and `git rev-list`, and the read method of each target. A
 `command` target and `versionCommand` run what the project configures, so keep them read-only.

@@ -139,6 +139,19 @@ PLACEHOLDER_RE = re.compile(
 )
 
 
+# The TypeScript renderer that this port copies is its reference, and it refuses these two
+# blocks inside a list item, so the refusal says how to rewrite the source.
+NESTED_QUOTE = (
+    "a blockquote cannot nest inside a list. End the list with a blank line and start the quote"
+    " at the left margin below it, or write the quoted words as text of the item"
+)
+NESTED_FENCE = (
+    "a fenced code block cannot nest inside a list. End the list with a blank line and start"
+    " the fence at the left margin below it, or put a one-line command in `inline code` in the"
+    " item text"
+)
+
+
 class SpecError(Exception):
     """A refusal. The message names the file, and the line where there is one."""
 
@@ -170,12 +183,13 @@ def _basename(path: str) -> str:
 
 
 def _domain_re(layout: Layout) -> re.Pattern[str]:
-    names = "|".join(re.escape(folder) for folder in layout.dirs)
+    names = "|".join(re.escape(folder) for folder in layout.longest_first())
     return re.compile(rf"(?:^|/)({names})/")
 
 
 def domain_of(source: str, layout: Layout) -> Domain:
-    """The spec folder of `source`. A source outside every folder has no kind, so it fails."""
+    """The spec folder of `source`: the longest folder of the layout that holds it. A source
+    outside every folder has no kind, so it fails."""
     match = _domain_re(layout).search(_posix(source))
     found = next((d for d in layout.domains if match and d.dir == match.group(1)), None)
     if found is None:
@@ -193,7 +207,7 @@ def dist_for(source: str, layout: Layout) -> str:
 
 def source_for(page: str, layout: Layout) -> str:
     """The source of a page: the inverse of `dist_for` for a `.md` source."""
-    names = "|".join(re.escape(folder) for folder in layout.dirs)
+    names = "|".join(re.escape(folder) for folder in layout.longest_first())
     out = re.escape(layout.out)
     page = re.sub(rf"(/(?:{names})/){out}/", r"\1", page, count=1)
     return re.sub(r"\.html\Z", ".md", page, count=1)
@@ -685,7 +699,7 @@ class Renderer:
             if following.startswith(("```", "#", "|")):
                 break
             if js_trim_start(following).startswith(">"):
-                self.fail(self.i, "a blockquote cannot nest inside a list")
+                self.fail(self.i, NESTED_QUOTE)
             self.check_line(following, self.i)
             cont.append(js_trim(following))
             self.i += 1
@@ -727,9 +741,9 @@ class Renderer:
                 break
             trimmed = js_trim_start(line)
             if trimmed.startswith(">"):
-                self.fail(self.i, "a blockquote cannot nest inside a list")
+                self.fail(self.i, NESTED_QUOTE)
             if trimmed.startswith("```"):
-                self.fail(self.i, "a fenced code block cannot nest inside a list")
+                self.fail(self.i, NESTED_FENCE)
             self.check_line(line, self.i)
             buffer.append(js_trim(line))
             self.i += 1
@@ -870,13 +884,22 @@ def render_file(
 
     html, sections = render(markdown, src, layout, asset_check)
     target = base / page
-    target.parent.mkdir(parents=True, exist_ok=True)
-    with target.open("w", encoding="utf-8", newline="") as out:
-        out.write(html)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("w", encoding="utf-8", newline="") as out:
+            out.write(html)
+    except OSError as error:
+        raise SpecError(f"{src}: cannot write {page}: {error.strerror or error}") from error
     return page, sections
 
 
 USAGE = "usage: ah spec render <file.md> [--out <dir>] | --all"
+
+
+def refusal_line(src: str, error: SpecError) -> str:
+    """The line of one refusal of `--all`: it names `src` and never comes out empty."""
+    text = str(error).strip() or f"{type(error).__name__} gave no reason"
+    return text if text.startswith(src) else f"{src}: {text}"
 
 
 def render_all(layout: Layout, cwd: Path) -> int:
@@ -887,7 +910,7 @@ def render_all(layout: Layout, cwd: Path) -> int:
         try:
             page, sections = render_file(src, layout, cwd=cwd)
         except SpecError as error:
-            print(str(error), file=sys.stderr)
+            print(refusal_line(src, error), file=sys.stderr)
             continue
         written += 1
         print(f"wrote {page} ({sections} sections)")

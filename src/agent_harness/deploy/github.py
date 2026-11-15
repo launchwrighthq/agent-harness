@@ -33,6 +33,9 @@ RUN_FIELDS = (
 
 _FRACTION = re.compile(r"^(.*\.\d{6})\d*(.*)$")
 
+# How `gh` reports a 404 of the API.
+NOT_FOUND = re.compile(r"HTTP 404|Not Found")
+
 
 def moment(text: object) -> datetime | None:
     """An RFC 3339 time as GitHub writes it, or None for an empty value.
@@ -225,6 +228,22 @@ class GitHub:
     def log(self, job_id: int) -> str:
         """The whole log of one finished job. A job in flight has no log yet."""
         return self.gh(["run", "view", "--job", str(job_id), "--log", *self.flag])
+
+    def check_repo(self) -> None:
+        """Fails when the active `gh` account cannot see the repository. GitHub answers 404 for a
+        private repository that the account cannot read, and `gh run list` then blames the
+        workflow."""
+        try:
+            self.gh(["api", f"repos/{self.repo or '{owner}/{repo}'}", "--jq", ".full_name"])
+        except HarnessError as error:
+            if not NOT_FOUND.search(str(error)):
+                raise
+            shown = self.repo or "of this checkout"
+            raise HarnessError(
+                f"the active gh account cannot see the repository {shown}. Check the gh identity"
+                " of this project: `gh auth status` names the active account, and"
+                f" `gh auth switch` picks another. ({error})"
+            ) from error
 
     def check_auth(self) -> None:
         """Fails when `gh` holds no token. An empty run list must never read as no deploy."""

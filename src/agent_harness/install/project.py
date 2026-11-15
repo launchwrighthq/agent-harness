@@ -30,6 +30,7 @@ from agent_harness.install.plan import (
     ENGINE_PARTS,
     EXTRA_DIR,
     GITHOOK_DIR,
+    INTERPRETERS,
     LOCK_FILE,
     MANIFEST_FILE,
     PACKAGE_NAME,
@@ -248,10 +249,28 @@ def project_copies(
     return sorted(found)
 
 
+def _is_dispatcher(rel: str) -> bool:
+    """True for `.githooks/<name>`, the path of a dispatcher, which a project git hook can hold."""
+    folder, _, name = rel.rpartition("/")
+    return folder == GITHOOK_DIR and bool(name)
+
+
+def _githook_advice(hooks: Sequence[str]) -> str:
+    return (
+        f"\nproject git hooks that the dispatcher would replace: {', '.join(hooks)}.\n"
+        "Such a hook can hold a rule of the project, such as a landing rule in"
+        " push-to-checkout. To keep one, keep it in .git/hooks/<name>, which the dispatcher runs"
+        " (git does not version that folder, so each clone needs its own copy), or declare it as"
+        " a [[githook]] of a project manifest that harness.manifests names (with the harness"
+        " git hook of the same name in harness.disable)."
+    )
+
+
 def _take_over(root: Path, copies: Sequence[tuple[str, str]], replace: bool, out: Out) -> int:
     """Refuse a project copy, or with `replace` remove its extra files. Returns the changes."""
     if not copies:
         return 0
+    hooks = [rel for rel, kind in copies if kind == "differs" and _is_dispatcher(rel)]
     if not replace:
         lines = [f"  {rel} {kind}" for rel, kind in copies]
         raise HarnessError(
@@ -259,10 +278,17 @@ def _take_over(root: Path, copies: Sequence[tuple[str, str]], replace: bool, out
             + "\n".join(lines)
             + "\nMove each file you still need out of these folders, then install again. Or run"
             " ah install --project --replace to replace the copy and remove its extra files."
+            + (_githook_advice(hooks) if hooks else "")
         )
     changes = 0
     for rel, kind in copies:
-        if kind == "differs":
+        if kind == "differs" and rel in hooks:
+            name = rel.rsplit("/", 1)[-1]
+            out(
+                f"replaced {rel}: a project git hook; its own rule no longer runs."
+                f" Keep it in .git/hooks/{name} or as a [[githook]] of a project manifest."
+            )
+        elif kind == "differs":
             out(f"replaced {rel}: a project copy")
         elif remove(root, rel):
             out(f"removed {rel}: a file of a project copy")
@@ -337,6 +363,9 @@ def install_project(
     )
     if write_text(root, LOCK_FILE, lock.to_text(), lambda _line: None):
         changes += 1
+    # Information only: the project removes an old copy itself (docs/install.md).
+    for line in likely_duplicates(root, plan):
+        out(line)
     out(
         f"ah install: {len(plan.hooks)} hooks, {len(plan.rules)} rules, {len(plan.skills)} skills,"
         f" {len(plan.githooks)} git hooks; "
@@ -377,6 +406,9 @@ def installed_manifests(root: Path, lock: Lock) -> list[Manifest]:
     return out
 
 
+# The folder of every rule file that Claude Code loads. The harness owns only `RULE_DIR` in it.
+PROJECT_RULE_DIR = ".claude/rules"
+
 # The hook files that a project also edits. The check reads them as JSON, so the layout of a
 # hand-written project hook is no difference.
 HOOK_FILES = (registry.SETTINGS_FILE, registry.CODEX_FILE)
@@ -406,14 +438,77 @@ def project_hooks(root: Path) -> list[str]:
     return lines
 
 
+def _script_stem(word: str) -> str | None:
+    """The file name of a script word without its suffix, or None for a word that is no script."""
+    name = word.strip("\"'").rsplit("/", 1)[-1]
+    stem, dot, suffix = name.rpartition(".")
+    return stem if dot and f".{suffix}" in INTERPRETERS and stem else None
+
+
+def likely_duplicates(root: Path, plan: Plan) -> list[str]:
+    """One line per project hook or skill that likely duplicates a harness one.
+
+    A project hook entry is a likely duplicate when a word of its command is a script with the
+    file name of a harness hook script, suffix aside. A project skill is one when its folder name
+    is a harness skill name without the `lw-` prefix.
+    """
+    hooks = {_script_stem(h.script): h.id for h in plan.hooks}
+    lines = []
+    for rel in HOOK_FILES:
+        for event, groups in registry.project_entries(_read(root / rel), rel).items():
+            for group in groups:
+                if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
+                    continue
+                for entry in group["hooks"]:
+                    command = entry.get("command") if isinstance(entry, dict) else None
+                    if not isinstance(command, str):
+                        continue
+                    for word in command.split():
+                        hook_id = hooks.get(_script_stem(word))
+                        if hook_id is None:
+                            continue
+                        name = word.strip("\"'").rsplit("/", 1)[-1]
+                        lines.append(
+                            f"{rel} {event} {group.get('matcher', '-')}: a likely duplicate of"
+                            f" the harness hook {hook_id} (same script name {name}): {command}"
+                        )
+                        break
+    planned = {s.id for s in plan.skills}
+    for name in list_skill_dirs(root):
+        if name not in planned and f"lw-{name}" in planned:
+            lines.append(f"{SKILL_DIR}/{name}: a likely duplicate of the harness skill lw-{name}")
+    return lines
+
+
+def duplicate_lines(root: Path, cfg: Config) -> list[str]:
+    """The likely duplicates of an installed project, from the manifests that the lock names."""
+    lock = require_lock(root)
+    if any(not (root / m.get("file", "")).is_file() for m in lock.manifests):
+        return []
+    return likely_duplicates(root, plan_for(root, cfg, installed_manifests(root, lock)))
+
+
 def rule_sizes(root: Path) -> list[tuple[str, int, int]]:
     """Each installed rule with its line count and character count, sorted by path."""
     lock = require_lock(root)
-    out = []
-    for rel in sorted(r for r in lock.files if r.startswith(f"{RULE_DIR}/")):
-        text = (root / rel).read_text(encoding="utf-8")
-        out.append((rel, len(text.splitlines()), len(text)))
-    return out
+    installed = sorted(rel for rel in lock.files if rel.startswith(f"{RULE_DIR}/"))
+    return [_size(root, rel) for rel in installed]
+
+
+def project_rule_sizes(root: Path) -> list[tuple[str, int, int]]:
+    """Each rule file of the project: a `.md` file under `.claude/rules/` outside the harness
+    folder, which Claude Code loads too. Sorted by path."""
+    folder = root / PROJECT_RULE_DIR
+    if not folder.is_dir():
+        return []
+    found = (path.relative_to(root).as_posix() for path in folder.rglob("*.md") if path.is_file())
+    own = sorted(rel for rel in found if not rel.startswith(f"{RULE_DIR}/"))
+    return [_size(root, rel) for rel in own]
+
+
+def _size(root: Path, rel: str) -> tuple[str, int, int]:
+    text = (root / rel).read_text(encoding="utf-8")
+    return rel, len(text.splitlines()), len(text)
 
 
 def require_lock(root: Path) -> Lock:

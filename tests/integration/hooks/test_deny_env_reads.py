@@ -194,6 +194,21 @@ def test_names_the_key_when_it_asks_to_confirm_a_reveal(project: Path) -> None:
     assert "prints the value of API_KEY" in answer["permissionDecisionReason"]
 
 
+def test_asks_to_run_a_quiet_subcommand_alone_after_a_step_with_an_expansion(
+    project: Path,
+) -> None:
+    command = 'ah env status; echo "exit=$?"'
+
+    done = hook_project.run_hook(
+        project, HOOK, "PreToolUse", hook_project.bash_payload(command, project)
+    )
+
+    answer = json.loads(done.stdout)["hookSpecificOutput"]
+    assert answer["permissionDecision"] == "ask"
+    assert "the guard cannot clear the whole line" in answer["permissionDecisionReason"]
+    assert "prints the value" not in answer["permissionDecisionReason"]
+
+
 def test_exempts_a_root_option_that_names_a_folder_of_the_project_by_its_full_path(
     project: Path,
 ) -> None:

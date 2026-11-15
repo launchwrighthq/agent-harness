@@ -23,8 +23,11 @@ merge. It does not allow a push to origin, a deploy or an account action.
 
    An empty gate command stops the land command. Ask the user for the gate, or for a landing
    without it.
-2. Work from the task branch's own worktree. Read `git status` and the staged diff, then commit
-   only the paths of the task. Never sweep up a peer's change.
+2. Work from the task branch's own worktree. When there is none, make it with
+   `ah worktree add <name> [--from <ref>]`: it creates `.claude/worktrees/<name>` of the main
+   checkout on the new branch `<name>`, from `harness.baseBranch` by default, and prints the path.
+   Read `git status` and the staged diff, then commit only the paths of the task. Never sweep up
+   a peer's change.
 3. Run the land command (`harness.landCommand`, by default
    `bash .claude/skills/lw-land/land.sh`). It merges the base branch into the branch, runs the
    gate, and pushes HEAD into the checkout of the base branch through the `push-to-checkout` git
@@ -36,7 +39,8 @@ merge. It does not allow a push to origin, a deploy or an account action.
 5. When a `(red on the merged base too)` line names files, report them: the gate was red, and
    the landing added none of its failures.
 6. After a landing, the branch and its worktree stay. Run the `lw-branch-audit` skill to see
-   whether they are safe to delete. Delete only what the user names.
+   whether they are safe to delete. Delete only what the user names. `ah worktree remove <name>`
+   removes a clean worktree and keeps its branch.
 
 | Exit | Meaning | What to do |
 |---|---|---|

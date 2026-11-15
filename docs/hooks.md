@@ -10,7 +10,7 @@ the config keys it reads, the manifest format and the limits of the guards.
 |---|---|---|
 | `workspace-guard` | PreToolUse (Bash) | Refuses a git mutation of another session's checkout, `git stash`, whole-tree staging, a ref-only move and every git command that is not a simple shape. |
 | `deny-foreign-branch-moves` | PreToolUse (Bash) | Refuses a ref-only move of a branch that another worktree has checked out. |
-| `worktree-path-guard` | PreToolUse (Bash) | Refuses `git worktree add` at a path other than `.claude/worktrees/<name>`. |
+| `worktree-path-guard` | PreToolUse (Bash) | Refuses `git worktree add` at a path other than `.claude/worktrees/<name>`. `ah worktree add <name>` makes a worktree there, so every guard lets it pass. |
 | `deny-env-reads` | PreToolUse (Bash and the file tools) | Refuses any tool call that names a guarded credential file, and refuses every env file but a `.example` to the file tools. |
 | `bash-read-guard` | PreToolUse (Bash) | Refuses a shell reader (`cat`, `grep`, `sed`, ...) of an env, key or credential file. |
 | `env-drift` | SessionStart | Says when a local env file holds edits that a secret store has not received. |
@@ -144,8 +144,34 @@ Every subcommand passes, writes included. The engine masks every value unless `-
 given, and the `secrets` rule allows `--reveal` only when the user asked to see that value. So a
 run with `--reveal` gets an `ask`, and Claude Code asks the user to confirm it. Under Codex, the
 adapter turns the `ask` into a `deny`. Its reason says that the user runs the reveal themselves,
-or confirms it in Claude Code. A credential backup (`.env.production.bak`, `.local/secrets/`) is refused even to the
+or confirms it in Claude Code.
+
+The test of a reveal fails closed. An engine run that is not alone in its line, with a `$`, a
+backtick, a glob or a brace anywhere outside single quotes, also asks: the guard cannot see
+which words that character makes. When each engine run of such a line is a subcommand that
+never prints a value (`keys`, `status`, `check`, `where`, `layout`, `diff`, `template`, `init`,
+`set`, `unset`, `copy`, `move`, `rename`, `merge`, `slice`), the reason says so. It says that
+the env command does not run alone, and to run it alone in its own Bash call.
+`ah env status; echo "exit=$?"` gets that ask, and `ah env status` alone passes.
+
+A credential backup (`.env.production.bak`, `.local/secrets/`) is refused even to the
 engine.
+
+## Worktrees
+
+A worktree goes in `<main checkout>/.claude/worktrees/<name>`, on a branch named `<name>`. The
+engine makes and removes one without a path, so no guard needs to read the command:
+
+```bash
+python3 .claude/agent-harness/bin/ah worktree add fix-login            # from harness.baseBranch
+python3 .claude/agent-harness/bin/ah worktree add fix-login --from main
+python3 .claude/agent-harness/bin/ah worktree remove fix-login
+```
+
+`add` refuses a name with a `/`, a leading `.` or `-`, or `..`, a folder that exists and a branch
+that exists. It prints the path of the new worktree. `remove` refuses a folder that is no
+worktree of this repository, a worktree with a changed or untracked file, and the worktree that
+the command runs in. It keeps the branch: the `lw-branch-audit` skill decides about the branch.
 
 ## Git configuration in an agent command
 
@@ -295,7 +321,11 @@ wherever the command holds them. A key or certificate name (`*.pem`, `*.key`, `*
 `id_rsa*`, `id_ed25519*`) counts only when it holds a `/` or names a file in the command's
 directory. It counts by name alone when the command can read in another directory: `cd`, `find`,
 `xargs`, a `-C` flag, `--git-dir`, `--work-tree` or `chdir`. A glob that can expand to one of the
-names is refused. The guard expands braces first, and a range such as `{j..l}` reads as `*`.
+names is refused, and the reason says that the word could match a credential file. The guard
+expands braces first, and a range such as `{j..l}` reads as `*`. A bracket expression stands for
+one character. A bracket that the guard cannot read as a set, such as the reversed range `e-a`
+of the TOML list `["instance-agnostic"]`, reads as any one character, so such a word passes when
+no credential name has its length and its other characters.
 Program text puts a comma, a bracket, a brace, a parenthesis or a quote next to a glob word, as in
 `subprocess.run(['cat *.pem'], shell=True)`. A shell that the program starts expands the word
 alone, so the glob scan also reads each word without that punctuation.
@@ -388,6 +418,8 @@ checks the history, so the hook and the check apply the same rules.
 | `spec-format` | `rules/spec-format.md` | `docs/specs/**`, `docs/superpowers/plans/**` |
 | `operator-report` | `rules/operator-report.md` | Every file |
 | `codex` | `rules/codex.md` | Every file |
+| `instance-agnostic` | `rules/instance-agnostic.md` | Every file |
+| `code-limits` | `rules/code-limits.md` | Every file |
 
 The rules install to `.claude/rules/lw/`. They hold no project fact: a rule names the config key
 and the `ah config get` command instead, for example `harness.baseBranch`.

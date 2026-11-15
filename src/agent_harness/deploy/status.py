@@ -191,6 +191,8 @@ class Context:
     fetch: Fetch
     now: datetime
     steps: bool = False
+    # True when `.agents/harness.toml` does not set `deploy.ci.workflows`.
+    default_workflows: bool = False
     warnings: list[str] = field(default_factory=list)
     log_rules: Mapping[str, LogRules] = field(default_factory=dict)
     summaries: Mapping[str, re.Pattern[str]] = field(default_factory=dict)
@@ -213,14 +215,40 @@ def workflows(section: Mapping[str, Any]) -> list[str]:
     return list(names)
 
 
+class NoDeployWorkflow(HarnessError):
+    """The default `deploy.ci.workflows` names a workflow that the repository does not have."""
+
+
+# How `gh run list` reports a workflow file that the repository does not have.
+WORKFLOW_MISSING = re.compile(r"workflow \S+ not found|could not find any workflows named")
+
+
 def all_runs(ctx: Context) -> list[Run]:
-    """The runs of every deploy workflow, newest first."""
+    """The runs of every deploy workflow, newest first.
+
+    Raises `NoDeployWorkflow` when the config keeps the default workflow list and the
+    repository has none of them. A missing workflow that the config names fails as it is.
+    """
     names = workflows(ctx.section)
     if not names or ctx.github is None:
         return []
+    ctx.github.check_repo()
     runs: list[Run] = []
+    missing: list[str] = []
     for name in names:
-        runs.extend(ctx.github.runs(name))
+        try:
+            runs.extend(ctx.github.runs(name))
+        except HarnessError as error:
+            if not ctx.default_workflows or not WORKFLOW_MISSING.search(str(error)):
+                raise
+            missing.append(name)
+    if missing and len(missing) == len(names):
+        raise NoDeployWorkflow(
+            "deploy-status: no deploy workflow configured. deploy.ci.workflows keeps its default"
+            f" ({', '.join(names)}), and the repository has no such workflow. Set"
+            " deploy.ci.workflows in .agents/harness.toml to the file names of the deploy"
+            " workflows."
+        )
     if not runs:
         ctx.github.check_auth()
     runs.sort(key=lambda r: r.created.isoformat() if r.created else "", reverse=True)
@@ -716,7 +744,9 @@ def build_context(
     fetch: Fetch,
     now: datetime,
 ) -> Context:
-    section = config.load(root).get("deploy")
+    loaded = config.load(root)
+    section = loaded.get("deploy")
+    own_ci = (loaded.values.get("deploy") or {}).get("ci") or {}
     if not isinstance(section, Mapping):
         raise HarnessError("deploy must be a table")
     command = section.get("versionCommand") or []
@@ -742,6 +772,7 @@ def build_context(
         fetch=fetch,
         now=now,
         steps=steps,
+        default_workflows="workflows" not in own_ci,
         log_rules=rules_of(section),
         summaries=summaries_of(section),
     )
@@ -766,7 +797,15 @@ def report(
         if not chosen:
             known = ", ".join(e.name for e in ctx.envs if e.rules) or "none"
             raise HarnessError(f"--env {args.env} is not in deploy.environments (known: {known})")
-    runs = all_runs(ctx)
+    try:
+        runs = all_runs(ctx)
+    except NoDeployWorkflow as notice:
+        if args.json:
+            kind = "current" if hours is None else "history"
+            print(json.dumps({"view": kind, "environments": [], "notice": str(notice)}), file=out)
+        else:
+            print(notice, file=out)
+        return 0
     folder = ctx.section.get("records") or ""
     if not isinstance(folder, str):
         raise HarnessError("deploy.records must be a folder path")

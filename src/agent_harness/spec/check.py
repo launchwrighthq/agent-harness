@@ -40,7 +40,7 @@ def status_word(root: Path, name: str) -> str | None:
 
 def archive_findings(root: Path, layout: Layout, docs: Docs) -> list[str]:
     found: list[str] = []
-    for folder in layout.dirs:
+    for folder in layout.domain_dirs:
         archive = f"{folder}/{layout.archive}"
         for name in docs[folder]:
             status = status_word(root, name)
@@ -86,7 +86,7 @@ def resolves(root: Path, layout: Layout, target: str) -> bool:
     """Whether `target` exists. A page in an `out` folder resolves through its `.md` source."""
     if (root / target).exists():
         return True
-    for folder in layout.dirs:
+    for folder in layout.longest_first():
         pages = f"{folder}/{layout.out}/"
         if target.startswith(pages) and target.endswith(".html"):
             source = f"{folder}/{target[len(pages) : -len('.html')]}.md"
@@ -98,7 +98,7 @@ def in_history(name: str, layout: Layout) -> bool:
     """Whether `name` sits in an archive or a page folder, whose paths are history."""
     return any(
         name.startswith((f"{folder}/{layout.archive}/", f"{folder}/{layout.out}/"))
-        for folder in layout.dirs
+        for folder in layout.domain_dirs
     )
 
 
@@ -120,9 +120,11 @@ def pointer_findings(root: Path, layout: Layout, files: list[str]) -> list[str]:
 
 def asset_findings(root: Path, layout: Layout) -> list[str]:
     found: list[str] = []
-    for folder in layout.dirs:
+    for folder in layout.domain_dirs:
         assets = f"{folder}/{ASSETS}/"
-        names = tree.tracked(root, [folder])
+        # A file under a more specific folder of the layout belongs to that folder.
+        inner = layout.inner(folder)
+        names = [n for n in tree.tracked(root, [folder]) if not (inner and n.startswith(inner))]
         text = "\n".join(
             tree.read(root, name)
             for name in names

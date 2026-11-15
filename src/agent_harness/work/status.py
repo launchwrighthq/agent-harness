@@ -7,7 +7,8 @@ Compaction drops the middle of a long run, and a message typed while the agent i
 becomes a prompt it sees again. The files under ~/.claude/projects keep both.
 
 A result body can echo a token and the digest is pasted into a chat, so only a spawn's tool
-result is read: one line of an agent's report, a workflow's summary, or an error.
+result is read: one line of an agent's report, a workflow's summary, or an error. The user's own
+shell commands and their output are dropped for the same reason.
 The spec folders come from `[specs] dirs`, the audits from the spec store, the base from config.
 """
 
@@ -41,10 +42,14 @@ ALL_DONE = "all done"
 # section may fold it into one count line. Every other state keeps its own line.
 FOLDABLE_AUDITS = (ALL_DONE, NOT_AUDITED)
 
-# Claude Code files slash commands, their output and agent notifications as user records too.
-# A prompt opening with one is harness text, not a request.
+# Claude Code files slash commands, their output, agent notifications and the user's own shell
+# commands with their output as user records too. A prompt opening with one is not a request,
+# and shell output can echo a token, so the digest drops it.
 CHAT_MARKERS = (
     "<task-notification>",
+    "<bash-input>",
+    "<bash-stdout>",
+    "<bash-stderr>",
     "<command-name>",
     "<local-command-stdout>",
     "<local-command-stderr>",
@@ -205,6 +210,9 @@ class Digest:
     """
 
     session: SessionInfo
+    # The checkout that holds the session's cwd when it is not the repository that the command
+    # runs in. None for this repository or an unknown cwd.
+    repository: str | None = None
     spec: SpecInfo | None = None
     agents: list[TaskRow] = field(default_factory=list)
     background: list[TaskRow] = field(default_factory=list)
@@ -423,6 +431,8 @@ def chat_rows(records: list[Record]) -> list[ChatRow]:
         if attachment.get("type") != "queued_command":
             continue
         origin = attachment.get("origin") or {}
+        if text_of(attachment.get("prompt")).strip().startswith(CHAT_MARKERS):
+            continue
         if origin.get("kind") == "human":
             seeds.append((index, at, _queued_text(attachment.get("prompt")), "human", True))
         elif origin.get("kind") == "peer":
@@ -972,6 +982,24 @@ def _common_dir(path: Path) -> str | None:
     return _git(["rev-parse", "--path-format=absolute", "--git-common-dir"], path)
 
 
+def foreign_repository(cwd: str | None, root: Path) -> str | None:
+    """The checkout that holds `cwd` when it is outside the repository at `root`, else None.
+
+    A path under a worktree of `root` belongs to it. Git runs only at `root`: the checkout of a
+    foreign `cwd` is the nearest folder that holds `.git`, else `cwd` itself.
+    """
+    if not cwd:
+        return None
+    here = Path(cwd)
+    listing = _git(["worktree", "list", "--porcelain"], root) or ""
+    prefix = "worktree "
+    homes = [Path(line[len(prefix) :]) for line in listing.splitlines() if line.startswith(prefix)]
+    homes = homes or [root]
+    if any(here.is_relative_to(home) for home in homes):
+        return None
+    return next((str(f) for f in (here, *here.parents) if (f / ".git").exists()), cwd)
+
+
 def apply_git_evidence(rows: list[TaskRow], root: Path) -> None:
     """Let each worktree correct the state its agent's notification claimed.
 
@@ -1185,6 +1213,11 @@ def render_markdown(digest: Digest) -> str:
             ]
         )
     )
+    if digest.repository:
+        lines.append(
+            f"repository {digest.repository}: not the repository that this command runs in, so"
+            " its worktrees and spec files are not read"
+        )
     if session.goal:
         # `/goal` leaves the condition with no verdict until it judges one, and a missing
         # verdict printed as "not met" is a claim about work nobody has looked at.
@@ -1284,6 +1317,7 @@ def build_digest(
     roots = _spec_roots(session, records, tasks)
     digest = Digest(
         session=session,
+        repository=foreign_repository(session.cwd, root),
         spec=spec_info(records, tasks, roots, spec_override, spec_re),
         agents=[row for row in tasks if row.kind == "agent"],
         background=[row for row in tasks if row.kind != "agent"],

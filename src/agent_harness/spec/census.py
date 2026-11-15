@@ -37,7 +37,7 @@ def order(counts: Counter[str]) -> dict[str, int]:
 
 def duplicates(layout: Layout, docs: dict[str, list[str]]) -> list[list[str]]:
     found: list[list[str]] = []
-    for folder in layout.dirs:
+    for folder in layout.domain_dirs:
         archive = f"{folder}/{layout.archive}"
         archived = {name.rsplit("/", 1)[-1]: name for name in docs[archive]}
         for name in docs[folder]:

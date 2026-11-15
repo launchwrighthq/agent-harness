@@ -11,7 +11,7 @@ a fact in `.agents/harness.toml`, never in an installed file.
 | `ah install [--project] [--manifest <path> ...] [--from <package root>] [--replace]` | Installs the package and each extra manifest into the git repository of the current folder. `--project` is the default. `--replace` replaces a project copy (see below). |
 | `ah install --global [--from <package root>]` | Installs the engine and the skills into `~/.claude`. No hook, no rule, no registry and no git hook. |
 | `ah check [--global]` | Exits 1 and prints `<path> <kind>` for each part that differs. Exits 0 when every part matches. |
-| `ah rules` | Prints each installed rule with its line count and character count, then the total. |
+| `ah rules` | Prints each installed rule and each project rule of `.claude/rules/` with its line count and character count, a subtotal per group, then the total. |
 | `ah selftest` | Runs every fixture of every enabled hook of the installed manifests, for Claude Code and through the Codex adapter. |
 | `ah lint <path ...>` | Prints `file:line:col rule message` for each banned word, banned filler or em dash in Markdown and in code comments. Exits 1 on a finding. |
 
@@ -51,10 +51,20 @@ A project copy is a file that the previous lockfile does not list and that the i
 replace or leave behind. It is a planned file with other bytes (`differs`), or a file in
 `.claude/agent-harness/`, `.claude/rules/lw/` or a planned skill folder that the plan does not
 hold (`extra`). An install over a project copy exits 1, names each file and writes nothing. Move
-each file you still need, then install again. A git hook of the project in `.githooks/<name>` is a
-project copy too, because the dispatcher takes that path. Move it to `.git/hooks/<name>`, which
-the dispatcher runs, or declare it as a `[[githook]]` of a project manifest. `--replace` replaces the copy, removes its extra
+each file you still need, then install again. `--replace` replaces the copy, removes its extra
 files and names each one.
+
+A git hook of the project in `.githooks/<name>` is a project copy too, because the dispatcher
+takes that path. Such a hook can hold a rule of the project, such as a landing rule in
+`push-to-checkout`. The refusal lists each project git hook apart, and `--replace` prints one
+line for each one it replaces. Keep a project git hook in one of two ways:
+
+- Move it to `.git/hooks/<name>`, which the dispatcher runs after the harness hook. Git does not
+  version that folder, so each clone and each machine needs its own copy.
+- Declare it as a `[[githook]]` of a project manifest that `harness.manifests` names (see "Extra
+  manifests"). The install then puts it in `.githooks/harness/` with the harness hooks. Two git
+  hooks with one name fail, so a project `push-to-checkout`, `commit-msg` or `post-commit` needs
+  the harness hook of that name in `harness.disable`.
 
 ## Rule adapters
 
@@ -77,12 +87,19 @@ The lockfile records a sha256 per adapter. `ah check` names an adapter that chan
 since the install as `stale`, so an adapter edit needs `ah install`. Use `replace: true` to keep a
 long rule short when the project has its own version of it, and `disable` to drop a rule.
 
-`ah rules` prints the size of each installed rule, so a project sees what its rules cost:
+`ah rules` prints the size of each installed rule, so a project sees what its rules cost. Claude
+Code also loads each project rule: a `.md` file under `.claude/rules/` outside `lw/`. The command
+lists those too, and then gives a subtotal for each group:
 
 ```
 .claude/rules/lw/anti-slop.md 82 lines 4790 chars
-total 82 lines 4790 chars
+harness rules: 1 files 82 lines 4790 chars
+.claude/rules/house.md 12 lines 640 chars
+project rules: 1 files 12 lines 640 chars
+total 94 lines 5430 chars
 ```
+
+A project with no rule of its own gets no subtotal lines.
 
 ## Hook commands
 
@@ -128,6 +145,31 @@ with no change writes nothing.
 
 A project hook that must survive every sync can also come from a project manifest (see "Extra
 manifests"). Then `ah selftest` runs its fixtures too.
+
+## Likely duplicates
+
+A project that had its own agent setup before the harness can hold old copies of harness hooks
+and skills. Then both copies run. `ah install` and `ah check` print one line for each likely
+duplicate:
+
+- a project hook entry with a command word that is a script with the file name of a harness hook
+  script, suffix aside, such as `.claude/hooks/workspace-guard.py`;
+- a project skill folder whose name is a harness skill name without `lw-`, such as
+  `.claude/skills/land` beside `lw-land`.
+
+```
+.claude/settings.json PreToolUse Bash: a likely duplicate of the harness hook workspace-guard (same script name workspace-guard.py): python3 .claude/hooks/workspace-guard.py
+.claude/skills/land: a likely duplicate of the harness skill lw-land
+```
+
+These lines are information. They do not change the exit code. To remove an old copy:
+
+1. Compare it with the harness copy. Move a project rule that only the old copy holds into a
+   rule adapter, a project manifest or `.agents/harness.toml`.
+2. For a hook, delete its entry from `.claude/settings.json` and `.codex/hooks.json`, then delete
+   its script. For a skill, delete the folder `.claude/skills/<name>`.
+3. Run `ah install --project`. It removes the link `.agents/skills/<name>` and the skill line
+   of `AGENTS.md`.
 
 ## Extra manifests
 

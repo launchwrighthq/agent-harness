@@ -5,7 +5,8 @@ A finding names a file, a key and a line, never a value:
 - a key that code reads (see `readers`) and that no master or declaration names;
 - a key of a live env file that no master or declaration names;
 - a declared `required` key that a live file of its environments lacks or leaves empty;
-- an env file outside the master folder and the folders of `[env] dirs`;
+- an env file outside the master folder and the folders of `[env] dirs`, outside the `skip`
+  folders and the folders that `.gitignore` ignores as a whole;
 - a live env file that git tracks.
 """
 
@@ -14,7 +15,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from agent_harness.env import envfile, layout
+from agent_harness.env import envfile, layout, readers
 from agent_harness.env.args import expect, parse_args
 from agent_harness.env.context import Context
 
@@ -71,13 +72,24 @@ def file_findings(ctx: Context, names: set[str], declared: bool) -> list[str]:
 
 
 def stray_findings(ctx: Context) -> list[str]:
-    """Each env file under the root outside the master folder and the `dirs` folders."""
+    """Each env file under the root outside the master folder and the `dirs` folders.
+
+    A live env file is git-ignored itself, so the walk reads ignored files. It leaves out a
+    folder that `.gitignore` ignores as a whole, and each `skip` folder.
+    """
     homes = {ctx.master.parent.resolve(), *(p.parent.resolve() for p in ctx.extra_masters())}
-    pruned = {".git", *(str(s) for s in ctx.settings.get("skip") or [])}
+    skip = [str(s) for s in ctx.settings.get("skip") or []]
+    ignored = readers.ignored_dirs(ctx.root)
     found: list[str] = []
     for folder, dirs, files in os.walk(ctx.root):
-        dirs[:] = sorted(d for d in dirs if d not in pruned)
         here = Path(folder)
+        rel = here.relative_to(ctx.root).as_posix()
+        below = [f"{rel}/{d}" if rel != "." else d for d in dirs]
+        dirs[:] = sorted(
+            d
+            for d, path in zip(dirs, below, strict=True)
+            if path not in ignored and not readers.skipped(path, skip)
+        )
         if here.resolve() in homes:
             continue
         for name in sorted(files):

@@ -399,6 +399,34 @@ def test_refuses_to_install_over_a_project_copy_and_replaces_it_on_request(
     assert checked.returncode == 0, checked.stdout + checked.stderr
 
 
+def test_names_each_project_git_hook_and_how_to_keep_it_before_a_replace(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    for name in ("push-to-checkout", "pre-commit"):
+        own = repo / ".githooks" / name
+        own.parent.mkdir(exist_ok=True)
+        own.write_text("#!/bin/sh\necho own rule\n")
+
+    refused = ah("install", "--project", FROM, str(package))
+    replaced = ah("install", "--project", "--replace", FROM, str(package))
+
+    assert refused.returncode == 1
+    assert (
+        "project git hooks that the dispatcher would replace: .githooks/pre-commit,"
+        " .githooks/push-to-checkout.\n"
+    ) in refused.stderr
+    assert "keep it in .git/hooks/<name>, which the dispatcher runs" in refused.stderr
+    assert "or declare it as a [[githook]] of a project manifest that harness.manifests names" in (
+        refused.stderr
+    )
+    assert replaced.returncode == 0, replaced.stderr
+    for name in ("pre-commit", "push-to-checkout"):
+        assert (
+            f"replaced .githooks/{name}: a project git hook; its own rule no longer runs."
+            f" Keep it in .git/hooks/{name} or as a [[githook]] of a project manifest."
+        ) in replaced.stdout.splitlines()
+
+
 def test_passes_the_check_after_the_project_adds_a_skill_of_its_own(
     repo: Path, package: Path, ah: Ah
 ) -> None:
@@ -498,6 +526,35 @@ def test_names_each_project_hook_in_the_check_and_keeps_the_exit_code(
         " bash scripts/own-guard.sh",
         "ah check: the installed files match the lockfile",
     ]
+
+
+def test_names_a_likely_duplicate_hook_and_skill_and_keeps_the_exit_code(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    script = 'python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/rm_guard.py"'
+    old_hook = {"type": "command", "command": script}
+    with_project_hook(
+        repo / ".claude/settings.json",
+        json.dumps({"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [old_hook]}]}}),
+    )
+    old_skill = repo / ".claude/skills/demo"
+    old_skill.mkdir(parents=True)
+    (old_skill / "SKILL.md").write_text("---\nname: demo\ndescription: Old.\n---\n# Demo\n")
+    hook_line = (
+        ".claude/settings.json PreToolUse Bash: a likely duplicate of the harness hook rm-guard"
+        " (same script name rm_guard.py): " + old_hook["command"]
+    )
+    skill_line = ".claude/skills/demo: a likely duplicate of the harness skill lw-demo"
+
+    installed = ah("install", "--project", FROM, str(package))
+    checked = ah("check")
+
+    assert installed.returncode == 0, installed.stderr
+    assert hook_line in installed.stdout.splitlines()
+    assert skill_line in installed.stdout.splitlines()
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+    assert hook_line in checked.stdout.splitlines()
+    assert skill_line in checked.stdout.splitlines()
 
 
 def write_project_manifest(repo: Path) -> Path:
@@ -645,4 +702,35 @@ def test_prints_the_size_of_each_installed_rule_and_the_total(
         f".claude/rules/lw/house-style.md {lines[0]} lines {chars[0]} chars",
         f".claude/rules/lw/plain.md {lines[1]} lines {chars[1]} chars",
         f"total {sum(lines)} lines {sum(chars)} chars",
+    ]
+
+
+def test_lists_the_project_rules_apart_with_their_own_subtotal(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    ah("install", "--project", FROM, str(package))
+    own = {
+        ".claude/rules/house.md": "# House\n\nOne line.\n",
+        ".claude/rules/web/ui.md": "# UI\n",
+    }
+    for rel, text in own.items():
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text(text)
+
+    done = ah("rules")
+
+    harness = [
+        (repo / ".claude/rules/lw" / name).read_text() for name in ("house-style.md", "plain.md")
+    ]
+    lines = [t.count("\n") for t in harness]
+    chars = [len(t) for t in harness]
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.splitlines() == [
+        f".claude/rules/lw/house-style.md {lines[0]} lines {chars[0]} chars",
+        f".claude/rules/lw/plain.md {lines[1]} lines {chars[1]} chars",
+        f"harness rules: 2 files {sum(lines)} lines {sum(chars)} chars",
+        ".claude/rules/house.md 3 lines 19 chars",
+        ".claude/rules/web/ui.md 1 lines 5 chars",
+        "project rules: 2 files 4 lines 24 chars",
+        f"total {sum(lines) + 4} lines {sum(chars) + 24} chars",
     ]

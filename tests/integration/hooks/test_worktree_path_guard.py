@@ -3,6 +3,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "support"))
 
 import hook_project
@@ -46,3 +48,26 @@ def test_stays_silent_for_a_folder_that_holds_no_repository(tmp_path: Path) -> N
 
     assert hook_project.decision(done) == "silent"
     assert f"worktree-path-guard: no repository at {bare}" in done.stderr
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "worktree-path-guard.py",
+        "workspace-guard.py",
+        "bash-read-guard.py",
+        "deny-env-reads.py",
+        "deny-foreign-branch-moves.sh",
+    ],
+)
+def test_lets_the_worktree_command_of_the_engine_pass(tmp_path: Path, script: str) -> None:
+    project = hook_project.make_project(tmp_path / "project")
+    commands = [
+        "python3 .claude/agent-harness/bin/ah worktree add land-a",
+        "python3 .claude/agent-harness/bin/ah worktree add land-b --from main",
+        "python3 .claude/agent-harness/bin/ah worktree remove land-a",
+    ]
+
+    got = hook_project.verdicts(project, script, commands)
+
+    assert list(zip(commands, got, strict=True)) == [(c, "silent") for c in commands]

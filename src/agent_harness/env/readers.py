@@ -13,6 +13,7 @@ import ast
 import fnmatch
 import os
 import re
+import subprocess
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,16 +54,73 @@ def scan(root: Path, globs: Sequence[str], skip: Sequence[str]) -> list[Read]:
 
 
 def files(root: Path, globs: Sequence[str], skip: Sequence[str]) -> Iterator[Path]:
-    """The files under `root` whose relative path matches a glob. A folder named in `skip`, and
-    `.git`, is left out at any depth."""
-    pruned = {".git", *skip}
-    for folder, dirs, names in os.walk(root):
-        dirs[:] = [d for d in dirs if d not in pruned]
-        for name in names:
-            path = Path(folder) / name
-            relative = path.relative_to(root).as_posix()
-            if any(fnmatch.fnmatchcase(relative, glob) for glob in globs):
+    """The files under `root` whose relative path matches a glob, outside the `skip` folders.
+
+    In a git repository, only the files that git tracks or does not ignore count, so generated
+    and vendored code that `.gitignore` names stays out. Elsewhere every file counts.
+    """
+    listed = git_files(root)
+    if listed is None:
+        listed = []
+        for folder, dirs, names in os.walk(root):
+            here = Path(folder).relative_to(root).as_posix()
+            dirs[:] = [d for d in dirs if not skipped(d if here == "." else f"{here}/{d}", skip)]
+            listed += [(Path(folder) / name).relative_to(root).as_posix() for name in names]
+    for relative in listed:
+        if skipped(relative.rsplit("/", 1)[0] if "/" in relative else "", skip):
+            continue
+        if any(fnmatch.fnmatchcase(relative, glob) for glob in globs):
+            path = root / relative
+            if path.is_file():
                 yield path
+
+
+def skipped(folder: str, skip: Sequence[str]) -> bool:
+    """True when the relative `folder` is `.git` or lies under an entry of `skip`. An entry
+    without a `/` is a folder name at any depth, and an entry with one is a path from the root."""
+    if not folder:
+        return False
+    parts = folder.split("/")
+    for entry in (".git", *skip):
+        path = entry.strip("/")
+        if "/" not in path and path in parts:
+            return True
+        if "/" in path and (folder == path or folder.startswith(f"{path}/")):
+            return True
+    return False
+
+
+def git_files(root: Path) -> list[str] | None:
+    """The files that git tracks or does not ignore under `root`, or None outside a checkout."""
+    if not is_checkout(root):
+        return None
+    return _git_list(root, ["ls-files", "-z", "--cached", "--others", "--exclude-standard"])
+
+
+def ignored_dirs(root: Path) -> set[str]:
+    """The folders under `root` that `.gitignore` ignores as a whole, without the slash."""
+    if not is_checkout(root):
+        return set()
+    args = ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"]
+    return {name.rstrip("/") for name in _git_list(root, args) if name.endswith("/")}
+
+
+def is_checkout(root: Path) -> bool:
+    """True when `root` holds a git checkout: a `.git` file of a worktree, or a `.git` folder
+    with a HEAD. No git runs for the answer."""
+    return (root / ".git").is_file() or (root / ".git" / "HEAD").is_file()
+
+
+def _git_list(root: Path, args: list[str]) -> list[str]:
+    try:
+        done = subprocess.run(
+            ["git", "-C", str(root), *args], capture_output=True, text=True, check=False
+        )
+    except FileNotFoundError as error:
+        raise HarnessError("git is not installed; ah env reads the file list with it") from error
+    if done.returncode != 0:
+        raise HarnessError(f"git {args[0]} failed in {root}: {done.stderr.strip()}")
+    return sorted(name for name in done.stdout.split("\0") if name)
 
 
 def reads_in(path: Path, text: str, shown: str) -> list[Read]:

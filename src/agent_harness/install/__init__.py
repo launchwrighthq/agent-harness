@@ -3,7 +3,7 @@
 `ah install [--project] [--manifest <path> ...] [--from <package root>] [--replace]`
 `ah install --global [--from <package root>]`
 `ah check [--global]`
-`ah rules`
+`ah rules`: each installed rule and each project rule of `.claude/rules/`, with subtotals
 """
 
 from __future__ import annotations
@@ -85,7 +85,7 @@ def main(argv: list[str]) -> int:
 def check(argv: list[str]) -> int:
     from agent_harness import config
     from agent_harness.install.home import check_global, claude_home
-    from agent_harness.install.project import check_project, project_hooks
+    from agent_harness.install.project import check_project, duplicate_lines, project_hooks
 
     parser = argparse.ArgumentParser(
         prog="ah check",
@@ -97,9 +97,10 @@ def check(argv: list[str]) -> int:
         diffs, again, prefix = check_global(claude_home()), "ah install --global", "~/.claude/"
     else:
         root = config.find_root()
-        diffs, again, prefix = check_project(root, config.load(root)), "ah install --project", ""
-        # Information only: a project hook changes no exit code.
-        for line in project_hooks(root):
+        cfg = config.load(root)
+        diffs, again, prefix = check_project(root, cfg), "ah install --project", ""
+        # Information only: a project hook or a likely duplicate changes no exit code.
+        for line in [*project_hooks(root), *duplicate_lines(root, cfg)]:
             print(line)
     for path, kind in diffs:
         print(f"{prefix}{path} {kind}")
@@ -116,14 +117,26 @@ def check(argv: list[str]) -> int:
 
 def rules(argv: list[str]) -> int:
     from agent_harness import config
-    from agent_harness.install.project import rule_sizes
+    from agent_harness.install.project import project_rule_sizes, rule_sizes
 
     argparse.ArgumentParser(
         prog="ah rules",
-        description="Print each installed rule with its line count and character count.",
+        description=(
+            "Print each installed rule and each project rule of .claude/rules/ with its line"
+            " count and character count."
+        ),
     ).parse_args(argv)
-    sizes = rule_sizes(config.find_root())
-    for rel, lines, chars in sizes:
-        print(f"{rel} {lines} lines {chars} chars")
-    print(f"total {sum(s[1] for s in sizes)} lines {sum(s[2] for s in sizes)} chars")
+    root = config.find_root()
+    sizes, own = rule_sizes(root), project_rule_sizes(root)
+    for label, group in (("harness", sizes), ("project", own)):
+        for rel, lines, chars in group:
+            print(f"{rel} {lines} lines {chars} chars")
+        # One group needs no subtotal: the total says it.
+        if own:
+            print(
+                f"{label} rules: {len(group)} files {sum(s[1] for s in group)} lines"
+                f" {sum(s[2] for s in group)} chars"
+            )
+    both = [*sizes, *own]
+    print(f"total {sum(s[1] for s in both)} lines {sum(s[2] for s in both)} chars")
     return 0

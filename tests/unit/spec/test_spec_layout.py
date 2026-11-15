@@ -71,3 +71,42 @@ def test_refuses_a_label_that_holds_markup(tmp_path: Path) -> None:
 
     with pytest.raises(HarnessError, match=r"specs\.kinds\.docs/qa\.label must match"):
         layout.from_config(config.load(tmp_path))
+
+
+NESTED_CONFIG = """[specs]
+dirs = ["docs/specs"]
+
+[specs.kinds."docs/specs/assets"]
+kind = "qa"
+label = "QA REPORT"
+"""
+
+
+def test_makes_a_kinds_folder_under_a_spec_folder_a_folder_of_its_own(tmp_path: Path) -> None:
+    write_config(tmp_path, NESTED_CONFIG)
+    for name in ("docs/specs/a.md", "docs/specs/assets/r.md", "docs/specs/assets/dist/r.md"):
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_text("# T\n", encoding="utf-8")
+
+    found = layout.from_config(config.load(tmp_path))
+
+    assert found.domains == (
+        layout.Domain("docs/specs", "spec", "SPECIFICATION"),
+        layout.Domain("docs/specs/assets", "qa", "QA REPORT"),
+    )
+    assert found.folders() == [
+        "docs/specs",
+        "docs/specs/archive",
+        "docs/specs/assets",
+        "docs/specs/assets/archive",
+    ]
+    assert found.sources(tmp_path) == ["docs/specs/a.md", "docs/specs/assets/r.md"]
+
+
+def test_refuses_a_kinds_folder_outside_every_spec_folder(tmp_path: Path) -> None:
+    write_config(
+        tmp_path, '[specs]\ndirs = ["docs/specs"]\n[specs.kinds."notes/qa"]\nkind = "qa"\n'
+    )
+
+    with pytest.raises(HarnessError, match=r'specs\.kinds\."notes/qa" names a folder'):
+        layout.from_config(config.load(tmp_path))

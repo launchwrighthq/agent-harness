@@ -12,10 +12,9 @@ from pathlib import Path
 
 from agent_harness import HarnessError
 from agent_harness.spec import restate
-from agent_harness.spec.layout import Layout
+from agent_harness.spec.layout import INDEX_NAME, Layout
 
 DOC_SUFFIXES = (".md", ".html")
-INDEX_NAME = "README.md"
 STATUS_WORD_RE = re.compile(r"[a-z-]+")
 
 

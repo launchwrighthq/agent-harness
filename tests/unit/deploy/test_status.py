@@ -55,15 +55,23 @@ class FakeGh:
         add: tuple[dict[str, Any], ...] = (),
         case: Path = FIVE_PHASE,
         logs: dict[str, str] | None = None,
+        failures: dict[str, str] | None = None,
     ) -> None:
         self.drop = drop
         self.add = add
         self.case = case
         self.logs = logs or {}
+        # The error text that a call fails with, by its first two words, such as "run list".
+        self.failures = failures or {}
         self.calls: list[list[str]] = []
 
     def __call__(self, args: list[str]) -> str:
         self.calls.append(args)
+        failure = self.failures.get(" ".join(args[:2]))
+        if failure is not None:
+            raise HarnessError(failure)
+        if args[0] == "api" and args[1].startswith("repos/") and "/actions/" not in args[1]:
+            return json.dumps({"full_name": "example-org/example-app"})
         if args[:2] == ["run", "list"]:
             runs = [*self.add, *json.loads((self.case / "runs.json").read_text())]
             return json.dumps([r for r in runs if str(r["databaseId"]) not in self.drop])
@@ -471,3 +479,42 @@ def test_registers_the_deploy_defaults(tmp_path: Path) -> None:
 @pytest.mark.parametrize(("text", "hours"), [("24h", 24), ("7d", 168), ("72", 72)])
 def test_reads_a_history_window_in_hours_or_days(text: str, hours: int) -> None:
     assert window_hours(text) == hours
+
+
+def test_names_the_gh_account_when_it_cannot_see_the_repository(tmp_path: Path) -> None:
+    write_config(tmp_path, FIVE_PHASE_CONFIG)
+    route = "api repos/{owner}/{repo}"
+    gh = FakeGh(failures={route: "gh api exited 1: gh: Not Found (HTTP 404)"})
+
+    with pytest.raises(HarnessError) as refused:
+        run_report(tmp_path, gh=gh)
+
+    assert str(refused.value).startswith(
+        "the active gh account cannot see the repository of this checkout. Check the gh identity"
+        " of this project"
+    )
+    assert ["run", "list"] not in [call[:2] for call in gh.calls]
+
+
+WORKFLOW_404 = "gh run list exited 1: HTTP 404: workflow deploy.yml not found on the default branch"
+
+
+def test_says_no_deploy_workflow_is_configured_with_the_default_config(tmp_path: Path) -> None:
+    out = io.StringIO()
+    gh = FakeGh(failures={"run list": WORKFLOW_404})
+
+    code = report([], tmp_path, out, gh=gh, run=lambda args, cwd: lw_status([]), now=NOW)
+
+    assert code == 0
+    assert out.getvalue() == (
+        "deploy-status: no deploy workflow configured. deploy.ci.workflows keeps its default"
+        " (deploy.yml), and the repository has no such workflow. Set deploy.ci.workflows in"
+        " .agents/harness.toml to the file names of the deploy workflows.\n"
+    )
+
+
+def test_fails_on_a_missing_workflow_that_the_config_names(tmp_path: Path) -> None:
+    write_config(tmp_path, FIVE_PHASE_CONFIG)
+
+    with pytest.raises(HarnessError, match=r"workflow deploy\.yml not found"):
+        run_report(tmp_path, gh=FakeGh(failures={"run list": WORKFLOW_404}))

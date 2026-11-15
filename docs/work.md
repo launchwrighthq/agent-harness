@@ -36,14 +36,15 @@ The files under `~/.claude/projects` keep all three, so the digest reads them.
 
 A tool result can echo a token, so the digest reads no tool result body. It reads the human
 text, the assistant text, the agent descriptions, the notification summaries and one line of each
-report. Git runs only in a worktree of the repository that the digest reports on, with
-`core.fsmonitor` off.
+report. The user's own shell commands (`<bash-input>`) and their output (`<bash-stdout>`,
+`<bash-stderr>`) are no chat: output can echo a token, so the digest drops all three. Git runs
+only in a worktree of the repository that the digest reports on, with `core.fsmonitor` off.
 
 ### Sections
 
 | Section | Rows |
 |---|---|
-| Header | The session name and id, its cwd and worktree, the start, the last record, the compactions, the prompt count, and the `/goal` condition. |
+| Header | The session name and id, its cwd and worktree, the start, the last record, the compactions, the prompt count, and the `/goal` condition. When the cwd is outside the repository that the command runs in and its worktrees, a `repository <path>` line names the checkout of the session. Run the command there for its worktrees and spec files. |
 | Spec | The newest spec or plan path named, its `Status:`, and each numbered section with its first sentence and its agents. `--spec` picks another one. |
 | Specs named | One row per spec or plan path named: file name, status (`missing` with no file), first and last mention, audit state. |
 | Agents | One row per `Agent` spawn: short id, description, model, section, worktree, state, last seen, report. |

@@ -240,6 +240,44 @@ def test_finds_no_reveal_without_a_reveal_word_or_without_the_engine(command: st
     assert hookio.env_reveal(command, ENGINE) is None
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        'ah env status; echo "exit=$?"',
+        "python3 .claude/agent-harness/bin/ah env check && echo $?",
+        "ah env --root apps/api keys .env.local; echo $?",
+        'ah env layout && ah env diff .env.local .env.staging; echo "exit=$?"',
+    ],
+)
+def test_asks_to_run_a_quiet_subcommand_alone_when_the_line_hides_a_word(
+    command: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    hookio.ask_env(command, ENGINE, "a key")
+
+    reason = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "prints no value" in reason
+    assert "does not run alone, so the guard cannot clear the whole line" in reason
+    assert "prints the value" not in reason
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'ah env get API_KEY .env.local; echo "exit=$?"',
+        "ah env status --reveal",
+        'ah env status; ah env run .env.local -- pnpm test; echo "$?"',
+        "ah env $SUB; echo $?",
+    ],
+)
+def test_asks_about_a_reveal_when_a_subcommand_can_print_a_value(
+    command: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    hookio.ask_env(command, ENGINE, "a key")
+
+    reason = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecisionReason"]
+    assert reason.startswith("This command prints the value of a key into the agent context.")
+
+
 def test_prints_a_compact_ask_answer(capsys: pytest.CaptureFixture[str]) -> None:
     hookio.ask("confirm")
 

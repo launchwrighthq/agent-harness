@@ -238,6 +238,59 @@ def test_keeps_tool_result_bodies_out_of_the_digest(fx: Projects) -> None:
     assert [(c.text, c.answered) for c in d.chat] == [("check the env", True)]
 
 
+def test_keeps_the_shell_commands_of_the_user_and_their_output_out_of_the_chat(
+    fx: Projects,
+) -> None:
+    fx.write(
+        SLUG,
+        [
+            human(0, "check the build"),
+            assistant_text(1, "green"),
+            human(2, "<bash-input>printenv SERVICE_TOKEN</bash-input>"),
+            human(3, "<bash-stdout>value-kilo-42</bash-stdout><bash-stderr></bash-stderr>"),
+            human(4, "<bash-stderr>warning-text-11</bash-stderr>"),
+            queued(5, "<bash-input>printenv OTHER_TOKEN</bash-input>", {"kind": "human"}),
+        ],
+    )
+
+    d = digest(fx)
+
+    out = ws.render_markdown(d) + ws.to_json(d)
+    assert [(c.text, c.answered) for c in d.chat] == [("check the build", True)]
+    assert d.session.human_prompts == 1
+    for word in ("SERVICE_TOKEN", "value-kilo-42", "warning-text-11", "OTHER_TOKEN"):
+        assert word not in out
+
+
+def test_names_the_repository_of_a_session_that_ran_in_another_one(fx: Projects) -> None:
+    git("init", "--quiet", cwd=fx.proj)
+    other = fx.root / "other"
+    (other / "src").mkdir(parents=True)
+    git("init", "--quiet", cwd=other)
+    fx.write(SLUG, [{**human(0, "go"), "cwd": str(other / "src")}])
+
+    d = digest(fx)
+
+    assert d.repository == str(other)
+    assert (
+        f"repository {other}: not the repository that this command runs in, so its worktrees"
+        " and spec files are not read"
+    ) in ws.render_markdown(d).splitlines()
+
+
+def test_names_no_repository_for_a_session_in_a_worktree_of_this_one(fx: Projects) -> None:
+    git("init", "--quiet", cwd=fx.proj)
+    git("commit", "--quiet", "--allow-empty", "-m", "base", cwd=fx.proj)
+    worktree = fx.root / "elsewhere-wt"
+    git("worktree", "add", "--quiet", "-b", "wt", str(worktree), cwd=fx.proj)
+    fx.write(SLUG, [{**human(0, "go"), "cwd": str(worktree)}])
+
+    d = digest(fx)
+
+    assert d.repository is None
+    assert "repository " not in ws.render_markdown(d)
+
+
 def test_reads_agent_states_sections_worktrees_and_reports(fx: Projects) -> None:
     spec = f"{SPECS}/2026-09-07-x-design.md"
     prompt_a = f"Work ONLY in /tmp/proj/.claude/worktrees/wt-a. Read {spec}, section 5.4 is yours."

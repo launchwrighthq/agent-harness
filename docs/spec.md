@@ -18,7 +18,7 @@ The `[specs]` section of `.agents/harness.toml` holds the spec facts. Every key 
 | `archive` | `archive` | The folder name, inside each spec folder, for settled documents. |
 | `out` | `dist` | The folder name, inside each spec folder, for rendered pages. Keep it out of git. |
 | `auditDir` | `.claude/state` | The audit store, relative to the main checkout, so every worktree shares one store. An absolute path is used as it is. |
-| `kinds` | `{}` | Per spec folder, a table with `kind` (`spec`, `plan` or `qa`), `label` (the badge word) and `statuses` (the vocabulary the renderer accepts). For example `[specs.kinds."docs/qa"]` with `kind = "qa"`, `label = "QA REPORT"`, `statuses = ["untested", "tested"]`. |
+| `kinds` | `{}` | Per spec folder, a table with `kind` (`spec`, `plan` or `qa`), `label` (the badge word) and `statuses` (the vocabulary the renderer accepts). For example `[specs.kinds."docs/qa"]` with `kind = "qa"`, `label = "QA REPORT"`, `statuses = ["untested", "tested"]`. The key names a folder of `dirs` or a folder under one, else the config fails and names the key. A folder under a spec folder is a folder of its own, with its own `archive` and `out` folders: the longest folder that holds a file decides its kind and its page for `render`, `check` and `census`. |
 | `checks` | `["archive", "superseded", "pointers", "assets"]` | The checks that `spec check` runs. |
 | `pointerFiles` | `["*.md"]` | The git pathspecs of the files whose spec paths `spec check` resolves. |
 
@@ -30,7 +30,7 @@ also reads `harness.gateCommand`. `AGENT_STATE_DIR` overrides `auditDir` for one
 | Command | Behavior |
 |---|---|
 | `spec render <file.md> [--out <dir>]` | Writes the page to the `out` folder of the source's spec folder, mirroring any `archive/` below it. `--out` names another folder, which must sit inside an `out` folder. It refuses a page that git tracks and an image whose file is missing. |
-| `spec render --all` | Renders every source of every spec folder and its archive. A refused source does not stop the rest, and the command then exits 1. |
+| `spec render --all` | Renders every source of every spec folder and its archive. A `README.md` describes its folder, so it is no source, as in `census` and `check`. A refused source does not stop the rest: it prints one line that starts with the source and gives the reason, and the command then exits 1. |
 | `spec check` | Checks the tracked tree: a settled document outside the archive or an unsettled one inside it, a `superseded-by` path, every spec path in a file of `pointerFiles` outside an archive, and an asset that no document names. Exits 1 on a finding. |
 | `spec census [--json]` | Counts the tracked documents of each folder by status. Lists a name in an active folder and its archive, a settled status with no evidence, and a document with no status. |
 | `spec verify <old.html> <new.md>` | Renders the Markdown and lists each word of the old page that the new page lost. Exits 1 on a loss. |
@@ -52,6 +52,11 @@ The renderer reads the Markdown constructs that the specs use and refuses every 
 the file and the line. `tests/integration/spec/test_render_parity.py` compares the page, byte for
 byte, with the golden pages in `tests/fixtures/spec-render/`. The template is
 `src/agent_harness/spec/spec-template.html`.
+
+The TypeScript renderer that this port copies is its reference, and it refuses a blockquote or a
+fenced code block inside a list item. So this renderer refuses them too, and the refusal says how
+to rewrite the source: end the list with a blank line and start the block at the left margin
+below it.
 
 ## The audit store
 

@@ -495,7 +495,9 @@ def bracket_at(glob: str, i: int) -> tuple[str, int] | None:
 
     A POSIX class matches any character: the guard does not model the class, so it reads the
     widest set. So does a class with `*` or `?`, which a brace range inside the brackets
-    (`[{m..o}]`) leaves.
+    (`[{m..o}]`) leaves, and a class with a reversed range such as `[e-a]` of program text
+    (`["instance-agnostic"]`), which `re` cannot read. The widest set still stands for one
+    character, so the word matches no longer name than before.
     """
     found = BRACKET.match(glob, i)
     if not found:
@@ -508,6 +510,10 @@ def bracket_at(glob: str, i: int) -> tuple[str, int] | None:
         # The Node guard built JavaScript classes: `[]` matches nothing and `[^]` matches any
         # character. Python's re refuses both, so they get their meaning spelled out.
         source = {"": "(?!)", "^": r"[\s\S]"}.get(inner, f"[{inner}]")
+        try:
+            re.compile(source)
+        except re.error:
+            source = "[^/]"
     return source, i + len(found.group(0)) - 1
 
 
@@ -1884,8 +1890,11 @@ def deny(path: str, names: Names) -> None:
     hint = next(
         (e.get("hint") for e, rx in names.extra if e.get("hint") and rx.fullmatch(base)), None
     )
+    # A glob that the literal name test does not hold is refused for what it could expand to.
+    what = "is" if is_credential(path, names, True) else "could match"
     hookio.deny(
-        f"`{path}` is a credential file, and `.claude/rules/lw/secrets.md` forbids reading one. "
+        f"`{path}` {what} a credential file, and `.claude/rules/lw/secrets.md` forbids reading "
+        "one. "
         + (
             hint
             or f"Read `.env.example` for the key names, or ask `{names.env_command}` about a key; "
@@ -1926,7 +1935,7 @@ def check(payload: dict[str, Any]) -> None:
     if secret is not None:
         deny(secret, names)
     elif key is not None:
-        hookio.ask_reveal(key)
+        hookio.ask_env(command, names.env_commands, key)
 
 
 def runs_dotglob_shell(command: str) -> bool:

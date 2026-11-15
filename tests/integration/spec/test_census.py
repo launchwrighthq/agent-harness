@@ -64,3 +64,38 @@ def test_prints_the_census_as_json(tmp_path: Path) -> None:
     assert found["duplicates"] == [["docs/specs/a.md", "docs/specs/archive/a.md"]]
     assert found["bare"] == ["docs/specs/archive/d.md"]
     assert found["missing"] == ["docs/specs/c.md"]
+
+
+NESTED_CONFIG = """[specs]
+dirs = ["docs/specs"]
+
+[specs.kinds."docs/specs/assets"]
+kind = "qa"
+label = "QA REPORT"
+statuses = ["untested", "tested"]
+"""
+
+
+def test_counts_a_report_under_its_own_kinds_folder(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init", "--quiet", str(root)], check=True)
+    files = {
+        ".agents/harness.toml": NESTED_CONFIG,
+        "docs/specs/a.md": doc("draft"),
+        "docs/specs/assets/r.md": doc("tested"),
+    }
+    for name, text in files.items():
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text(text, encoding="utf-8")
+    subprocess.run(["git", "-C", str(root), "add", *files], check=True)
+
+    done = census(root)
+
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == (
+        "docs/specs: 1 documents: draft 1\n"
+        "docs/specs/archive: 0 documents\n"
+        "docs/specs/assets: 1 documents: tested 1\n"
+        "docs/specs/assets/archive: 0 documents\n"
+    )

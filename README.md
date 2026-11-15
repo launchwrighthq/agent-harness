@@ -64,7 +64,7 @@ Run each command as `python3 .claude/agent-harness/bin/ah <command>` in a projec
 |---|---|---|
 | `ah install` | Installs the harness in a project or globally. | [docs/install.md](docs/install.md) |
 | `ah check [--global]` | Compares the installed files and registries with the lockfile and the manifests. Exits 1 and names each file that differs. | [docs/install.md](docs/install.md) |
-| `ah rules` | Prints each installed rule with its line count and character count, then the total. A rule adapter in `harness/adapters/rules/<rule id>.md` adds project notes to a rule or replaces its body. | [docs/install.md](docs/install.md) |
+| `ah rules` | Prints each installed rule and each project rule of `.claude/rules/` with its line count and character count, a subtotal per group, then the total. A rule adapter in `harness/adapters/rules/<rule id>.md` adds project notes to a rule or replaces its body. | [docs/install.md](docs/install.md) |
 | `ah selftest` | Runs the fixture of every installed hook for Claude Code and Codex, then the portability checks. | [docs/install.md](docs/install.md) |
 | `ah lint <path ...>` | Finds banned words, banned fillers and em dashes in Markdown and code comments. | [docs/install.md](docs/install.md) |
 | `ah comments [path ...]` | Checks the comment budget: the longest comment block and the comment share of each source file. Exits 1 on a finding. | [docs/hooks.md](docs/hooks.md) |
@@ -74,6 +74,7 @@ Run each command as `python3 .claude/agent-harness/bin/ah <command>` in a projec
 | `ah deploy-status` | Prints the verdict of the last deploy, its phases and what each target serves. It only reads. | [docs/deploy.md](docs/deploy.md) |
 | `ah work-status [--repo]` | Reports the work in progress from transcripts, git and saved audits. `--repo` reads git and the store alone. | [docs/work.md](docs/work.md) |
 | `ah branch-audit` | Judges what each worktree, branch and stray folder holds that the base lacks, and prints a prune plan. `--apply --only <ids>` runs the rows the user names. | [docs/work.md](docs/work.md) |
+| `ah worktree add <name> [--from <ref>]` and `ah worktree remove <name>` | Adds `.claude/worktrees/<name>` of the main checkout on the new branch `<name>` (from `harness.baseBranch`, or `<ref>`) and prints its path. Removes a clean worktree of this repository and keeps its branch. Neither takes a path. | [docs/hooks.md](docs/hooks.md) |
 | `ah land-results files\|unaccounted <log>` | Prints the failed files or the unaccounted steps of the `verify: failures <json>` record in a gate log, for `lw-land`. | [docs/hooks.md](docs/hooks.md) |
 
 The hooks, the rules and the git hooks are in [docs/hooks.md](docs/hooks.md).

@@ -144,6 +144,24 @@ def test_reports_the_status_of_each_file_against_the_master(repo: Path) -> None:
     ]
 
 
+def test_reports_a_file_with_its_own_master_against_that_master(repo: Path) -> None:
+    (repo / ".env.ci.example").write_text("", encoding="utf-8")
+    (repo / ".env.ci").write_text("", encoding="utf-8")
+    (repo / ".env.seed.example").write_text("# Seed\nSEED_KEY=\n", encoding="utf-8")
+    (repo / ".env.seed").write_text("# Seed\nSEED_KEY=s1\n", encoding="utf-8")
+    run = Run(repo)
+
+    assert run("status", ".env.ci", ".env.seed") == 0
+
+    assert run.out == [
+        ".env.example: 3 keys (the master)",
+        ".env.ci: 0 keys, 0 empty, 0 missing against .env.ci.example, "
+        "0 not in .env.ci.example",
+        ".env.seed: 1 keys, 0 empty, 0 missing against .env.seed.example, "
+        "0 not in .env.seed.example",
+    ]
+
+
 def test_prints_a_key_by_file_matrix_with_the_apps_of_each_key(repo: Path) -> None:
     (repo / "env.toml").write_text(
         '[keys.APP_URL]\nblock = "App"\n[keys.APP_TOKEN]\nblock = "App"\napps = ["api", "web"]\n',

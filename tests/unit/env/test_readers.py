@@ -109,6 +109,18 @@ def test_skips_the_configured_folders_and_files_outside_the_globs(tmp_path: Path
     assert found(tmp_path) == [("KEPT", "src/main.ts", 1)]
 
 
+def test_skips_a_path_entry_from_the_root_and_a_dot_folder_by_name(tmp_path: Path) -> None:
+    write(tmp_path, "app/vendor/lib.ts", NODE)
+    write(tmp_path, ".venv/lib/site.py", "import os\nos.getenv('VENV_KEY')\n")
+    write(tmp_path, "src/vendor/own.ts", "process.env.KEPT\n")
+
+    reads = readers.scan(tmp_path, ("*.py", "*.ts"), (".venv", "app/vendor"))
+
+    assert [(r.key, r.path.relative_to(tmp_path).as_posix()) for r in reads] == [
+        ("KEPT", "src/vendor/own.ts")
+    ]
+
+
 def test_names_a_python_file_that_does_not_parse(tmp_path: Path) -> None:
     write(tmp_path, "app/broken.py", "class Settings(BaseSettings):\n  x: int = (\n")
 

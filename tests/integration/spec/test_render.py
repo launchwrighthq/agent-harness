@@ -68,3 +68,45 @@ def test_renders_the_rest_and_exits_1_when_one_spec_fails_with_all(tmp_path: Pat
     assert done.returncode == 1
     assert done.stderr == "docs/specs/a.md: missing a '# H1' at the top of the file\n"
     assert done.stdout == "wrote docs/specs/dist/b.html (1 sections)\nrendered 1 of 2 specs\n"
+
+
+def test_renders_a_report_into_the_page_folder_of_its_own_kinds_folder(tmp_path: Path) -> None:
+    write(
+        tmp_path,
+        ".agents/harness.toml",
+        '[specs]\ndirs = ["docs/specs"]\n[specs.kinds."docs/specs/assets"]\nkind = "qa"\n'
+        'label = "QA REPORT"\nstatuses = ["tested"]\n',
+    )
+    write(tmp_path, "docs/specs/assets/r.md", "# R\n\nDate: 2026-01-01\nStatus: tested\n")
+
+    done = run_ah(tmp_path, "spec", "render", "--all")
+
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == (
+        "wrote docs/specs/assets/dist/r.html (0 sections)\nrendered 1 of 1 specs\n"
+    )
+    assert "QA REPORT" in (tmp_path / "docs/specs/assets/dist/r.html").read_text(encoding="utf-8")
+
+
+def test_names_the_source_of_a_page_it_cannot_write_and_renders_the_rest(tmp_path: Path) -> None:
+    write(tmp_path, "docs/specs/a.md", HEAD + "Text.\n")
+    write(tmp_path, "docs/specs/b.md", HEAD + "Text.\n")
+    (tmp_path / "docs/specs/dist/a.html").mkdir(parents=True)
+
+    done = run_ah(tmp_path, "spec", "render", "--all")
+
+    assert done.returncode == 1
+    assert done.stderr.startswith("docs/specs/a.md: cannot write docs/specs/dist/a.html: ")
+    assert "\n\n" not in done.stderr
+    assert done.stdout == "wrote docs/specs/dist/b.html (1 sections)\nrendered 1 of 2 specs\n"
+
+
+def test_skips_the_readme_of_a_spec_folder_and_of_its_archive_with_all(tmp_path: Path) -> None:
+    write(tmp_path, "docs/specs/a.md", HEAD + "Text.\n")
+    write(tmp_path, "docs/specs/README.md", "# Specs\n\nThe index.\n")
+    write(tmp_path, "docs/specs/archive/README.md", "# Archive\n\nThe index.\n")
+
+    done = run_ah(tmp_path, "spec", "render", "--all")
+
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == "wrote docs/specs/dist/a.html (1 sections)\nrendered 1 of 1 specs\n"

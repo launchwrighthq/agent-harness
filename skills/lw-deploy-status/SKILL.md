@@ -128,6 +128,11 @@ task list for an `aws` target. It changes nothing.
   it in.
 - **An empty run list stops the command when `gh` holds no token.** It never reads as "nothing
   deployed". Run `gh auth login`, then run the command again.
+- **A repository that the active `gh` account cannot see stops the command.** The message says
+  so. Check the gh identity of the project with `gh auth status`, and `gh auth switch` to the
+  account that owns it. Do not edit the workflow config for this error.
+- **No deploy workflow is a fact, not a failure.** With the default config and no `deploy.yml`,
+  the command prints `no deploy workflow configured` and exits 0. Report that line.
 
 ## What the command does not know
 

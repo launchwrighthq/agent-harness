@@ -285,7 +285,7 @@ def checkouts(project_root: Path) -> list[Path]:
 def page_link_re(where: layout.Layout) -> re.Pattern[str]:
     """An absolute page path, with or without `file://`. It ends at the first character that
     cannot be part of a Markdown link target or a terminal word."""
-    names = "|".join(re.escape(folder) for folder in where.dirs)
+    names = "|".join(re.escape(folder) for folder in where.longest_first())
     out = re.escape(where.out)
     stop = r"[^\s)\]>'\"`]"
     return re.compile(rf"(?:file://)?(/{stop}*/(?:{names})/{out}/{stop}+\.html)")
@@ -300,7 +300,7 @@ def broken_links(project_root: Path, reply: str) -> list[str]:
     it, when one does.
     """
     where = layout.for_root(project_root)
-    names = "|".join(re.escape(folder) for folder in where.dirs)
+    names = "|".join(re.escape(folder) for folder in where.longest_first())
     in_out = re.compile(rf"/(?:{names})/{re.escape(where.out)}/")
     lines: list[str] = []
     seen: set[str] = set()

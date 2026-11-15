@@ -137,7 +137,7 @@ class Guard:
                 return
         # A deny wins. A reveal that no deny covers asks, in a lone run or not.
         if key is not None:
-            hookio.ask_reveal(key)
+            hookio.ask_env(command, self.env_commands, key)
 
 
 def env_file(path: str) -> bool:

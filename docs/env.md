@@ -20,7 +20,7 @@ The `[env]` section of `.agents/harness.toml` holds the env facts. Every key has
 | `dirs` | `[]` | More folders of env files, each with its own master `<dir>/.env.example`. `layout` with no DIR checks them, and `check` accepts env files in them. |
 | `scan` | `.github/workflows`, `infra`, `deploy`, `terraform` and the compose files | The files and folders that `where` searches for a key name. |
 | `readers` | `*.py`, `*.js`, `*.jsx`, `*.mjs`, `*.cjs`, `*.ts`, `*.tsx`, `*.mts`, `*.cts`, `*.vue`, `*.svelte` | The globs of the code files whose env reads `where` and `check` find. See Code readers. |
-| `skip` | `node_modules`, `.venv`, `venv`, `dist`, `build`, `.claude`, `__pycache__` and build caches | Folder names that the reader scan and the stray file check leave out at any depth. |
+| `skip` | `node_modules`, `.venv`, `venv`, `dist`, `build`, `.claude`, `__pycache__` and build caches | Folders that the reader scan and the stray file check leave out. An entry without a `/` is a folder name at any depth. An entry with a `/` is a path from the root. A value replaces the default list, so keep the defaults you need: `skip = ["node_modules", ".venv", "third_party", "app/vendor"]` leaves out vendored code. |
 | `ignore` | `CI`, `HOME`, `LANG`, `NODE_ENV`, `PATH`, `PWD`, `SHELL`, `TERM`, `TMPDIR`, `TZ` | Keys that code reads and that `check` does not ask to declare. |
 | `store` | `{ kind = "" }` | The one secret store. See Stores. |
 | `stores` | `[]` | Named secret stores. See Stores. |
@@ -58,7 +58,7 @@ of the family join the key list after the last key of the family's block.
 | Subcommand | Behavior |
 |---|---|
 | `keys <file\|app>` | The keys of a file in file order, or the keys an app reads from the declarations. |
-| `status [<file> ...] [--matrix]` | Per file: key count, empty keys, keys missing against the master, keys not in the master. `--matrix` prints one row per key, one column per live file with `set`, `empty` or `-`, and an APP column: the declared apps, `all`, or `-` for an undeclared key. |
+| `status [<file> ...] [--matrix]` | Per file: key count, empty keys, keys missing against its master, keys not in its master. The master of a file is its own `<file>.example` when `check` and `layout` take that template as its master, else the root master. `--matrix` prints one row per key, one column per live file with `set`, `empty` or `-`, and an APP column: the declared apps, `all`, or `-` for an undeclared key. |
 | `check` | Each key that code reads and no master or declaration names, each key of a live file that none names, each empty or missing `required` key, each env file outside the master folder and `dirs`, and each live env file that git tracks. Exit 1 on a finding. |
 | `where <KEY>` | Each env file that sets the key, the declaration that reads it, each line of a scanned file that names it, and each code line that reads it (`path:line`, never the line text). |
 | `get <KEY> <file> [--reveal]` | The masked value (see Masks). `--reveal` prints the value. |
@@ -100,7 +100,12 @@ carry its token in the path or the query, so it always prints in the digest form
 ## Code readers
 
 `where` and `check` find the code lines that read a key, in the files of `readers` outside the
-`skip` folders: `process.env.X`, `process.env["X"]` and `import.meta.env.X` in JS and TS, and
+`skip` folders. In a git checkout they read only the files that git tracks or does not ignore,
+so generated and vendored code that `.gitignore` names stays out. The stray file check reads
+ignored files, because a live env file is ignored itself, but it leaves out a folder that
+`.gitignore` ignores as a whole.
+
+The readers find `process.env.X`, `process.env["X"]` and `import.meta.env.X` in JS and TS, and
 `os.environ["X"]`, `os.environ.get("X")` and `os.getenv("X")` in Python. A pydantic
 `BaseSettings` class, and a class of the same file built on one, gives one key per field: the
 field name with `env_prefix` (from `SettingsConfigDict`, a dict or `class Config`), upper case,
