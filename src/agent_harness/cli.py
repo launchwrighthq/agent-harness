@@ -25,6 +25,7 @@ PROJECT_ENGINE = Path(".claude") / "agent-harness" / "bin" / "ah"
 COMMANDS: dict[str, tuple[str, str, str]] = {
     "install": ("agent_harness.install", "main", "install the harness in a project or globally"),
     "check": ("agent_harness.install", "check", "compare the installed files with the lockfile"),
+    "rules": ("agent_harness.install", "rules", "print the size of each installed rule"),
     "selftest": ("agent_harness.selftest", "main", "run the fixture of every installed hook"),
     "lint": ("agent_harness.lint", "main", "find banned words, fillers and em dashes"),
     "comments": ("agent_harness.comments", "main", "check the comment budget of the source files"),

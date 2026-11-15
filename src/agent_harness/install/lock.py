@@ -31,6 +31,8 @@ class Lock:
     executable: list[str] = field(default_factory=list)
     skills: list[str] = field(default_factory=list)
     links: list[str] = field(default_factory=list)
+    # A sha256 per rule adapter of the project, so the check finds an adapter edit.
+    adapters: dict[str, str] = field(default_factory=dict)
 
     def to_text(self) -> str:
         data = {
@@ -42,6 +44,7 @@ class Lock:
             "executable": sorted(self.executable),
             "skills": sorted(self.skills),
             "links": sorted(self.links),
+            "adapters": dict(sorted(self.adapters.items())),
         }
         return f"{json.dumps(data, indent=2)}\n"
 
@@ -70,6 +73,7 @@ def read_lock(path: Path) -> Lock | None:
         executable=[str(p) for p in data.get("executable", [])],
         skills=[str(s) for s in data.get("skills", [])],
         links=[str(p) for p in data.get("links", [])],
+        adapters={str(k): str(v) for k, v in data.get("adapters", {}).items()},
     )
 
 
@@ -85,7 +89,7 @@ def merge(*groups: Iterable[PlannedFile]) -> list[PlannedFile]:
                 raise HarnessError(
                     f"{file.target} is written by two items ({prior.source} and {file.source})"
                 )
-            elif file.executable or file.paths is not None:
+            elif file.executable or file.paths is not None or file.notes is not None:
                 out[file.target] = file
     return list(out.values())
 

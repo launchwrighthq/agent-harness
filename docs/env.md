@@ -163,7 +163,7 @@ the user. The rules are in `docs/hooks.md`, The env engine exemption.
 
 ## Layout
 
-The layout rules come from the env-layout skill:
+The layout rules:
 
 | Rule | Says |
 |---|---|

@@ -128,6 +128,8 @@ SECTION_DEFAULTS: dict[str, dict[str, Any]] = {
         "secretFiles": [],
         "disable": [],
         "enable": [],
+        # Extra manifests of the project, relative to the root. `ah install` adds `--manifest`.
+        "manifests": [],
         "adapterDir": "harness/adapters",
         "workspace": {
             "worktreesOnly": False,

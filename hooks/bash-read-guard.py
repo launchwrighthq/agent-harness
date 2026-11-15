@@ -160,10 +160,27 @@ GIT_VALUE_OPTIONS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--e
 # The one command whose quoted heredoc body skips the glob scan: `cat` or `tee` reads the body as
 # data, writes at most one file, and a pipe feeds only a filter. Nothing else runs.
 DATA_HEREDOC = re.compile(
-    r"\s*(?:cat|tee(?:\s+-a)?(?:\s+[\w./-]+)?)\s+<<-?\s*(['\"])(\w+)\1"
+    r"\s*(?:cat(?:\s*>>?\s*[\w./-]+)?|tee(?:\s+-a)?(?:\s+[\w./-]+)?)"
+    r"\s+<<-?\s*(['\"])(\w+)\1"
     r"(?:\s*>>?\s*[\w./-]+)?"
     r"(?:\s*\|\s*(?:head|tail|grep|wc|cat)(?:\s+[\w.=-]+|\s+'[^']*')*)*\s*"
 )
+# The words of a program body that can expand a glob: a glob or match function, or a call that
+# starts a program or a shell. A `python3 -` or `node -` body with none of them gets no glob scan.
+PYTHON_GLOB_RUNNERS = re.compile(
+    r"glob|fnmatch|match\(|full_match|system|popen|exec|spawn|subprocess|shell|getoutput|pty"
+    r"|ctypes|import_module|__import__",
+    re.IGNORECASE,
+)
+NODE_GLOB_RUNNERS = re.compile(
+    r"glob|match|exec|spawn|child_process|shell|fork|require\(\s*[^'\"`\s]|import\(",
+    re.IGNORECASE,
+)
+PROGRAM_GLOB_RUNNERS = {
+    "python": PYTHON_GLOB_RUNNERS,
+    "python3": PYTHON_GLOB_RUNNERS,
+    "node": NODE_GLOB_RUNNERS,
+}
 # The interpreters that run a program they read.
 INTERPRETERS = {
     *("python", "python3", "node", "deno", "bun", "perl", "ruby", "php", "lua", "Rscript"),
@@ -178,6 +195,8 @@ LISTING_READERS = {
     *("md5sum", "sha1sum", "sha256sum", "diff", "cmp", "nl"),
 }
 LISTING_FILTERS = {"head", "tail", "grep", "wc", "cat"}
+# The commands that run no file that they name, so none of them can run a body written before.
+INERT_COMMANDS = LISTING_READERS | {"echo", "printf", "true", "pwd"}
 
 # The shell keywords after which the next word is a command: `while read f; do cat "$f"; done`.
 KEYWORDS = {"do", "then", "else", "elif", "if", "while", "until"}
@@ -298,6 +317,38 @@ SCRIPT_TOOLS = {
     "fgrep": GREP_OPTIONS,
     "rg": RG_OPTIONS,
 }
+# `-O` of `git grep` opens the matched files in a pager, so it is no flag here.
+GIT_GREP_OPTIONS = ScriptOptions(
+    flags="aIivwhHEGFPnlLocqzWp0123456789",
+    values="ABCm",
+    scripts="e",
+    script_files="f",
+    long_flags=option_set(
+        "--cached --no-index --untracked --no-exclude-standard --exclude-standard"
+        " --recurse-submodules --text --textconv --no-textconv --ignore-case --invert-match"
+        " --word-regexp --recursive --no-recursive --full-name --extended-regexp --basic-regexp"
+        " --perl-regexp --fixed-strings --line-number --column --files-with-matches --name-only"
+        " --files-without-match --only-matching --count --null --break --heading --show-function"
+        " --function-context --quiet --all-match --and --or --not --no-color"
+    ),
+    long_values=option_set(
+        "--max-depth --threads --after-context --before-context --context --max-count"
+    ),
+    long_scripts=frozenset(),
+    long_script_files=frozenset(),
+)
+
+# The name filters of grep and rg. Each one drops files from a recursive search.
+FILTER_OPTIONS = {"--include", "--exclude", "--exclude-dir", "-g", "--glob", "--iglob"}
+
+# The git subcommands that match their operands against ref names.
+REF_VERBS = {"branch", "tag", "for-each-ref", "show-ref"}
+
+# The long flags of sed that take no value, run nothing and write nothing.
+SED_LONG_FLAGS = {
+    *("--quiet", "--silent", "--regexp-extended", "--posix", "--separate", "--null-data"),
+    *("--unbuffered", "--debug", "--sandbox"),
+}
 
 SECRET_BASENAME = re.compile(r"(\.env(\..+)?|.+\.secret\.env|.+\.secret|\.netrc|\.git-credentials)")
 
@@ -352,6 +403,10 @@ NOT_PATH = re.compile(r"[^A-Za-z0-9_.@+~/-]+")
 
 # The shell operators and blanks that end a word. A `$` stays, so the regex `^ *$` keeps `*$`.
 SHELL_SPLIT = re.compile(r"[\s;|&()<>`]+")
+
+# The punctuation of program text that can sit next to a glob word: a comma, a bracket, a brace,
+# a parenthesis and a quote.
+PROGRAM_SPLIT = re.compile(r"[,\[\](){}'\"]+")
 
 # A special parameter that expands to a number: `$?`, `$#`, `$!` and `$$`.
 NUMBER_PARAM = re.compile(r"\$[?#!$]")
@@ -728,17 +783,20 @@ def scanned_text(command: str) -> str:
 
 
 def without_quoted_bodies(text: str) -> str:
-    """`text` with the heredoc body blanked when the whole command is `DATA_HEREDOC`.
+    """`text` with the heredoc body blanked when the whole command is `DATA_HEREDOC`, or when
+    the first line opens the body of a program that expands no glob (`program_body_end`).
 
     Bash expands nothing in a body with a quoted delimiter, so no glob in it reaches the shell.
     Only `cat` or `tee` reading the body as data, with at most one written file and a pipe into
-    a filter, blanks it. Any other step could run the written file or read the body as file
-    names (`git ... --pathspec-from-file=-`), so every other text stays whole.
+    a filter, blanks it, and only when each command after the body is inert (`inert_tail`).
+    Any other step could run the written file or read the body as file names
+    (`git ... --pathspec-from-file=-`), so every other text stays whole.
     """
     lines = text.split("\n")
     shape = DATA_HEREDOC.fullmatch(lines[0])
     if shape is None:
-        return text
+        end = program_body_end(lines)
+        return text if end is None else "\n".join([lines[0], *[""] * (end - 1), *lines[end:]])
     tabs = "<<-" in lines[0]
     end = next(
         (
@@ -748,9 +806,46 @@ def without_quoted_bodies(text: str) -> str:
         ),
         None,
     )
-    if end is None or any(line.strip() for line in lines[end + 1 :]):
+    if end is None or not inert_tail("\n".join(lines[end + 1 :])):
         return text
     return "\n".join([lines[0], *[""] * (end - 1), *lines[end:]])
+
+
+def inert_tail(text: str) -> bool:
+    """True when each command of `text` is a bare name of `INERT_COMMANDS`, with no substitution,
+    heredoc, group, loop or other word of `CONTROL_WORDS`. No such step runs a written file."""
+    if re.search(r"\$\(|`|<\(|>\(|<<", text):
+        return False
+    spans = word_spans(text)
+    if any(w.text in CONTROL_WORDS or (w.operator and w.text in "(){}") for w in spans):
+        return False
+    return all(
+        not words or words[0].text in INERT_COMMANDS for words, _, _ in simple_commands(spans)
+    )
+
+
+def program_body_end(lines: list[str]) -> int | None:
+    """The line of the closing delimiter when the first line ends in `python3 - [args] <<'D'` or
+    `node - [args] <<'D'`, and the body holds no word of `PROGRAM_GLOB_RUNNERS`. Else None.
+
+    The program reads its code from the body, and it expands a glob only through a glob or match
+    function or through a shell that it starts. The literal name scan still reads the body, and
+    the lines after the delimiter are commands like any other.
+    """
+    opening = re.search(r"<<\s*(['\"])([A-Za-z_][A-Za-z0-9_]*)\1\s*$", lines[0])
+    if opening is None or lines[0].count("<") != 2:
+        return None
+    head = word_spans(lines[0][: opening.start()])
+    stage = head[max((k + 1 for k, w in enumerate(head) if w.operator), default=0) :]
+    if len(stage) < 2 or stage[1].text != "-" or stage[0].text not in PROGRAM_GLOB_RUNNERS:
+        return None
+    if lines[0][stage[0].start : stage[0].end] != stage[0].text:
+        return None
+    delimiter = opening.group(2)
+    end = next((k for k in range(1, len(lines)) if lines[k] == delimiter), None)
+    if end is None or PROGRAM_GLOB_RUNNERS[stage[0].text].search("\n".join(lines[1:end])):
+        return None
+    return end
 
 
 class Word(NamedTuple):
@@ -906,11 +1001,209 @@ def stage_patterns(stage: list[Word]) -> tuple[list[Word], list[str]]:
                 picks.append(pick.lower() if args[i].text.startswith("-i") else pick)
         return patterns, picks
     if name == "git":
-        return git_pathspecs(args)
+        verb = git_subcommand(args)
+        if verb is not None and args[verb].text in REF_VERBS:
+            return ref_patterns(args[verb + 1 :]), []
+        excludes, picks = git_pathspecs(args)
+        return excludes + search_scripts(stage), picks
+    return search_scripts(stage), []
+
+
+def search_scripts(stage: list[Word]) -> list[Word]:
+    """The words of one stage that a grep, rg, `git grep` or sed run reads as its script.
+
+    The tool matches a script against lines, so a name in it names no file. A sed script counts
+    only when `sed_script_words` can vouch for it.
+    """
+    while stage and ASSIGNMENT.match(stage[0].text):
+        stage = stage[1:]
+    if not stage:
+        return []
+    name, args = basename(stage[0].text), stage[1:]
+    if name == "git":
+        verb = git_subcommand(args)
+        if verb is None or args[verb].text != "grep":
+            return []
+        return script_operands(args[verb + 1 :], GIT_GREP_OPTIONS)
+    if name == "sed":
+        found = sed_script_words([a.text for a in args])
+        return [] if found is None else [args[k] for k in found[0]]
     options = SCRIPT_TOOLS.get(name)
-    if options is None:
-        return [], []
-    return script_operands(args, options), []
+    return [] if options is None else script_operands(args, options)
+
+
+def git_subcommand(args: list[Word]) -> int | None:
+    """The index of the git subcommand in `args`, past the global options and their values."""
+    k = 0
+    while k < len(args) and args[k].text.startswith("-"):
+        k += 2 if args[k].text in GIT_VALUE_OPTIONS else 1
+    return k if k < len(args) else None
+
+
+def ref_patterns(args: list[Word]) -> list[Word]:
+    """The quoted words after `git branch`, `git tag` or `git for-each-ref`: ref patterns.
+
+    A message file of `git tag -F` or `--file` is a path, so a stage with one gives no word.
+    """
+    if any(re.match(r"-F|--file", a.text) for a in args):
+        return []
+    return [a for a in args if not a.text.startswith("-")]
+
+
+def name_filters(stage: list[Word]) -> list[Word]:
+    """The name filter values of a grep or rg stage that the glob scan skips.
+
+    A filter drops files from a recursive search, and the same search with no filter reads every
+    file, so a filter reads nothing more. A filter that names a credential family by its literal
+    part (`*.pem`, `.env*`) or holds a bracket class still counts. An unquoted `--include=*` is
+    safe: every name that bash makes of it starts with `--include=`.
+    """
+    if not stage or stage[0].text not in SCRIPT_TOOLS:
+        return []
+    found: list[Word] = []
+    args = stage[1:]
+    for k, word in enumerate(args):
+        name, inline, value = word.text.partition("=")
+        if inline and name in FILTER_OPTIONS:
+            found.extend([word] if broad_filter(value) else [])
+        elif word.text in FILTER_OPTIONS and k + 1 < len(args):
+            value_word = args[k + 1]
+            if not value_word.open_glob and broad_filter(value_word.text):
+                found.append(value_word)
+    return found
+
+
+def broad_filter(glob: str) -> bool:
+    """True when the name filter `glob` names no credential family by its literal part."""
+    if "[" in glob:
+        return False
+    for fill in (re.sub(r"[*?]", letter, glob) for letter in ("", "x")):
+        base = basename(fill)
+        if base.endswith(".example"):
+            continue
+        if SECRET_BASENAME.fullmatch(base) or KEY_BASENAME.fullmatch(base):
+            return False
+    return True
+
+
+def sed_script_words(args: list[str]) -> tuple[list[int], bool] | None:
+    """The indexes of the script words of a sed stage, and True when `-i` edits in place.
+
+    None when an option is unknown, a script comes from a file (`-f`), or a script is not plain
+    (see `plain_sed_script`).
+    """
+    scripts: list[int] = []
+    operands: list[int] = []
+    from_option = False
+    in_place = False
+    k = 0
+    while k < len(args):
+        text = args[k]
+        if text == "--" or not text.startswith("-") or text == "-":
+            operands.append(k)
+        elif text in ("-e", "--expression"):
+            from_option = True
+            scripts.append(k + 1)
+            k += 1
+        elif text.startswith("--expression="):
+            return None
+        elif text.startswith("--in-place") or re.fullmatch(r"-[nErsuz]*i.*", text):
+            in_place = True
+        elif text not in SED_LONG_FLAGS and not re.fullmatch(r"-[nErsuz]+", text):
+            return None
+        k += 1
+    operands = [k for k in operands if args[k] != "--"]
+    if not from_option:
+        scripts = operands[:1]
+    if not scripts or any(k >= len(args) or not plain_sed_script(args[k]) for k in scripts):
+        return None
+    return scripts, in_place
+
+
+def plain_sed_script(script: str) -> bool:
+    """True when every sed command of `script` is `s`, `y`, `p`, `d`, `q`, `=`, `n` or `N`, with
+    plain addresses and with `g`, `p`, `i`, `I`, `m`, `M` or a number as `s` flags.
+
+    No such command runs a program, reads a file or writes one: `e`, `r`, `w`, the `e` and `w`
+    flags of `s`, a block and a label are out.
+    """
+    at = 0
+    while True:
+        at = skip(script, at, " \t\n;")
+        if at >= len(script):
+            return True
+        found = sed_address(script, at)
+        if found is None:
+            return False
+        at = skip(script, found, " \t")
+        if script.startswith("!", at):
+            at = skip(script, at + 1, " \t")
+        found = sed_command(script, at)
+        if found is None:
+            return False
+        at = skip(script, found, " \t")
+        if at < len(script) and script[at] not in ";\n":
+            return False
+
+
+def skip(text: str, at: int, chars: str) -> int:
+    while at < len(text) and text[at] in chars:
+        at += 1
+    return at
+
+
+def sed_address(script: str, at: int) -> int | None:
+    """The end of the optional address range of a sed command that starts at `at`."""
+    end = sed_one_address(script, at)
+    if end is None or not script.startswith(",", end):
+        return end
+    step = re.match(r"[+~]\d+", script[end + 1 :])
+    return end + 1 + len(step.group(0)) if step else sed_one_address(script, end + 1)
+
+
+def sed_one_address(script: str, at: int) -> int | None:
+    """The end of one sed address at `at`: a number, `$`, `/re/` or `\\%re%`, or no address."""
+    number = re.match(r"\d+(~\d+)?|\$", script[at:])
+    if number:
+        return at + len(number.group(0))
+    if script.startswith("\\", at) and at + 1 < len(script):
+        end = sed_delimited(script, at + 2, script[at + 1])
+    elif script.startswith("/", at):
+        end = sed_delimited(script, at + 1, "/")
+    else:
+        return at
+    return None if end is None else skip(script, end, "IM")
+
+
+def sed_delimited(script: str, at: int, delimiter: str) -> int | None:
+    """The index after the next `delimiter` from `at` that no backslash escapes."""
+    while at < len(script):
+        if script[at] == "\\":
+            at += 2
+            continue
+        if script[at] == "\n":
+            return None
+        if script[at] == delimiter:
+            return at + 1
+        at += 1
+    return None
+
+
+def sed_command(script: str, at: int) -> int | None:
+    """The end of one plain sed command at `at`, or None for any other command."""
+    if at >= len(script):
+        return None
+    letter = script[at]
+    if letter in "pdq=nN":
+        return skip(script, at + 1, "0123456789") if letter == "q" else at + 1
+    if letter not in "sy" or at + 1 >= len(script) or script[at + 1] in "\\\n":
+        return None
+    delimiter = script[at + 1]
+    end = sed_delimited(script, at + 2, delimiter)
+    end = None if end is None else sed_delimited(script, end, delimiter)
+    if end is None:
+        return None
+    return skip(script, end, "gpiImM0123456789") if letter == "s" else end
 
 
 def git_pathspecs(args: list[Word]) -> tuple[list[Word], list[str]]:
@@ -963,31 +1256,253 @@ def git_operands(args: list[Word]) -> list[Word]:
     return [a for a in args[k + 1 :] if not a.text.startswith("-")]
 
 
-def without_patterns(text: str) -> tuple[str, list[str]]:
-    """`text` with each quoted pattern word blanked, and the name patterns of each `find`.
+@dataclass
+class Blanks:
+    """The spans of a command that a scan skips, and the name patterns of each `find`.
 
-    A pattern is a dropped `find` name or a grep or rg script. The glob scan reads the rest. Bash
-    does not expand a quoted pattern, and the tool matches it against names or lines, so it reads
-    no file. A pattern with a glob character outside quotes stays, because bash expands it to
-    file names first.
+    `glob` is for the glob scan and `named` for the literal name scan.
     """
-    found: list[Word] = []
-    picks: list[str] = []
+
+    glob: list[tuple[int, int]]
+    named: list[tuple[int, int]]
+    picks: list[str]
+
+    def shifted(self, by: int) -> Blanks:
+        return Blanks(
+            [(a + by, b + by) for a, b in self.glob],
+            [(a + by, b + by) for a, b in self.named],
+            self.picks,
+        )
+
+
+def blanked(text: str, spans: list[tuple[int, int]]) -> str:
+    """`text` with every character of `spans` but a newline turned into a blank."""
+    chars = list(text)
+    for start, end in spans:
+        for k in range(start, end):
+            if chars[k] != "\n":
+                chars[k] = " "
+    return "".join(chars)
+
+
+def span(word: Word) -> tuple[int, int]:
+    return word.start, word.end
+
+
+def without_patterns(text: str) -> tuple[str, list[str]]:
+    """`text` with each word that the glob scan skips blanked, and the name patterns of each
+    `find` (see `command_blanks`)."""
+    blanks = command_blanks(text)
+    return blanked(text, blanks.glob), blanks.picks
+
+
+def command_blanks(text: str, inner: bool = False) -> Blanks:
+    """The words of `text` that read no file by their name or their glob.
+
+    A quoted pattern is a dropped `find` name, an exclude pathspec, a ref pattern of git or a
+    script of grep, rg, `git grep` or a plain sed. Bash does not expand it, and the tool matches
+    it against names or lines. A pattern with a glob character outside quotes stays, because
+    bash expands it to file names first. A broad name filter of grep or rg and each word of a
+    stage of `name_only_stages` are skipped too. A script and a stage of names also skip the
+    literal name scan. A heredoc body is no command line, and a `$(...)` inside double quotes
+    is one (`inner`).
+    """
+    masked = heredoc_masked(text)
+    spans = word_spans(masked)
+    listings = set() if inner else {w[0].start for w in name_only_stages(spans, masked)}
+    out = Blanks([], [], [])
     stage: list[Word] = []
-    for word in [*word_spans(text), None]:
-        if word is None or word.operator:
-            patterns, stage_picks = stage_patterns(stage)
-            found.extend(patterns)
-            picks.extend(stage_picks)
-            stage = []
-        else:
+    for word in [*spans, None]:
+        if word is not None and not word.operator:
             stage.append(word)
-    out = text
-    # From the end, so each blank leaves the offsets of the words before it as they were.
-    for word in sorted(set(found), key=lambda w: w.start, reverse=True):
-        if not word.open_glob:
-            out = out[: word.start] + " " + out[word.end :]
-    return out, picks
+            continue
+        if stage and stage[0].start in listings:
+            keep = [w for w in stage[1:] if stage[0].text == "ls" or not w.open_glob]
+            out.glob.extend(map(span, keep))
+            out.named.extend(map(span, keep))
+        else:
+            patterns, picks = stage_patterns(stage)
+            out.glob.extend(span(w) for w in patterns if not w.open_glob)
+            out.glob.extend(map(span, name_filters(stage)))
+            out.named.extend(span(w) for w in search_scripts(stage) if not w.open_glob)
+            out.picks.extend(picks)
+        stage = []
+    for start, end in substitutions(masked):
+        found = command_blanks(masked[start:end], inner=True).shifted(start)
+        out.glob.extend(found.glob)
+        out.named.extend(found.named)
+        out.picks.extend(found.picks)
+    return out
+
+
+# A heredoc operator and its delimiter. `<<<` is a here string, and `$((1<<3))` a shift.
+HEREDOC_OPEN = re.compile(r"(?<!<)<<(?!<)(-?)\s*(['\"]?)\\?([A-Za-z_][A-Za-z0-9_]*)\2")
+
+
+def heredoc_masked(text: str) -> str:
+    """`text` with each heredoc body and its closing delimiter blanked, newlines kept.
+
+    A body line is data or a program, never a command line of this shell. A body that never
+    closes blanks every line after it, which makes fewer words patterns.
+    """
+    out: list[str] = []
+    pending: list[tuple[str, bool]] = []
+    for line in text.split("\n"):
+        if pending:
+            delimiter, tabs = pending[0]
+            if (line.lstrip("\t") if tabs else line) == delimiter:
+                pending.pop(0)
+            out.append(" " * len(line))
+            continue
+        out.append(line)
+        pending.extend((m.group(3), m.group(1) == "-") for m in HEREDOC_OPEN.finditer(line))
+    return "\n".join(out)
+
+
+def substitutions(text: str) -> list[tuple[int, int]]:
+    """The inner span of each outermost `$(...)` of `text` that is not in single quotes."""
+    out: list[tuple[int, int]] = []
+    quote: str | None = None
+    at = 0
+    while at < len(text):
+        char = text[at]
+        if quote == "'":
+            quote = None if char == "'" else quote
+        elif char == "\\":
+            at += 1
+        elif char == "'" and quote is None:
+            quote = "'"
+        elif char == '"':
+            quote = None if quote == '"' else '"'
+        elif text.startswith("$(", at) and not text.startswith("$((", at):
+            end = closing_paren(text, at + 2)
+            if end is None:
+                return out
+            out.append((at + 2, end))
+            at = end
+        at += 1
+    return out
+
+
+def closing_paren(text: str, at: int) -> int | None:
+    """The index of the `)` that closes a `$(` whose body starts at `at`, quotes honoured."""
+    depth = 1
+    quote: str | None = None
+    while at < len(text):
+        char = text[at]
+        if quote == "'":
+            quote = None if char == "'" else quote
+        elif char == "\\":
+            at += 1
+        elif quote == '"':
+            quote = None if char == '"' else quote
+        elif char in "'\"":
+            quote = char
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return at
+        at += 1
+    return None
+
+
+# The words that make a later command see the output of a listing: a loop, a group, a condition,
+# a function, `coproc`, and `exec` and `eval`, which redirect or rerun the rest of the line.
+CONTROL_WORDS = {
+    *("for", "while", "until", "select", "if", "case", "do", "done", "then", "else", "elif"),
+    *("fi", "esac", "function", "coproc", "exec", "eval"),
+}
+# The redirections that leave the output of a listing on its way to the terminal.
+QUIET_REDIRECTS = {"2>/dev/null", ">/dev/null", "1>/dev/null", "2>&1"}
+# The actions of `find` that run, write or delete. Without one, `find` prints names.
+FIND_WRITES = {"-fprint", "-fprint0", "-fprintf", "-fls", "-delete", *FIND_ACTIONS}
+
+
+def name_only_stages(spans: list[Word], text: str) -> list[list[Word]]:
+    """The `ls` and `find` stages whose names reach only the terminal.
+
+    `ls` prints names, and `find` with no action of `FIND_WRITES` prints names. A stage counts
+    when its output, and the output of each `head`, `tail`, `grep`, `wc` or `cat` that a pipe
+    feeds it into, goes to the terminal or `/dev/null`. A substitution, a group, a loop, `$_`,
+    `exec`, a redirection to a file and `--files0-from` can carry a name on to a reader, so any
+    of them anywhere in the command gives no stage.
+    """
+    if re.search(r"\$\(|`|<\(|>\(|\$\{?_(?![A-Za-z0-9_])|&>|>\||<>", text):
+        return []
+    if any(w.text in CONTROL_WORDS or (w.operator and w.text in "(){}") for w in spans):
+        return []
+    commands = simple_commands(spans)
+    found: list[list[Word]] = []
+    for k, (words, _redirects, _joiner) in enumerate(commands):
+        if not words or words[0].text not in ("ls", "find"):
+            continue
+        if words[0].text == "find" and any(w.text in FIND_WRITES for w in words):
+            continue
+        if names_reach_terminal(commands, k):
+            found.append(words)
+    return found
+
+
+Command = tuple[list[Word], list[str], str]
+
+
+def names_reach_terminal(commands: list[Command], at: int) -> bool:
+    """True when the output of command `at` and of each filter a pipe feeds reach the terminal."""
+    while True:
+        words, redirects, joiner = commands[at]
+        if any(r not in QUIET_REDIRECTS for r in redirects):
+            return False
+        filtered = joiner == "|" and at + 1 < len(commands)
+        if not filtered:
+            return joiner in ("", ";", "\n", "&&", "||", "&")
+        at += 1
+        words = commands[at][0]
+        if not words or words[0].text not in LISTING_FILTERS:
+            return False
+        if any("files0" in w.text for w in words):
+            return False
+
+
+def simple_commands(spans: list[Word]) -> list[Command]:
+    """The words, the redirections and the joiner after each simple command of `spans`.
+
+    A redirection is one text such as `2>/dev/null` or `2>&1`. A joiner is `|`, `||`, `&&`,
+    `|&`, `;`, `&`, a newline, or empty at the end.
+    """
+    out: list[Command] = []
+    words: list[Word] = []
+    redirects: list[str] = []
+    k = 0
+    while k < len(spans):
+        word = spans[k]
+        if not word.operator:
+            words.append(word)
+            k += 1
+            continue
+        if word.text in "<>":
+            number = words and words[-1].text.isdigit() and words[-1].end == word.start
+            redirect = words.pop().text if number else ""
+            redirect += word.text
+            k += 1
+            while k < len(spans) and spans[k].operator and spans[k].text in "<>&":
+                redirect += spans[k].text
+                k += 1
+            if k < len(spans) and not spans[k].operator:
+                redirect += spans[k].text
+                k += 1
+            redirects.append(redirect)
+            continue
+        joiner = word.text
+        k += 1
+        if joiner in "|&" and k < len(spans) and spans[k].text in "|&" and spans[k].operator:
+            joiner += spans[k].text
+            k += 1
+        out.append((words, redirects, joiner))
+        words, redirects = [], []
+    out.append((words, redirects, ""))
+    return out
 
 
 def basename(path: str) -> str:
@@ -1078,6 +1593,7 @@ def expanded_words(raw: str) -> tuple[list[tuple[str, bool]], str | None]:
 
 def names_a_secret(
     raw: str,
+    named: str,
     cwd: str,
     keys_by_name: bool,
     names: Names,
@@ -1089,11 +1605,12 @@ def names_a_secret(
 
     Split on punctuation rather than taken from the parsed words, so a path inside a `node -e`
     script body is seen too. A `.example` is the committed reference and is never a secret.
-    The glob scan reads `globbed` (the command without its quoted patterns) as bash expands it,
-    and each `find` pattern of `picks` as `find` matches it. With `dotglob`, a glob matches a
-    name that starts with `.` as `find` does.
+    The literal name scan reads `named`, the command without the words that `command_blanks`
+    skips for it. The glob scan reads `globbed` (the command without its quoted patterns) as
+    bash expands it, and each `find` pattern of `picks` as `find` matches it. With `dotglob`, a
+    glob matches a name that starts with `.` as `find` does.
     """
-    found, too_many = expanded_words(raw)
+    found, too_many = expanded_words(named)
     if too_many is not None:
         return too_many
     for word, from_braces in found:
@@ -1120,7 +1637,11 @@ def names_a_secret(
     command = " ".join(word for word, _ in found)
     # Split on the shell operators too, so `*.pem;` and `$(cat *.pem)` give the glob alone. The
     # blank-split words stay too, so a bracket that holds an operator (`id_[r;]sa`) is read whole.
-    for piece in [*re.split(r"\s+", command), *SHELL_SPLIT.split(command)]:
+    # Program text puts punctuation around a glob word (`['cat *.pem'],`), and a shell that the
+    # program starts expands the word alone, so the pieces without that punctuation count too.
+    shell_pieces = [*re.split(r"\s+", command), *SHELL_SPLIT.split(command)]
+    program_pieces = [p for s in shell_pieces for p in PROGRAM_SPLIT.split(s) if p != s]
+    for piece in [*shell_pieces, *program_pieces]:
         # The `*` and `?` of `$*` and `$?` are no glob, so the test runs without the expansions.
         # In a glob word an expansion that stands for any text reads as `*`: `${p}id_rsa?` is
         # `*id_rsa?`. A `${...}` keeps the text after its name and subscript, so the glob of
@@ -1147,7 +1668,8 @@ def is_credential(fragment: str, names: Names, keys: bool) -> bool:
     if ".aws/credentials" in fragment or SESSION_PATH.search(fragment):
         return True
     base = basename(fragment)
-    if base.endswith(".example"):
+    # A sentence can end in a `.example` name, and its full stop is no part of the name.
+    if base.rstrip(".").endswith(".example"):
         return False
     if SECRET_BASENAME.fullmatch(base) or any(rx.fullmatch(base) for _, rx in names.extra):
         return True
@@ -1231,10 +1753,13 @@ def listing_trusted(text: str) -> bool:
 
 
 def stage_trusted(words: list[str], filtered: bool) -> bool:
-    """True for a `cd <literal path>` step, or for a command of `LISTING_READERS`, or of
-    `LISTING_FILTERS` when a pipe feeds it."""
+    """True for a `cd <literal path>` step, a sed run with a plain script and no `-i`, or a
+    command of `LISTING_READERS`, or of `LISTING_FILTERS` when a pipe feeds it."""
     if words[0] == "cd" and not filtered:
         return len(words) == 2 and not re.match(r"[-~]|.*[$`*?[]", words[1])
+    if words[0] == "sed" and not filtered:
+        found = sed_script_words(words[1:])
+        return found is not None and not found[1]
     # A bare name only: `/tmp/x/cat` or `X=1 cat` is another program or environment.
     return words[0] in (LISTING_FILTERS if filtered else LISTING_READERS)
 
@@ -1448,7 +1973,8 @@ def secret_read(command: str, cwd: str, names: Names) -> str | None:
     )
     for text, bare in zip(forms, bodiless, strict=True):
         globbed, picks = without_patterns(bare)
-        secret = names_a_secret(text, cwd, keys_by_name, names, globbed, picks, dotglob)
+        named = blanked(text, command_blanks(text).named)
+        secret = names_a_secret(text, named, cwd, keys_by_name, names, globbed, picks, dotglob)
         if secret is not None:
             return secret
     return None

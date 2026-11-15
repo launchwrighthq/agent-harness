@@ -11,6 +11,7 @@ a fact in `.agents/harness.toml`, never in an installed file.
 | `ah install [--project] [--manifest <path> ...] [--from <package root>] [--replace]` | Installs the package and each extra manifest into the git repository of the current folder. `--project` is the default. `--replace` replaces a project copy (see below). |
 | `ah install --global [--from <package root>]` | Installs the engine and the skills into `~/.claude`. No hook, no rule, no registry and no git hook. |
 | `ah check [--global]` | Exits 1 and prints `<path> <kind>` for each part that differs. Exits 0 when every part matches. |
+| `ah rules` | Prints each installed rule with its line count and character count, then the total. |
 | `ah selftest` | Runs every fixture of every enabled hook of the installed manifests, for Claude Code and through the Codex adapter. |
 | `ah lint <path ...>` | Prints `file:line:col rule message` for each banned word, banned filler or em dash in Markdown and in code comments. Exits 1 on a finding. |
 
@@ -31,10 +32,10 @@ another root, for a project in a subfolder of a larger repository. `install`, `c
 | `.claude/agent-harness/lock.json` | The package version, the installed manifests, a sha256 per file, the executable files, the skills and the skill links. |
 | `.claude/skills/<id>/` | Every file of each enabled skill. |
 | `.claude/rules/lw/<file>` | Each enabled rule. A rule with `paths` gets a `paths:` front matter block. |
-| `.githooks/<name>` | Each enabled git hook and its files. `core.hooksPath` of the repository config becomes the absolute path of `.githooks/` in the main checkout when it is unset or the relative `.githooks`. `receive.denyCurrentBranch` becomes `updateInstead` when it is unset, so the `lw-land` push updates the base checkout. |
-| `.claude/settings.json` | Only the `hooks` key. Every other byte stays as the project wrote it. |
-| `.codex/hooks.json` | The whole file. Each entry runs the hook through the Codex adapter. |
-| `.agents/skills/<id>` | A link to `../../.claude/skills/<id>` for each skill, project skills too. |
+| `.githooks/<name>` | The git hook dispatcher, one copy per client-side hook name (see "Git hooks" in `docs/hooks.md`). `.githooks/harness/` holds each enabled git hook and its files. `core.hooksPath` of the repository config becomes the absolute path of `.githooks/` in the main checkout when it is unset or the relative `.githooks`. `receive.denyCurrentBranch` becomes `updateInstead` when it is unset, so the `lw-land` push updates the base checkout. |
+| `.claude/settings.json` | Only the harness entries of the `hooks` key. Every other byte and every project hook stay as the project wrote them. |
+| `.codex/hooks.json` | Only the harness entries of the `hooks` key. Each one runs the hook through the Codex adapter. Every project hook stays. |
+| `.agents/skills/<id>` | A link to `../../.claude/skills/<id>` for each skill, project skills too. A project skill is a folder in `.claude/skills/` with a `SKILL.md` that no manifest installs. The install never writes into it. |
 | `AGENTS.md` | The block between `<!-- lw-harness:start -->` and `<!-- lw-harness:end -->`. It lists the rules and the skills for Codex. |
 | `.gitignore` | The lines `/.claude/state/` and `/.claude/agent-harness/**/__pycache__/`, when no line ignores those files. |
 | `.agents/harness.toml` | A commented starter file, only when none exists. The installer never rewrites it. |
@@ -50,8 +51,38 @@ A project copy is a file that the previous lockfile does not list and that the i
 replace or leave behind. It is a planned file with other bytes (`differs`), or a file in
 `.claude/agent-harness/`, `.claude/rules/lw/` or a planned skill folder that the plan does not
 hold (`extra`). An install over a project copy exits 1, names each file and writes nothing. Move
-each file you still need, then install again. `--replace` replaces the copy, removes its extra
+each file you still need, then install again. A git hook of the project in `.githooks/<name>` is a
+project copy too, because the dispatcher takes that path. Move it to `.git/hooks/<name>`, which
+the dispatcher runs, or declare it as a `[[githook]]` of a project manifest. `--replace` replaces the copy, removes its extra
 files and names each one.
+
+## Rule adapters
+
+A project changes an installed rule with a rule adapter: `<adapterDir>/rules/<rule id>.md`, by
+default `harness/adapters/rules/<rule id>.md`. Without front matter, the install appends the
+adapter text to the rule under a `## Project notes` heading. With `replace: true` in its front
+matter, the adapter text replaces the body of the rule. The `paths:` front matter of the rule
+stays in both cases. Front matter takes no other key.
+
+```markdown
+---
+replace: true
+---
+# Code limits
+
+Keep each file under 300 lines.
+```
+
+The lockfile records a sha256 per adapter. `ah check` names an adapter that changed, came or went
+since the install as `stale`, so an adapter edit needs `ah install`. Use `replace: true` to keep a
+long rule short when the project has its own version of it, and `disable` to drop a rule.
+
+`ah rules` prints the size of each installed rule, so a project sees what its rules cost:
+
+```
+.claude/rules/lw/anti-slop.md 82 lines 4790 chars
+total 82 lines 4790 chars
+```
 
 ## Hook commands
 
@@ -84,11 +115,39 @@ extra manifests by name, each in the order it declares. The order does not depen
 `--manifest` options. Codex keeps its trust per entry position, so a reinstall with no manifest
 change keeps every entry trusted. A disabled item has no entry in either registry.
 
+## Project hooks
+
+The installer owns only the entries whose command has one of the two forms above: a script under
+`$CLAUDE_PROJECT_DIR/.claude/agent-harness/`, or the Codex adapter. Every other entry is a project
+hook. An install keeps it, with its matcher and its other keys.
+
+In each event, the harness entries come first and the project entries follow in their old order.
+So a project hook never moves a harness entry, and Codex keeps the trust of each harness entry. A
+project group that also holds a harness command keeps only its project commands. A second install
+with no change writes nothing.
+
+A project hook that must survive every sync can also come from a project manifest (see "Extra
+manifests"). Then `ah selftest` runs its fixtures too.
+
 ## Extra manifests
 
 `--manifest <path>` adds a manifest in the format below, for example the manifest of a framework
 module. Its name is its folder for a file named `harness.toml`, else its file stem:
 `modules/testing/harness.toml` is `testing`. Two extra manifests with one name fail.
+
+`harness.manifests` in `.agents/harness.toml` names the extra manifests of the project, as paths
+relative to the project root. `ah install` installs each of them and each `--manifest`, so the
+hooks, rules and skills of the project survive every sync, also a sync that passes no
+`--manifest`. A file named in both places installs once. A path that is no file fails and names
+the key.
+
+```toml
+[harness]
+manifests = ["tools/agents/harness.toml"]
+```
+
+The check reads the manifests that the lockfile names. After a change of `harness.manifests`, run
+`ah install`.
 
 The paths of an extra manifest are relative to its own folder. Its hook and tool files go to
 `.claude/agent-harness/manifests/<name>/`, so the project does not depend on the source folder,
@@ -106,6 +165,17 @@ one of these:
 | `mode` | The file is no longer executable. |
 | `extra` | A file in `.claude/agent-harness/`, `.claude/rules/lw/` or an installed skill folder that the lockfile does not list, or a stale skill link. |
 | `differs` | `.claude/settings.json`, `.codex/hooks.json`, `AGENTS.md`, `.gitignore` or a skill link differs from what the installed manifests and the config give. |
+| `stale` | A rule adapter changed, came or went after the install. The installed rule still holds the old text until the next install. |
+
+The check reads `.claude/settings.json` and `.codex/hooks.json` as JSON, so the layout of a
+hand-written hook is no difference. It prints one line for each project hook in the two files,
+an entry that no installed manifest declares:
+
+```
+.claude/settings.json PreToolUse Bash: a project hook that no manifest declares: bash scripts/x.sh
+```
+
+These lines are information. They do not change the exit code.
 
 A changed `disable` or `enable` in `.agents/harness.toml` makes the registries differ until the
 next install. The check takes the project skills from the links of the lockfile, so a project
@@ -209,7 +279,8 @@ The installer reads these keys of `[harness]` in `.agents/harness.toml`:
 |---|---|---|
 | `disable` | `[]` | Ids of hooks, rules, skills, git hooks and tools to leave out. A project skill can be named too. An unknown id fails. |
 | `enable` | `[]` | Ids of items that are off by default. |
-| `adapterDir` | `harness/adapters` | The folder of free-text notes per skill that the `AGENTS.md` block names. |
+| `manifests` | `[]` | Extra manifests of the project, relative to the root. `ah install` adds each `--manifest` to them. |
+| `adapterDir` | `harness/adapters` | The folder of free-text notes per skill that the `AGENTS.md` block names, and of the rule adapters in `rules/`. |
 | `lint.words`, `lint.allow` | `[]` | More banned words for `ah lint`, and banned words that this project allows. |
 
 A line that holds `lw-lint-ok` is not linted, for a line that must quote a banned form.

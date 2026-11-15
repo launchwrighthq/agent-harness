@@ -1,7 +1,8 @@
 """The parts of a project that the installer writes and the project also edits.
 
-These are the `hooks` key of `.claude/settings.json`, the whole `.codex/hooks.json`, the marked
-block of `AGENTS.md`, the hook state lines of `.gitignore` and the `.agents/skills/` links.
+These are the harness entries of the `hooks` key of `.claude/settings.json` and of
+`.codex/hooks.json`, the marked block of `AGENTS.md`, the hook state lines of `.gitignore` and
+the `.agents/skills/` links.
 """
 
 from __future__ import annotations
@@ -45,6 +46,17 @@ IGNORED = (
 )
 
 Registry = dict[str, list[dict[str, Any]]]
+
+# The command of a registry entry that the installer writes: the Claude form runs a script under
+# the engine folder, the Codex form runs the adapter of the engine folder. Every other command is
+# a project hook, and an install keeps it.
+OWN_COMMAND = re.compile(
+    r'(?:python3|bash|node) "\$CLAUDE_PROJECT_DIR/' + re.escape(ENGINE_DIR) + r"/.*"
+    r'|python3 "\$\(git rev-parse --show-toplevel\)/(?:[^"]*/)?'
+    + re.escape(f"{ENGINE_DIR}/codex/run-hook.py")
+    + r'" .*',
+    re.S,
+)
 
 # The characters that a project folder may hold. The Codex command names the folder inside double
 # quotes, where the shell still expands `$`, a backtick and `\`.
@@ -133,13 +145,67 @@ def registry(plan: Plan, client: str, project: str = "") -> Registry:
     return out
 
 
+def is_own(entry: Any) -> bool:
+    """True for a hook entry whose command the installer writes."""
+    command = entry.get("command") if isinstance(entry, dict) else None
+    return isinstance(command, str) and OWN_COMMAND.fullmatch(command) is not None
+
+
+def project_entries(text: str | None, file: str) -> Registry:
+    """The groups of the `hooks` key of `text` without the commands that the installer writes.
+
+    A group keeps its other keys and its project commands in their order. A group that held
+    only harness commands goes. A group of another shape stays as it is.
+    """
+    if text is None:
+        return {}
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise HarnessError(f"{file} is not valid JSON: {error}") from error
+    hooks = data.get("hooks", {}) if isinstance(data, dict) else None
+    if not isinstance(hooks, dict):
+        raise HarnessError(f"{file}: the hooks key is not an object. Fix the file.")
+    out: Registry = {}
+    for event, groups in hooks.items():
+        if not isinstance(groups, list):
+            raise HarnessError(f"{file}: hooks.{event} is not a list. Fix the file.")
+        kept: list[Any] = []
+        for group in groups:
+            entries = group.get("hooks") if isinstance(group, dict) else None
+            if not isinstance(entries, list):
+                kept.append(group)
+                continue
+            own = [e for e in entries if not is_own(e)]
+            if own or not entries:
+                kept.append({**group, "hooks": own})
+        if kept:
+            out[event] = kept
+    return out
+
+
+def merged(own: Registry, project: Registry) -> Registry:
+    """The harness groups first in each event, then the project groups in their old order.
+
+    Codex keeps its trust per entry position, so the harness entries keep their positions. An
+    event with project groups only comes after the harness events.
+    """
+    events = [*own, *(e for e in project if e not in own)]
+    return {e: [*own.get(e, []), *project.get(e, [])] for e in events}
+
+
 def dump_json(value: Any) -> str:
     return json.dumps(value, indent=2, ensure_ascii=False)
 
 
-def codex_file(plan: Plan, root: Path) -> str:
-    """`.codex/hooks.json` of the project at `root`."""
-    return f"{dump_json({'hooks': registry(plan, 'codex', project_folder(root))})}\n"
+def codex_file(current: str | None, plan: Plan, root: Path) -> str:
+    """`.codex/hooks.json` of the project at `root`, with its project entries kept."""
+    hooks = merged(
+        registry(plan, "codex", project_folder(root)), project_entries(current, CODEX_FILE)
+    )
+    if current is None:
+        return f"{dump_json({'hooks': hooks})}\n"
+    return splice_top_level_key(current, "hooks", hooks, CODEX_FILE)
 
 
 # The JSON splice: replace one top-level key of an object in its text, so every other byte stays.
@@ -246,8 +312,9 @@ def splice_top_level_key(text: str, key: str, value: Any, file: str) -> str:
 
 
 def settings_file(current: str | None, plan: Plan) -> str:
-    """`.claude/settings.json` with only its `hooks` key replaced."""
-    return splice_top_level_key(current or "{}\n", "hooks", registry(plan, "claude"), SETTINGS_FILE)
+    """`.claude/settings.json` with the harness entries of its `hooks` key replaced."""
+    hooks = merged(registry(plan, "claude"), project_entries(current, SETTINGS_FILE))
+    return splice_top_level_key(current or "{}\n", "hooks", hooks, SETTINGS_FILE)
 
 
 def agents_block(plan: Plan, skills: Sequence[str], adapter_dir: str) -> str:

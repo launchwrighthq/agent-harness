@@ -3,6 +3,7 @@
 `ah install [--project] [--manifest <path> ...] [--from <package root>] [--replace]`
 `ah install --global [--from <package root>]`
 `ah check [--global]`
+`ah rules`
 """
 
 from __future__ import annotations
@@ -40,7 +41,8 @@ def _parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         type=Path,
-        help="an extra harness.toml to install with the package (repeatable)",
+        help="an extra harness.toml to install with the package and harness.manifests"
+        " (repeatable)",
     )
     parser.add_argument(
         "--replace",
@@ -60,7 +62,7 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str]) -> int:
     from agent_harness import config
     from agent_harness.install.home import claude_home, install_global
-    from agent_harness.install.project import install_project
+    from agent_harness.install.project import install_project, manifest_files
 
     args = _parser().parse_args(argv)
     source = (args.source or PACKAGE_ROOT).resolve()
@@ -74,15 +76,16 @@ def main(argv: list[str]) -> int:
         install_global(claude_home(), source, _say)
         return 0
     root = config.find_root()
-    manifests = [p.resolve() for p in args.manifest]
-    install_project(root, config.load(root), source, manifests, _say, replace=args.replace)
+    cfg = config.load(root)
+    manifests = manifest_files(root, cfg, args.manifest)
+    install_project(root, cfg, source, manifests, _say, replace=args.replace)
     return 0
 
 
 def check(argv: list[str]) -> int:
     from agent_harness import config
     from agent_harness.install.home import check_global, claude_home
-    from agent_harness.install.project import check_project
+    from agent_harness.install.project import check_project, project_hooks
 
     parser = argparse.ArgumentParser(
         prog="ah check",
@@ -95,6 +98,9 @@ def check(argv: list[str]) -> int:
     else:
         root = config.find_root()
         diffs, again, prefix = check_project(root, config.load(root)), "ah install --project", ""
+        # Information only: a project hook changes no exit code.
+        for line in project_hooks(root):
+            print(line)
     for path, kind in diffs:
         print(f"{prefix}{path} {kind}")
     if diffs:
@@ -105,4 +111,19 @@ def check(argv: list[str]) -> int:
         )
         return 1
     print("ah check: the installed files match the lockfile")
+    return 0
+
+
+def rules(argv: list[str]) -> int:
+    from agent_harness import config
+    from agent_harness.install.project import rule_sizes
+
+    argparse.ArgumentParser(
+        prog="ah rules",
+        description="Print each installed rule with its line count and character count.",
+    ).parse_args(argv)
+    sizes = rule_sizes(config.find_root())
+    for rel, lines, chars in sizes:
+        print(f"{rel} {lines} lines {chars} chars")
+    print(f"total {sum(s[1] for s in sizes)} lines {sum(s[2] for s in sizes)} chars")
     return 0

@@ -106,6 +106,8 @@ command must start with one of these forms, a space and a subcommand:
 
 - `python3 .claude/agent-harness/bin/ah env`
 - `python3 ~/.claude/agent-harness/bin/ah env`
+- `python3 <project root>/.claude/agent-harness/bin/ah env`, with the absolute path of the project
+  that holds the hook
 - `ah env`
 - the value of `harness.envCommand`
 
@@ -237,17 +239,51 @@ scanned too, because bash expands it.
 
 Bash expands no glob in the body of a heredoc with a quoted delimiter (`<<'EOF'`, `<<"EOF"`,
 `<<\EOF`). The literal name scan still reads every body: a script that names `.env.production`
-is refused. The glob scan skips the body only when the whole command is `cat <<'D'` or
-`tee [file] <<'D'`, with at most one `> file` and a pipe into `head`, `tail`, `grep`, `wc` or
-`cat`, and nothing after the closing delimiter. So `cat <<'EOF' | wc -l` with a `/**` line
-passes. `cat <<'EOF' > x.sh && ./x.sh` and `git ls-files --pathspec-from-file=- <<'EOF'` get the
-body scanned, because a later step can run the file or read the body as file names.
+is refused. The glob scan skips the body of a data heredoc: the first line is `cat <<'D'`,
+`cat > file <<'D'` or `tee [file] <<'D'`, with at most one more `> file` and a pipe into `head`,
+`tail`, `grep`, `wc` or `cat`. Each command after the closing delimiter must be a bare `echo`,
+`printf`, `true`, `pwd` or a reader of the listing list below, with no substitution, heredoc,
+group or loop. So `cat <<'EOF' | wc -l` with a `/**` line passes, and so does
+`cat >> notes.md <<'EOF'` followed by `ls docs | head`. `cat <<'EOF' > x.sh && ./x.sh`,
+`bash x.sh` after the body and `git ls-files --pathspec-from-file=- <<'EOF'` get the body scanned,
+because a later step can run the file or read the body as file names.
 
-An interpreter can build any file name at run time, so the guard does not read program text
-beyond this scan. The body of `python3 - <<'EOF'` gets the full glob scan, and a `/**` comment
-in it is refused. Put such a script in a file and run the file (`python3 script.py`). A line
-that opens the heredoc and holds a `#`, a backtick, `$(` or `((` keeps the whole command
-scanned.
+A program that `python3 -`, `python -` or `node -` reads from a quoted heredoc expands a glob only
+through a glob or match function, or through a program or shell that it starts. So the glob
+scan skips the body when the first line ends in `<<'D'` and the body holds none of these words:
+`glob`, `fnmatch`, `match(`, `system`, `popen`, `exec`, `spawn`, `subprocess`, `shell`, `pty`,
+`ctypes` and the dynamic imports for Python, and `glob`, `match`, `exec`, `spawn`,
+`child_process`, `shell`, `fork` and a dynamic `require` or `import(` for Node. A `/**` comment or
+a regex class in such a body passes. The literal name scan still reads the body, and the lines
+after the delimiter are commands like any other. perl, ruby and the other interpreters keep the
+full scan, because a backtick or a pipe `open` there runs a shell. A line that opens the heredoc
+and holds a `#`, a backtick, `$(` or `((` keeps the whole command scanned.
+
+Some words name no file that the command reads, so the scans skip them:
+
+- The script of grep, rg and `git grep` (the `-e` value, else the first operand) skips both
+  scans: the tool matches it against lines. A script file (`-f`), a path operand and an unknown
+  option are still read. So `grep -rn '\.env' src` passes and `grep -f .env.local x` is refused.
+- A sed script of only `s`, `y`, `p`, `d`, `q`, `=`, `n` and `N` commands, with plain addresses
+  and the `s` flags `g`, `p`, `i`, `I`, `m`, `M` or a number, skips both scans. An `e` or `w`
+  command or flag, `r`, a block, a label, `-f` and an unknown option keep the script scanned.
+- The operands of `git branch`, `git tag`, `git for-each-ref` and `git show-ref` are ref
+  patterns, unless the stage has `-F` or `--file`.
+- A name filter of grep or rg (`--include`, `--exclude`, `--exclude-dir`, `-g`, `--glob`,
+  `--iglob`) only drops files from a recursive search, which reads every file without it. So
+  `--include=*` and `--include=*.ts*` pass. A filter that names a credential family by its
+  literal part (`*.pem`, `.env*`) or holds a bracket class still counts.
+- `ls` prints names, and `find` with no `-exec`, `-ok`, `-delete`, `-fprint` or `-fls` prints
+  names. Their words skip both scans when their output, and the output of each `head`, `tail`,
+  `grep`, `wc` or `cat` that a pipe feeds, reaches only the terminal or `/dev/null`. A pipe into
+  any other program, a redirection to a file, `|&`, `&>`, a substitution, a group, a loop,
+  `exec`, `eval`, `coproc`, `$_` and `--files0-from` anywhere in the command void this. An
+  unquoted glob of `find` keeps the scan. So `ls /srv/x/*/* | head` and
+  `find . -path '*ref*' | head` pass, and `ls *.pem | xargs cat` is refused.
+- A `$(...)` inside double quotes is a command line of its own, so a grep script in it is a
+  script too.
+
+A sentence can end in a `.example` name, so `app/.env.example.` is the committed reference.
 
 The guard reads a command only when it runs a reader, such as `cat`, `hexdump`, `zcat` or `ed`,
 or feeds a file with `<`. A `$(<file)` or `$( < file)` counts as a reader, also inside double
@@ -260,6 +296,9 @@ wherever the command holds them. A key or certificate name (`*.pem`, `*.key`, `*
 directory. It counts by name alone when the command can read in another directory: `cd`, `find`,
 `xargs`, a `-C` flag, `--git-dir`, `--work-tree` or `chdir`. A glob that can expand to one of the
 names is refused. The guard expands braces first, and a range such as `{j..l}` reads as `*`.
+Program text puts a comma, a bracket, a brace, a parenthesis or a quote next to a glob word, as in
+`subprocess.run(['cat *.pem'], shell=True)`. A shell that the program starts expands the word
+alone, so the glob scan also reads each word without that punctuation.
 
 A glob such as `*` can expand to a key name, so the name test alone refuses it. The guard then
 lists the folder, as bash does, and lets the glob pass when it matches real files and none of
@@ -272,9 +311,9 @@ With `dotglob` on, the name test stays too.
 
 The guard lists the folder when the hook runs, so the listing counts only when no step can
 change the folder or run a program before the glob expands. Every step between `;`, `&&` and
-newlines must be `cd <literal path>` or one of `ls`, `wc`, `cat`, `head`, `tail`, `grep`,
-`egrep`, `fgrep`, `stat`, `du`, `md5sum`, `sha1sum`, `sha256sum`, `diff`, `cmp` and `nl`, as a
-bare name. A pipe may feed only `head`, `tail`, `grep`, `wc` or `cat`. `rg`, `sort`, `uniq`,
+newlines must be `cd <literal path>`, a sed run with a plain script (see above) and no `-i`, or
+one of `ls`, `wc`, `cat`, `head`, `tail`, `grep`, `egrep`, `fgrep`, `stat`, `du`, `md5sum`,
+`sha1sum`, `sha256sum`, `diff`, `cmp` and `nl`, as a bare name. A pipe may feed only `head`, `tail`, `grep`, `wc` or `cat`. `rg`, `sort`, `uniq`,
 `less` and `file` are not in the lists, because an option of each can run a program or write a
 file (`rg --pre`, `sort -o`, `uniq IN OUT`, `less`, `file -C`). A `$(`, a backtick, `<(`, `>(`,
 a heredoc, a background `&`, `||`, a group, an assignment and any redirection but `>/dev/null`
@@ -305,9 +344,30 @@ permissions, separate users or a container.
 
 ## Git hooks
 
-`ah install --project` writes the git hooks to `.githooks/` and sets `core.hooksPath` to the
-absolute path of that folder in the main checkout. Git runs a push hook in the git directory,
-where a relative path does not resolve, so `push-to-checkout` needs the absolute path.
+`ah install --project` writes the git hooks to `.githooks/harness/` and sets `core.hooksPath` to
+the absolute path of `.githooks/` in the main checkout. Git runs a push hook in the git
+directory, where a relative path does not resolve, so `push-to-checkout` needs the absolute path.
+
+With `core.hooksPath` set in the repository, git runs no hook of a global `core.hooksPath` (from
+`git config --global`) and no hook of `.git/hooks/`. So `.githooks/<name>` is a dispatcher, one
+copy for each client-side hook name: `applypatch-msg`, `pre-applypatch`, `post-applypatch`,
+`pre-commit`, `pre-merge-commit`, `prepare-commit-msg`, `commit-msg`, `post-commit`, `pre-rebase`,
+`post-checkout`, `post-merge`, `pre-push`, `post-rewrite`, `pre-auto-gc` and `push-to-checkout`.
+A harness git hook with another name gets a dispatcher too. The dispatcher is POSIX sh and runs,
+in this order:
+
+1. The hook of the same name in the global `core.hooksPath`, when that path is set and is not
+   this `.githooks/` folder.
+2. The harness hook of the same name in `.githooks/harness/`.
+3. `$(git rev-parse --git-common-dir)/hooks/<name>`, only when no global path is set. A global
+   dispatcher runs that file itself, so it never runs twice.
+
+Each hook gets the same arguments and the same stdin. The dispatcher keeps stdin in a temporary
+file, because `pre-push` and `post-rewrite` read it. A nonzero exit stops the chain with that
+code, so a global `pre-push` that exits 1 refuses the push. A missing or not executable hook is
+skipped. When no hook of the chain handles `push-to-checkout`, the dispatcher does what git does
+without the hook: it refuses a checkout with staged or unstaged changes, else it updates the
+checkout with `git read-tree -u -m`.
 
 | Git hook | Id | What it does |
 |---|---|---|

@@ -61,8 +61,8 @@ The dials are environment variables: `LAND_ATTEMPTS` (3), `LAND_PEER_TRIES` (10)
 `LAND_PEER_WAIT` (60 seconds), `LAND_GATE` (1) and `LAND_TARGET` (the base branch).
 
 The land command needs `receive.denyCurrentBranch = updateInstead`, `core.bare = false` and an
-absolute `core.hooksPath` that holds the `push-to-checkout` hook. `ah install --project` sets
-the first and the last. The message of the land command names the command for each missing one.
+absolute `core.hooksPath` that holds the `push-to-checkout` hook (the dispatcher, with the
+harness hook in `harness/`). `ah install --project` sets the first and the last. The message of the land command names the command for each missing one.
 With the `noreply-identity` git hook on, every branch commit must carry the noreply address.
 
 Never stash, restore or delete a peer's file, never move the base branch with `update-ref` or

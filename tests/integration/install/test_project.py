@@ -75,6 +75,8 @@ def test_writes_the_engine_skills_rules_git_hooks_and_lockfile(
         ".claude/skills/lw-demo/SKILL.md",
         ".claude/rules/lw/plain.md",
         ".githooks/commit-msg",
+        ".githooks/pre-push",
+        ".githooks/harness/commit-msg",
     ):
         assert (rel, (repo / rel).is_file()) == (rel, True)
     lock = read_json(repo / ".claude/agent-harness/lock.json")
@@ -424,3 +426,223 @@ def test_lets_a_push_update_the_checkout_of_the_base_branch(
     assert done.returncode == 0, done.stderr
     assert git_config(repo, "receive.denyCurrentBranch") == "updateInstead\n"
     assert "set receive.denyCurrentBranch updateInstead\n" in done.stdout
+
+
+PROJECT_HOOK = {"type": "command", "command": "bash scripts/own-guard.sh", "timeout": 3}
+
+
+def with_project_hook(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def test_keeps_a_hand_written_hook_in_both_registries_after_the_harness_entries(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    own = {"matcher": "Bash", "hooks": [PROJECT_HOOK]}
+    stop = {"hooks": [PROJECT_HOOK]}
+    for rel in (".claude/settings.json", ".codex/hooks.json"):
+        with_project_hook(repo / rel, json.dumps({"hooks": {"PreToolUse": [own], "Stop": [stop]}}))
+
+    installed = ah("install", "--project", FROM, str(package))
+    first = snapshot(repo)
+    again = ah("install", "--project", FROM, str(package))
+    checked = ah("check")
+
+    assert installed.returncode == 0, installed.stderr
+    for rel in (".claude/settings.json", ".codex/hooks.json"):
+        hooks = read_json(repo / rel)["hooks"]
+        assert (rel, hooks["PreToolUse"][-1]) == (rel, own)
+        assert (rel, len(hooks["PreToolUse"])) == (rel, 2)
+        assert ".claude/agent-harness/" in hooks["PreToolUse"][0]["hooks"][0]["command"]
+        assert (rel, hooks["Stop"]) == (rel, [stop])
+    assert again.stdout.splitlines()[-1].endswith("nothing changed")
+    assert snapshot(repo) == first
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+
+
+def test_drops_a_harness_entry_from_a_project_group_and_keeps_its_own_command(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    stale = 'python3 "$CLAUDE_PROJECT_DIR/.claude/agent-harness/hooks/gone.py" PreToolUse'
+    mixed = {"matcher": "Bash", "hooks": [{"type": "command", "command": stale}, PROJECT_HOOK]}
+    with_project_hook(
+        repo / ".claude/settings.json", json.dumps({"hooks": {"PreToolUse": [mixed]}})
+    )
+
+    ah("install", "--project", FROM, str(package))
+
+    pre = read_json(repo / ".claude/settings.json")["hooks"]["PreToolUse"]
+    assert pre[-1] == {"matcher": "Bash", "hooks": [PROJECT_HOOK]}
+    assert "gone.py" not in (repo / ".claude/settings.json").read_text()
+
+
+def test_names_each_project_hook_in_the_check_and_keeps_the_exit_code(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    ah("install", "--project", FROM, str(package))
+    settings = read_json(repo / ".claude/settings.json")
+    settings["hooks"]["PreToolUse"].append({"matcher": "Bash", "hooks": [PROJECT_HOOK]})
+    (repo / ".claude/settings.json").write_text(json.dumps(settings))
+    codex = read_json(repo / ".codex/hooks.json")
+    codex["hooks"]["Stop"] = [{"hooks": [PROJECT_HOOK]}]
+    (repo / ".codex/hooks.json").write_text(json.dumps(codex))
+
+    checked = ah("check")
+
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+    assert checked.stdout.splitlines() == [
+        ".claude/settings.json PreToolUse Bash: a project hook that no manifest declares:"
+        " bash scripts/own-guard.sh",
+        ".codex/hooks.json Stop -: a project hook that no manifest declares:"
+        " bash scripts/own-guard.sh",
+        "ah check: the installed files match the lockfile",
+    ]
+
+
+def write_project_manifest(repo: Path) -> Path:
+    folder = repo / "tools" / "agents"
+    (folder / "hooks").mkdir(parents=True)
+    (folder / "harness.toml").write_text(
+        '[[hook]]\nid = "own-guard"\nsummary = "A guard of the project"\n'
+        'events = ["PreToolUse"]\nmatcher = "Bash"\nscript = "hooks/own_guard.py"\n'
+    )
+    (folder / "hooks/own_guard.py").write_text("import sys\nsys.stdin.read()\n")
+    (repo / ".agents").mkdir()
+    (repo / ".agents/harness.toml").write_text(
+        '[harness]\nmanifests = ["tools/agents/harness.toml"]\n'
+    )
+    return folder / "harness.toml"
+
+
+def test_installs_the_project_manifests_that_the_config_names(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    manifest = write_project_manifest(repo)
+
+    installed = ah("install", "--project", FROM, str(package))
+    first = snapshot(repo)
+    again = ah("install", "--project", FROM, str(package), "--manifest", str(manifest))
+
+    assert installed.returncode == 0, installed.stderr
+    assert (repo / ".claude/agent-harness/manifests/agents/hooks/own_guard.py").is_file()
+    assert "own_guard.py" in read_json(repo / ".claude/settings.json")["hooks"]["PreToolUse"][-1][
+        "hooks"
+    ][0]["command"]
+    assert again.returncode == 0, again.stderr
+    assert again.stdout.splitlines()[-1].endswith("nothing changed")
+    assert snapshot(repo) == first
+    assert ah("check").returncode == 0
+
+
+def test_refuses_a_config_manifest_that_does_not_exist(repo: Path, package: Path, ah: Ah) -> None:
+    (repo / ".agents").mkdir()
+    (repo / ".agents/harness.toml").write_text('[harness]\nmanifests = ["tools/none.toml"]\n')
+
+    done = ah("install", "--project", FROM, str(package))
+
+    assert done.returncode == 1
+    assert "harness.manifests names tools/none.toml, which is no file" in done.stderr
+
+
+def test_keeps_a_project_skill_that_was_there_before_the_install(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    own = repo / ".claude/skills/release-notes"
+    (own / "scripts").mkdir(parents=True)
+    (own / "SKILL.md").write_text("---\nname: release-notes\ndescription: Notes.\n---\n# Notes\n")
+    (own / "scripts/collect.sh").write_text("echo notes\n")
+    before = {p.name: p.read_bytes() for p in own.rglob("*") if p.is_file()}
+
+    installed = ah("install", "--project", FROM, str(package))
+    again = ah("install", "--project", FROM, str(package))
+    checked = ah("check")
+
+    assert installed.returncode == 0, installed.stderr
+    assert {p.name: p.read_bytes() for p in own.rglob("*") if p.is_file()} == before
+    assert os.readlink(repo / ".agents/skills/release-notes") == (
+        "../../.claude/skills/release-notes"
+    )
+    assert "release-notes" not in read_json(repo / ".claude/agent-harness/lock.json")["skills"]
+    assert "`release-notes`" in (repo / "AGENTS.md").read_text()
+    assert again.stdout.splitlines()[-1].endswith("nothing changed")
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+
+
+def write_rule_adapter(repo: Path, rule_id: str, text: str) -> Path:
+    path = repo / "harness/adapters/rules" / f"{rule_id}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_appends_the_project_notes_of_a_rule_adapter(repo: Path, package: Path, ah: Ah) -> None:
+    write_rule_adapter(repo, "plain", "Use the words of the glossary.\n")
+
+    installed = ah("install", "--project", FROM, str(package))
+    checked = ah("check")
+
+    assert installed.returncode == 0, installed.stderr
+    assert (repo / ".claude/rules/lw/plain.md").read_text() == (
+        "# Plain rule\n\n## Project notes\n\nUse the words of the glossary.\n"
+    )
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+
+
+def test_replaces_the_body_of_a_rule_and_keeps_its_paths(repo: Path, package: Path, ah: Ah) -> None:
+    write_rule_adapter(repo, "house-style", "---\nreplace: true\n---\n# Our style\n")
+
+    ah("install", "--project", FROM, str(package))
+
+    assert (repo / ".claude/rules/lw/house-style.md").read_text() == (
+        '---\npaths:\n  - "docs/**"\n---\n# Our style\n'
+    )
+
+
+def test_reports_an_edited_rule_adapter_until_the_next_install(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    adapter = write_rule_adapter(repo, "plain", "One note.\n")
+    ah("install", "--project", FROM, str(package))
+    adapter.write_text("Two notes.\n", encoding="utf-8")
+
+    stale = ah("check")
+    ah("install", "--project", FROM, str(package))
+    adapter.unlink()
+    removed = ah("check")
+
+    assert stale.returncode == 1
+    assert stale.stdout.splitlines() == ["harness/adapters/rules/plain.md stale"]
+    assert removed.stdout.splitlines() == ["harness/adapters/rules/plain.md stale"]
+
+
+def test_refuses_a_rule_adapter_with_an_unknown_front_matter_key(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    write_rule_adapter(repo, "plain", "---\nmode: replace\n---\nText.\n")
+
+    done = ah("install", "--project", FROM, str(package))
+
+    assert done.returncode == 1
+    assert "harness/adapters/rules/plain.md: unknown front matter line 'mode: replace'" in (
+        done.stderr
+    )
+
+
+def test_prints_the_size_of_each_installed_rule_and_the_total(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    ah("install", "--project", FROM, str(package))
+
+    done = ah("rules")
+
+    house = (repo / ".claude/rules/lw/house-style.md").read_text()
+    plain = (repo / ".claude/rules/lw/plain.md").read_text()
+    lines = [house.count("\n"), plain.count("\n")]
+    chars = [len(house), len(plain)]
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.splitlines() == [
+        f".claude/rules/lw/house-style.md {lines[0]} lines {chars[0]} chars",
+        f".claude/rules/lw/plain.md {lines[1]} lines {chars[1]} chars",
+        f"total {sum(lines)} lines {sum(chars)} chars",
+    ]

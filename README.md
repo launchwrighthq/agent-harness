@@ -10,14 +10,15 @@ Two install modes exist. A per-project install is the default. A global install 
 
 | Command | Writes |
 |---|---|
-| `python3 <package>/bin/ah install --project [--manifest <harness.toml> ...]` | The engine in `.claude/agent-harness/`, the skills in `.claude/skills/lw-*`, the rules in `.claude/rules/lw/`, the `hooks` key of `.claude/settings.json`, `.codex/hooks.json`, the links in `.agents/skills/`, the marked block in `AGENTS.md`, `.githooks/` and the lockfile `.claude/agent-harness/lock.json`. |
+| `python3 <package>/bin/ah install --project [--manifest <harness.toml> ...]` | The engine in `.claude/agent-harness/`, the skills in `.claude/skills/lw-*`, the rules in `.claude/rules/lw/`, the harness entries of the `hooks` key of `.claude/settings.json` and `.codex/hooks.json`, the links in `.agents/skills/`, the marked block in `AGENTS.md`, `.githooks/` and the lockfile `.claude/agent-harness/lock.json`. |
 | `python3 <package>/bin/ah install --global` | `~/.claude/agent-harness/` and `~/.claude/skills/lw-*`. No hook and no rule. |
 
 `<package>` is this folder. `--manifest` adds an extra manifest in the format of `harness.toml`,
-for example the hooks and skills of one project. A second install with no change changes
-nothing, so Codex keeps its hook trust. An install over an old project copy of a skill or a rule
-names each file of the copy and writes nothing. Move the files you still need, or pass
-`--replace` (docs/install.md).
+for example the hooks and skills of one project. `harness.manifests` in the config names the
+extra manifests that every install adds. A second install with no change changes
+nothing, so Codex keeps its hook trust. A project hook in either hook file stays after the harness
+entries. An install over an old project copy of a skill or a rule names each file of the copy and
+writes nothing. Move the files you still need, or pass `--replace` (docs/install.md).
 
 A global `ah` that runs inside a repository with a project install hands over to the project
 engine. `ah install` never hands over: it installs the package of the engine that you start.
@@ -63,6 +64,7 @@ Run each command as `python3 .claude/agent-harness/bin/ah <command>` in a projec
 |---|---|---|
 | `ah install` | Installs the harness in a project or globally. | [docs/install.md](docs/install.md) |
 | `ah check [--global]` | Compares the installed files and registries with the lockfile and the manifests. Exits 1 and names each file that differs. | [docs/install.md](docs/install.md) |
+| `ah rules` | Prints each installed rule with its line count and character count, then the total. A rule adapter in `harness/adapters/rules/<rule id>.md` adds project notes to a rule or replaces its body. | [docs/install.md](docs/install.md) |
 | `ah selftest` | Runs the fixture of every installed hook for Claude Code and Codex, then the portability checks. | [docs/install.md](docs/install.md) |
 | `ah lint <path ...>` | Finds banned words, banned fillers and em dashes in Markdown and code comments. | [docs/install.md](docs/install.md) |
 | `ah comments [path ...]` | Checks the comment budget: the longest comment block and the comment share of each source file. Exits 1 on a finding. | [docs/hooks.md](docs/hooks.md) |

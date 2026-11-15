@@ -164,10 +164,12 @@ def basename(path: str) -> str:
 
 
 def env_commands(cfg: config.Config) -> list[str]:
-    """Every command form of the env engine: the fixed forms and `harness.envCommand`."""
+    """Every command form of the env engine: the fixed forms, the launcher of the project by its
+    absolute path, and `harness.envCommand`."""
     configured = harness_value(cfg, "envCommand")
     extra = [configured.strip()] if isinstance(configured, str) and configured.strip() else []
-    return [*ENGINE_COMMANDS, *extra]
+    own = f"python3 {cfg.root.resolve()}/.claude/agent-harness/bin/ah env"
+    return [*ENGINE_COMMANDS, own, *extra]
 
 
 def _never(path: str) -> bool:

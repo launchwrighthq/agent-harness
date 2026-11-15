@@ -1,7 +1,6 @@
 """The env-file layout rules L1 to L7, the shape of a master and key placement by that shape.
 
-The check is a port of `check_env_layout.py` of the env-layout skill: the same rules, the same
-messages and the same findings on the same files. A finding names a key, a line number, or a
+A finding names a key, a line number, or a
 header title of a committed `.example` file. It never holds a value.
 
 The rules:

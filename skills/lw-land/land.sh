@@ -292,8 +292,12 @@ landing_hooks=$hooks_path
 if [[ ! -x $hooks_path/push-to-checkout ]]; then
   landing_hooks="$common/land-hooks"
   mkdir -p "$landing_hooks"
+  # The dispatcher at `<hooks>/push-to-checkout` runs the harness hook in `<hooks>/harness/`, which
+  # a lone copy cannot find, so the harness hook comes first.
+  rel_hooks=${hooks_path#"$checkout"/}
   [[ $hooks_path == "$checkout"/* ]] &&
-    git show "HEAD:${hooks_path#"$checkout"/}/push-to-checkout" >"$landing_hooks/push-to-checkout" 2>/dev/null ||
+    { git show "HEAD:$rel_hooks/harness/push-to-checkout" || git show "HEAD:$rel_hooks/push-to-checkout"; } \
+      >"$landing_hooks/push-to-checkout" 2>/dev/null ||
     die "no push-to-checkout git hook is in $hooks_path or in HEAD. Run: ah install --project" 5
   chmod +x "$landing_hooks/push-to-checkout"
   say "hook: $hooks_path has no push-to-checkout yet, so this landing runs the copy in HEAD"

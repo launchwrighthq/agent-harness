@@ -342,7 +342,6 @@ PATTERNS_REFUSED = [
     "grep --frobnicate '*.pem' notes.txt",
     "awk '{print}' *.pem",
     "grep x .env",
-    "grep -e .env.local notes.txt",
     "grep KEY .env.production",
 ]
 # With dotglob off, only a glob that starts with a literal `.` matches a name that starts with one.
@@ -612,9 +611,9 @@ QUOTED_BODIES_REFUSED = [
     "cat <<'EOF' > x.sh && ./x.sh\ncat *.pem\nEOF",
     "tee x.sh <<'EOF'\ncat *.pem\nEOF\n./x.sh",
 ]
-# An interpreter can build any file name at run time, so its body gets the full glob scan.
+# A glob or match function in a body can expand a glob at run time, so the body gets the full
+# glob scan.
 INTERPRETER_BODIES_REFUSED = [
-    "cd /srv && python3 - <<'EOF'\n/** a comment */\nprint(1)\nEOF",
     "python3 - <<'EOF'\nprint(glob.glob('/srv/x/.e*'))\nEOF",
     "node - <<'EOF'\nconsole.log(glob.sync('*.pem'))\nEOF",
     "perl - <<'EOF'\nprint glob('*.key')\nEOF",
@@ -721,3 +720,309 @@ def test_trusts_a_listed_folder_only_in_a_command_of_plain_readers(tree: Path) -
 
     expected = [(c, "silent") for c in allowed] + [(c, "deny") for c in refused]
     assert list(zip(allowed + refused, got, strict=True)) == expected
+
+
+# `ls` prints names and `find` with no action prints names. When their output reaches only the
+# terminal or a pipe into `head`, `tail`, `grep`, `wc` or `cat`, no name they print is read.
+NAME_LISTINGS_ALLOWED = [
+    "ls -la /srv/example/runtime /srv/example/runtime/*; ls /srv/example/runtime/*/* | head -30",
+    "ls -d /srv/example/*app* 2>/dev/null; ls /srv/example | head -80 | tr '\\n' ' '",
+    "docker ps 2>&1 | head; find ~ -maxdepth 4 -name state.json -path '*cache*' 2>/dev/null"
+    " | head",
+    "find /srv/example/data -maxdepth 2 -iname '*item*'; ls /srv/example/data | head -50",
+    "ls app/src app/tests | head -80; find app/tests -path '*ref*' | head -40",
+    "ls -la /srv/example/.env 2>&1; python3 /srv/example/tool.py",
+]
+# A pipe into another program, a file, a group, a loop, a substitution, `$_`, `exec`, `coproc`,
+# `|&`, `--files0-from` and an action of `find` carry the names on to a reader.
+NAME_LISTINGS_REFUSED = [
+    "ls *.pem | xargs cat",
+    "ls *.pem > list.txt; xargs cat < list.txt",
+    "ls *.pem | head > list.txt; xargs cat < list.txt",
+    "cat $(ls *.pem)",
+    "(ls *.pem) | xargs cat",
+    "{ ls *.pem; } | xargs cat",
+    "for f in x; do ls *.pem; done | xargs cat",
+    "ls *.pem; cat $_",
+    "ls .env.local; cat $_",
+    "exec > list.txt; ls *.pem; xargs cat < list.txt",
+    "ls *.pem |& xargs cat",
+    "ls *.pem | wc --files0-from=-",
+    "coproc ls *.pem; cat <&3",
+    "find . -name '*.pem' -fprint list.txt; xargs cat < list.txt",
+    "find . -name '*.pem' -exec cat {} +",
+    "find . -name *.pem | head",
+]
+
+
+@pytest.mark.parametrize(
+    ("commands", "expected"),
+    [(NAME_LISTINGS_ALLOWED, "silent"), (NAME_LISTINGS_REFUSED, "deny")],
+)
+def test_reads_a_listing_that_only_prints_names_as_no_read(
+    commands: list[str], expected: str, project: Path
+) -> None:
+    got = hook_project.verdicts(project, HOOK, commands)
+
+    assert list(zip(commands, got, strict=True)) == [(c, expected) for c in commands]
+
+
+# `git branch`, `git tag` and `git for-each-ref` match a pattern against ref names, not files.
+REF_PATTERNS_ALLOWED = [
+    "git -C /srv/example log --oneline -8; git -C /srv/example branch --list 'wip/*' 'feat/*'",
+    "ls /srv/example/app 2>&1 | head; git -C /srv/example branch -a --list '*foo*' '*bar*'",
+    "git tag -l 'v*' | head",
+]
+REF_PATTERNS_REFUSED = ["git tag -a v1 -F .env.local", "git tag -a v1 -F '*.pem'"]
+
+
+@pytest.mark.parametrize(
+    ("commands", "expected"),
+    [(REF_PATTERNS_ALLOWED, "silent"), (REF_PATTERNS_REFUSED, "deny")],
+)
+def test_reads_a_ref_pattern_of_git_as_no_path(
+    commands: list[str], expected: str, project: Path
+) -> None:
+    got = hook_project.verdicts(project, HOOK, commands)
+
+    assert list(zip(commands, got, strict=True)) == [(c, expected) for c in commands]
+
+
+# The script of grep, rg and git grep is matched against lines, so a credential name in it names
+# no file. A script file, a path operand and an unknown option are still read.
+SEARCH_SCRIPTS_ALLOWED = [
+    "git ls-files | grep -iE '(^|/)\\.env' ; grep -rn \"\\.env\" --include=*.py app/src | head -30",
+    "git -C /srv/example ls-files | grep -iE 'env\\.example|example\\.env'",
+    "cd /srv/example && git grep -n 'app/\\.env' -- . ':!.claude'",
+    "grep -e .env.local notes.txt",
+    "rg -n '\\.env\\.local' src",
+]
+SEARCH_SCRIPTS_REFUSED = [
+    "grep -f .env.local notes.txt",
+    "grep x .env.local",
+    "grep -e x -- .env.local",
+    "git grep -n x -- .env.local",
+    "git grep -f .env.local x",
+    "git grep --frobnicate .env.local",
+    "git grep -O .env.local x",
+]
+
+
+@pytest.mark.parametrize(
+    ("commands", "expected"),
+    [(SEARCH_SCRIPTS_ALLOWED, "silent"), (SEARCH_SCRIPTS_REFUSED, "deny")],
+)
+def test_reads_the_script_of_a_search_as_no_path(
+    commands: list[str], expected: str, project: Path
+) -> None:
+    got = hook_project.verdicts(project, HOOK, commands)
+
+    assert list(zip(commands, got, strict=True)) == [(c, expected) for c in commands]
+
+
+# A name filter of grep or rg drops files from a recursive search, which reads every file
+# without it. A filter that names a credential family is still refused.
+NAME_FILTERS_ALLOWED = [
+    "grep -rn X --include=* -l . 2>/dev/null | grep -v node_modules | head",
+    "grep -rn X /srv/example/app --include=* -I | head -40",
+    "grep -rn 'foo|bar' /srv/example/web/src --include=*.ts* | head",
+    "rg -n x -g '*.ts*' src",
+]
+NAME_FILTERS_REFUSED = [
+    "grep -r x --include=.env* /srv",
+    "grep -r x --include=*.pem /srv",
+    "grep -r x --include=*.p[e]m /srv",
+    "rg -g * KEY /srv",
+]
+
+
+@pytest.mark.parametrize(
+    ("commands", "expected"),
+    [(NAME_FILTERS_ALLOWED, "silent"), (NAME_FILTERS_REFUSED, "deny")],
+)
+def test_reads_a_broad_name_filter_of_a_search_as_no_path(
+    commands: list[str], expected: str, project: Path
+) -> None:
+    got = hook_project.verdicts(project, HOOK, commands)
+
+    assert list(zip(commands, got, strict=True)) == [(c, expected) for c in commands]
+
+
+# A sed script of only `s`, `y`, `p`, `d` and `q` commands, with no `e` and no `w`, runs no
+# program and writes no file, so it is a pattern.
+SED_SCRIPTS_PLAIN_ALLOWED = [
+    'R=/srv/example; sed -i \'s|^# base = "main" .*|base = "main"|; s|^# gate = "" .*|gate ='
+    ' "make"|\' $R/config.toml',
+    "sed -n '/^a/,/^b/p;s|.*|x|g' notes.txt",
+]
+SED_SCRIPTS_PLAIN_REFUSED = [
+    "sed 's|.*|cat .e?v|e' notes.txt",
+    "sed 's|.*|x|w .e?v' notes.txt",
+    "sed -f .e?v notes.txt",
+    "sed -n 's|x|y|p' .env.local",
+]
+
+
+@pytest.mark.parametrize(
+    ("commands", "expected"),
+    [(SED_SCRIPTS_PLAIN_ALLOWED, "silent"), (SED_SCRIPTS_PLAIN_REFUSED, "deny")],
+)
+def test_reads_a_plain_sed_script_as_a_pattern(
+    commands: list[str], expected: str, project: Path
+) -> None:
+    got = hook_project.verdicts(project, HOOK, commands)
+
+    assert list(zip(commands, got, strict=True)) == [(c, expected) for c in commands]
+
+
+def test_trusts_a_listing_after_a_sed_line_range(tree: Path) -> None:
+    (tree / "app" / "tests").mkdir(parents=True)
+    (tree / "app" / "tests" / "test_errors.py").write_text("x\n", encoding="utf-8")
+    allowed = [
+        "sed -n 160,170p docs/a.md; grep -rn x app/errors.py app/tests/test_*errors* 2>/dev/null"
+        " | head"
+    ]
+    refused = [
+        "sed -n 1e notes.txt; grep -rn x app/tests/test_*errors*",
+        "sed -i -n 1p notes.txt; grep -rn x app/tests/test_*errors*",
+    ]
+
+    got = hook_project.verdicts(tree, HOOK, allowed + refused)
+
+    expected = [(c, "silent") for c in allowed] + [(c, "deny") for c in refused]
+    assert list(zip(allowed + refused, got, strict=True)) == expected
+
+
+# A quoted body that `python3 -` or `node -` runs gets no glob scan when it calls no glob or
+# match function and starts no program or shell. The literal name scan still reads it.
+PROGRAM_BODIES_ALLOWED = [
+    "cd /srv && python3 - <<'EOF'\n/** a comment */\nprint(1)\nEOF",
+    "python3 - /srv/example/web/a.tsx <<'EOF'\nimport sys\np = sys.argv[1]\n"
+    "t = open(p).read().replace('/** old */', '/** new */')\nEOF\n"
+    "grep -n new /srv/example/web/a.tsx | head",
+    "W=/srv/example; python3 - \"$W/tools/a.sh\" <<'PY'\nprint('[FLAG=on] *')\nPY\n"
+    "sed -n '1,16p' $W/b.sh | grep -n Usage",
+    "python3 - <<'EOF'\nold = r'(/v1/[A-Za-z0-9_.{}:/-]*[A-Za-z0-9_}])'\nprint(old)\nEOF",
+    "node - <<'EOF'\nconst re = /v1\\/[a-z_*]*/;\nEOF",
+    "cd /srv/example && python3 - <<'PY'\nprint('the repo keeps app/.env.example.')\nPY",
+]
+PROGRAM_BODIES_REFUSED = [
+    "python3 - <<'EOF'\nimport os\nos.system('cat .e*')\nEOF",
+    "python3 - <<'EOF'\nimport subprocess\nsubprocess.run('cat *.pem; true', shell=True)\nEOF",
+    "python3 - <<'EOF'\nprint([p for p in os.listdir() if Path(p).match('*.pem')])\nEOF",
+    "node - <<'EOF'\nrequire('child_process').execSync('cat *.pem')\nEOF",
+    "perl - <<'EOF'\nprint <*.pem>\nEOF",
+    "python3 x.py <<'EOF'\n*.pem\nEOF",
+    "python3 -c 'import sys' <<'EOF'\n*.pem\nEOF",
+    "python3 - <<EOF\n/** a comment */\nEOF",
+    "python3 - <<'EOF' && cat *.pem\nprint(1)\nEOF",
+    "python3 - <<'EOF'\nprint(open('.env.production').read())\nEOF",
+    "cat .env.local.",
+]
+
+
+@pytest.mark.parametrize(
+    ("commands", "expected"),
+    [(PROGRAM_BODIES_ALLOWED, "silent"), (PROGRAM_BODIES_REFUSED, "deny")],
+)
+def test_reads_a_program_body_that_expands_no_glob_with_the_name_scan_only(
+    commands: list[str], expected: str, project: Path
+) -> None:
+    got = hook_project.verdicts(project, HOOK, commands)
+
+    assert list(zip(commands, got, strict=True)) == [(c, expected) for c in commands]
+
+
+# `cat > file <<'EOF'` writes the body as data, the same as `cat <<'EOF' > file`.
+DATA_BODIES_ALLOWED = [
+    "cat >> /srv/example/notes/progress.md <<'EOF'\nStep 2: refs/x/wip.* stays\nEOF",
+    "cat > /srv/example/notes/context.md <<'EOF'\n# Context\n- see ref* and text/*\nEOF",
+    "cat >> /srv/example/notes/progress.md <<'EOF'\nsee text/*\nEOF\n"
+    "ls /srv/example/files 2>&1 | head\necho ok",
+]
+# A step after the body that is no plain reader can run the written file.
+DATA_BODIES_REFUSED = [
+    "cat > x.sh <<'EOF'\ncat *.pem\nEOF\nbash x.sh",
+    "cat > x.md <<'EOF'\ncat *.pem\nEOF\ncat x.md | sh",
+    "cat > x.md <<'EOF'\ncat *.pem\nEOF\necho $(sh x.md)",
+    "cat > x.md <<'EOF'\ncat *.pem\nEOF\nX=1 cat x.md",
+    "cat > x.md <<'EOF' && sh x.md\ncat *.pem\nEOF",
+    "cat >> notes.md <<'EOF'\ncat .env.local\nEOF",
+]
+
+
+@pytest.mark.parametrize(
+    ("commands", "expected"),
+    [(DATA_BODIES_ALLOWED, "silent"), (DATA_BODIES_REFUSED, "deny")],
+)
+def test_reads_a_data_body_with_the_redirect_first_as_data(
+    commands: list[str], expected: str, project: Path
+) -> None:
+    got = hook_project.verdicts(project, HOOK, commands)
+
+    assert list(zip(commands, got, strict=True)) == [(c, expected) for c in commands]
+
+
+# A command substitution inside double quotes is a command line of its own.
+QUOTED_SUBSTITUTIONS_ALLOWED = [
+    "for i in $(seq 1 3); do python3 /srv/example/poll.py > /srv/example/out.json; echo"
+    ' "$(date +%H:%M:%S) $(grep -o \'"state": "[a-z_]*"\' /srv/example/out.json'
+    " | tr '\\n' ' ')\"; done",
+]
+QUOTED_SUBSTITUTIONS_REFUSED = [
+    'echo "$(grep -o x *.pem)"',
+    "echo \"$(grep -o '[a-z_]*' x) $(cat .e?v)\"",
+    "echo '$(grep -o x y)' *.pem | cat",
+]
+
+
+@pytest.mark.parametrize(
+    ("commands", "expected"),
+    [(QUOTED_SUBSTITUTIONS_ALLOWED, "silent"), (QUOTED_SUBSTITUTIONS_REFUSED, "deny")],
+)
+def test_reads_a_substitution_inside_double_quotes_as_a_command(
+    commands: list[str], expected: str, project: Path
+) -> None:
+    got = hook_project.verdicts(project, HOOK, commands)
+
+    assert list(zip(commands, got, strict=True)) == [(c, expected) for c in commands]
+
+
+def test_lets_the_engine_run_alone_from_the_absolute_path_of_the_project_engine(
+    project: Path,
+) -> None:
+    engine = f"python3 {project}/.claude/agent-harness/bin/ah env"
+    allowed = [
+        f"{engine} --root {project} get API_KEY .env.local",
+        f"{engine} keys .env.local",
+    ]
+    refused = [
+        "python3 /srv/other/.claude/agent-harness/bin/ah env keys .env.local",
+        f"{engine} keys .env.local; cat .env.local",
+    ]
+
+    got = hook_project.verdicts(project, HOOK, allowed + refused)
+
+    expected = [(c, "silent") for c in allowed] + [(c, "deny") for c in refused]
+    assert list(zip(allowed + refused, got, strict=True)) == expected
+
+
+# Program text puts a glob word next to a comma, a bracket, a parenthesis or a quote. A shell that
+# the program starts expands the glob alone, so the glob scan reads it without that punctuation.
+PROGRAM_PUNCTUATION_REFUSED = [
+    "python3 -c \"import subprocess; subprocess.run(['cat *.pem'], shell=True)\"",
+    "python3 -c \"import subprocess; subprocess.run('cat *.pem', shell=True)\"",
+    "python3 -c \"import os; os.system('cat *.pem')\"",
+    "python3 -c \"import os; os.system('cat ~/.ssh/id_*,')\"",
+    "python3 - <<'EOF'\nimport subprocess\nsubprocess.run('cat *.pem', shell=True)\nEOF",
+    "node -e \"require('child_process').execSync('cat *.pem')\"",
+    "node -e \"require('child_process').execSync(`cat .e*`)\"",
+]
+
+
+def test_reads_a_glob_word_that_program_punctuation_follows(project: Path) -> None:
+    commands = PROGRAM_PUNCTUATION_REFUSED
+
+    got = hook_project.verdicts(project, HOOK, commands)
+
+    assert list(zip(commands, got, strict=True)) == [(c, "deny") for c in commands]

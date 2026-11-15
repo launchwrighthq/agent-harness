@@ -28,6 +28,16 @@ LOCK_FILE = f"{ENGINE_DIR}/lock.json"
 SKILL_DIR = ".claude/skills"
 RULE_DIR = ".claude/rules/lw"
 GITHOOK_DIR = ".githooks"
+# The harness git hooks. `.githooks/<name>` is the dispatcher that runs them.
+GITHOOK_OWN_DIR = f"{GITHOOK_DIR}/harness"
+# The client-side hook names that the dispatcher covers, so a global hook of each name still runs.
+DISPATCHED = (
+    *("applypatch-msg", "pre-applypatch", "post-applypatch", "pre-commit", "pre-merge-commit"),
+    *("prepare-commit-msg", "commit-msg", "post-commit", "pre-rebase", "post-checkout"),
+    *("post-merge", "pre-push", "post-rewrite", "pre-auto-gc", "push-to-checkout"),
+)
+# The dispatcher source in the engine, relative to the package root.
+DISPATCHER = "src/agent_harness/install/githook-dispatch.sh"
 
 # The engine paths of a global install, relative to `~/.claude`.
 GLOBAL_ENGINE_DIR = "agent-harness"
@@ -97,20 +107,53 @@ class PlannedFile:
     executable: bool = False
     # A rule with paths gets a `paths:` front matter block.
     paths: tuple[str, ...] | None = None
+    # The rule adapter of the project: notes to append, or a body that replaces the rule body.
+    notes: Path | None = None
 
     def content(self) -> bytes:
         try:
             raw = self.source.read_bytes()
         except OSError as error:
             raise HarnessError(f"cannot read {self.source}: {error}") from error
-        if self.paths is None:
+        if self.paths is None and self.notes is None:
             return raw
-        body = FRONT_MATTER.sub("", raw.decode("utf-8"), count=1)
-        lines = "\n".join(f'  - "{p}"' for p in self.paths)
-        return f"---\npaths:\n{lines}\n---\n{body}".encode()
+        text = raw.decode("utf-8")
+        found = FRONT_MATTER.match(text)
+        head = found.group(0) if found else ""
+        body = text[len(head) :]
+        if self.paths is not None:
+            lines = "\n".join(f'  - "{p}"' for p in self.paths)
+            head = f"---\npaths:\n{lines}\n---\n"
+        if self.notes is not None:
+            body = with_notes(body, self.notes)
+        return f"{head}{body}".encode()
 
     def mode_executable(self) -> bool:
         return self.executable or (self.source.stat().st_mode & 0o111) != 0
+
+
+def with_notes(body: str, notes: Path) -> str:
+    """`body` with the rule adapter at `notes`: its body under `## Project notes`, or its body
+    alone when its front matter holds `replace: true`."""
+    try:
+        text = notes.read_text(encoding="utf-8")
+    except OSError as error:
+        raise HarnessError(f"cannot read {notes}: {error}") from error
+    found = FRONT_MATTER.match(text)
+    replace = False
+    for line in found.group(0).split("\n")[1:-2] if found else []:
+        if line.strip() not in ("", "replace: true", "replace: false"):
+            raise HarnessError(
+                f"{notes}: unknown front matter line {line!r}; a rule adapter takes"
+                " only replace: true or replace: false"
+            )
+        replace = replace or line.strip() == "replace: true"
+    own = text[found.end() :] if found else text
+    if not own.endswith("\n"):
+        own += "\n"
+    if replace:
+        return own
+    return f"{body.rstrip()}\n\n## Project notes\n\n{own}"
 
 
 @dataclass
@@ -179,11 +222,13 @@ def build_plan(
     project_skills: Iterable[str] = (),
     skill_dir: str = SKILL_DIR,
     engine_dir: str = ENGINE_DIR,
+    rule_notes: Path | None = None,
 ) -> Plan:
     """The enabled items of `manifests` in a fixed order, and the files they install.
 
     Inside one manifest, the items keep the order it declares. `project_skills` are the skill
-    folders of the project that `disable` and `enable` may also name.
+    folders of the project that `disable` and `enable` may also name. `rule_notes` is the folder
+    of the rule adapters of the project: `<rule id>.md` changes that rule.
     """
     ordered = order(manifests)
     disabled, enabled = set(disable), set(enable)
@@ -243,7 +288,15 @@ def build_plan(
             plan.tools.append(tool.id)
         for rule in (r for r in m.rules if on(r)):
             target = f"{RULE_DIR}/{posixpath.basename(rule.file)}"
-            add(PlannedFile(target, m.dir / rule.file, paths=rule.paths or None))
+            notes = rule_notes / f"{rule.id}.md" if rule_notes is not None else None
+            add(
+                PlannedFile(
+                    target,
+                    m.dir / rule.file,
+                    paths=rule.paths or None,
+                    notes=notes if notes is not None and notes.is_file() else None,
+                )
+            )
             plan.rules.append(PlannedRule(rule.id, m.name, rule.summary, rule.paths, target))
         for skill in (s for s in m.skills if on(s)):
             target = f"{skill_dir}/{skill.id}"
@@ -254,10 +307,10 @@ def build_plan(
         for githook in (g for g in m.githooks if on(g)):
             if any(g.name == githook.name for g in plan.githooks):
                 raise HarnessError(f"two git hooks are named {githook.name}")
-            target = f"{GITHOOK_DIR}/{githook.name}"
+            target = f"{GITHOOK_OWN_DIR}/{githook.name}"
             add(PlannedFile(target, m.dir / githook.script, executable=True))
             for path in githook.files:
-                add(PlannedFile(f"{GITHOOK_DIR}/{posixpath.basename(path)}", m.dir / path))
+                add(PlannedFile(f"{GITHOOK_OWN_DIR}/{posixpath.basename(path)}", m.dir / path))
             plan.githooks.append(PlannedGitHook(githook.id, m.name, githook.name, target))
     return plan
 
@@ -273,6 +326,16 @@ def engine_files(
     ]
     out.append(PlannedFile(f"{engine_dir}/{MANIFEST_FILE}", package_root / MANIFEST_FILE))
     return out
+
+
+def dispatcher_files(package_root: Path, plan: Plan) -> list[PlannedFile]:
+    """One dispatcher per client-side hook name and per harness git hook name, when the plan has
+    a git hook."""
+    if not plan.githooks:
+        return []
+    names = dict.fromkeys([*DISPATCHED, *(g.name for g in plan.githooks)])
+    source = package_root / DISPATCHER
+    return [PlannedFile(f"{GITHOOK_DIR}/{name}", source, executable=True) for name in names]
 
 
 def extra_manifest_files(manifests: Sequence[Manifest]) -> list[PlannedFile]:

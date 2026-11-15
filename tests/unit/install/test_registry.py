@@ -10,6 +10,8 @@ from agent_harness.install.registry import (
     agents_block,
     codex_command,
     codex_matcher,
+    is_own,
+    project_entries,
     registry,
     splice_top_level_key,
     with_agents_block,
@@ -134,3 +136,18 @@ def test_adds_the_ignore_lines_that_the_file_lacks() -> None:
     )
     kept = ".claude/state\n__pycache__/\n"
     assert with_ignored(kept) == kept
+
+
+def test_owns_only_the_commands_that_run_the_engine_or_its_adapter() -> None:
+    claude = 'bash "$CLAUDE_PROJECT_DIR/.claude/agent-harness/hooks/x.sh" Stop'
+    codex = codex_command(".claude/agent-harness/hooks/x.py", "Stop", "apps/demo")
+
+    assert is_own({"command": claude}) is True
+    assert is_own({"command": codex}) is True
+    assert is_own({"command": "bash scripts/x.sh"}) is False
+    assert is_own({"command": 'bash "$CLAUDE_PROJECT_DIR/scripts/agent-harness/x.sh"'}) is False
+
+
+def test_refuses_a_hooks_key_that_is_not_an_object() -> None:
+    with pytest.raises(HarnessError, match="the hooks key is not an object"):
+        project_entries('{"hooks": []}', ".claude/settings.json")

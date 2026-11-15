@@ -26,6 +26,14 @@ def test_reads_the_harness_section_of_the_hook_project(tmp_path: Path) -> None:
     assert hookio.env_commands(cfg)[-1] == "lw env"
 
 
+def test_names_the_launcher_of_the_project_by_its_absolute_path(tmp_path: Path) -> None:
+    cfg = hookio.hook_config("test-hook", installed_hook(tmp_path))
+
+    commands = hookio.env_commands(cfg)
+
+    assert f"python3 {tmp_path.resolve()}/.claude/agent-harness/bin/ah env" in commands
+
+
 def test_falls_back_to_the_defaults_when_the_config_is_not_toml(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

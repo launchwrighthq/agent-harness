@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -36,6 +37,7 @@ from agent_harness.install.plan import (
     SKILL_DIR,
     Plan,
     build_plan,
+    dispatcher_files,
     engine_files,
     extra_manifest_files,
     files_under,
@@ -55,6 +57,7 @@ STARTER_CONFIG = """\
 # testCommand = ""                    # the command that runs the tests; empty means none
 # disable = []                        # ids of hooks, rules, skills and git hooks to leave out
 # enable = []                         # ids of items that are off by default
+# manifests = []                      # extra manifests of the project, relative to the root
 
 [specs]
 # dirs = ["docs/specs", "docs/superpowers/plans"]
@@ -78,6 +81,20 @@ def _texts(cfg: Config, key: str) -> list[str]:
     if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
         raise HarnessError(f"config key {key} must be a list of strings")
     return list(value)
+
+
+def manifest_files(root: Path, cfg: Config, named: Sequence[Path]) -> list[Path]:
+    """The extra manifests: each of `harness.manifests`, then each of `named`, once each."""
+    out: list[Path] = []
+    for rel in _texts(cfg, "harness.manifests"):
+        path = (root / rel).resolve()
+        if not path.is_file():
+            raise HarnessError(f"harness.manifests names {rel}, which is no file under {root}")
+        out.append(path)
+    for path in named:
+        if path.resolve() not in out:
+            out.append(path.resolve())
+    return out
 
 
 @dataclass
@@ -122,7 +139,17 @@ def plan_for(root: Path, cfg: Config, manifests: Sequence[Manifest]) -> Plan:
         disable=_texts(cfg, "harness.disable"),
         enable=_texts(cfg, "harness.enable"),
         project_skills=list_skill_dirs(root),
+        rule_notes=root / str(cfg.get("harness.adapterDir")) / "rules",
     )
+
+
+def adapter_hashes(root: Path, plan: Plan) -> dict[str, str]:
+    """A sha256 per rule adapter that the plan applies, by its path relative to `root`."""
+    return {
+        f.notes.relative_to(root).as_posix(): sha256(f.notes.read_bytes())
+        for f in plan.files
+        if f.notes is not None
+    }
 
 
 def _read(path: Path) -> str | None:
@@ -265,11 +292,12 @@ def install_project(
     files = merge(
         engine_files(package_root, ENGINE_PARTS),
         plan.files,
+        dispatcher_files(package_root, plan),
         extra_manifest_files(extras),
     )
     contents = read_all(files)
     # Built before the first write: it refuses a project folder that the Codex command cannot name.
-    codex_text = registry.codex_file(plan, root)
+    codex_text = registry.codex_file(_read(root / registry.CODEX_FILE), plan, root)
     changes = _take_over(root, project_copies(root, contents, previous, plan), replace, out)
     changes += apply_files(root, contents, previous, out)
 
@@ -305,6 +333,7 @@ def install_project(
         executable=[rel for rel, c in contents.items() if c.executable],
         skills=[s.id for s in plan.skills],
         links=list(regs.links),
+        adapters=adapter_hashes(root, plan),
     )
     if write_text(root, LOCK_FILE, lock.to_text(), lambda _line: None):
         changes += 1
@@ -348,6 +377,45 @@ def installed_manifests(root: Path, lock: Lock) -> list[Manifest]:
     return out
 
 
+# The hook files that a project also edits. The check reads them as JSON, so the layout of a
+# hand-written project hook is no difference.
+HOOK_FILES = (registry.SETTINGS_FILE, registry.CODEX_FILE)
+
+
+def _same_json(current: str, expected: str) -> bool:
+    try:
+        return bool(json.loads(current) == json.loads(expected))
+    except json.JSONDecodeError:
+        return False
+
+
+def project_hooks(root: Path) -> list[str]:
+    """One line per project hook in the two hook files: an entry that no manifest declares."""
+    lines = []
+    for rel in HOOK_FILES:
+        for event, groups in registry.project_entries(_read(root / rel), rel).items():
+            for group in groups:
+                matcher = group.get("matcher", "-") if isinstance(group, dict) else "-"
+                entries = group.get("hooks") if isinstance(group, dict) else None
+                for entry in entries if isinstance(entries, list) else [group]:
+                    command = entry.get("command") if isinstance(entry, dict) else None
+                    lines.append(
+                        f"{rel} {event} {matcher}: a project hook that no manifest declares:"
+                        f" {command if isinstance(command, str) else json.dumps(entry)}"
+                    )
+    return lines
+
+
+def rule_sizes(root: Path) -> list[tuple[str, int, int]]:
+    """Each installed rule with its line count and character count, sorted by path."""
+    lock = require_lock(root)
+    out = []
+    for rel in sorted(r for r in lock.files if r.startswith(f"{RULE_DIR}/")):
+        text = (root / rel).read_text(encoding="utf-8")
+        out.append((rel, len(text.splitlines()), len(text)))
+    return out
+
+
 def require_lock(root: Path) -> Lock:
     lock = read_lock(root / LOCK_FILE)
     if lock is None:
@@ -369,10 +437,14 @@ def check_project(root: Path, cfg: Config) -> list[tuple[str, str]]:
     if any(not (root / m.get("file", "")).is_file() for m in lock.manifests):
         return sorted(diffs)
     plan = plan_for(root, cfg, installed_manifests(root, lock))
+    adapters = adapter_hashes(root, plan)
+    for rel in sorted(set(adapters) | set(lock.adapters)):
+        if adapters.get(rel) != lock.adapters.get(rel):
+            diffs.append((rel, "stale"))
     regs = registries(root, cfg, plan, lock, from_lock=True)
     expected = {
         registry.SETTINGS_FILE: registry.settings_file(_read(root / registry.SETTINGS_FILE), plan),
-        registry.CODEX_FILE: registry.codex_file(plan, root),
+        registry.CODEX_FILE: registry.codex_file(_read(root / registry.CODEX_FILE), plan, root),
         registry.AGENTS_FILE: registry.with_agents_block(
             _read(root / registry.AGENTS_FILE), regs.agents_block
         ),
@@ -382,7 +454,7 @@ def check_project(root: Path, cfg: Config) -> list[tuple[str, str]]:
         current = _read(root / rel)
         if current is None:
             diffs.append((rel, "missing"))
-        elif current != text:
+        elif current != text and not (rel in HOOK_FILES and _same_json(current, text)):
             diffs.append((rel, "differs"))
     for rel, target in regs.links.items():
         state = link_state(root / rel)

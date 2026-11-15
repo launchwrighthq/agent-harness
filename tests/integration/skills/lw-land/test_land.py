@@ -11,6 +11,9 @@ import pytest
 PACKAGE = Path(__file__).resolve().parents[4]
 LAND = PACKAGE / "skills" / "lw-land" / "land.sh"
 GITHOOKS = PACKAGE / "githooks"
+# A dispatcher copied out of its folder finds no harness hook beside it, so it stands for one
+# that refuses.
+DISPATCHER = "#!/bin/sh\necho 'the dispatcher ran alone' >&2\nexit 1\n"
 SPEC = "docs/specs/2026-01-01-a.md"
 NOREPLY_DOMAIN = "users.noreply.github.com"
 IDENTITY = {
@@ -133,6 +136,24 @@ def test_runs_the_hook_from_head_on_the_landing_that_brings_it(tmp_path: Path) -
     assert done.returncode == 0, done.stdout + done.stderr
     assert git(repo, "rev-parse", "trunk") == git(tree, "rev-parse", "HEAD")
     assert (repo / ".githooks" / "push-to-checkout").is_file()
+    assert git(repo, "diff", "--cached", "--name-only") == "notes.txt"
+
+
+def test_runs_the_harness_hook_from_head_when_head_holds_the_dispatcher(tmp_path: Path) -> None:
+    checkout_hooks = Path(os.path.realpath(tmp_path)) / "repo" / ".githooks"
+    repo, tree = make_repo(tmp_path, "true", hooks=checkout_hooks)
+    commit(tree, ".githooks/push-to-checkout", DISPATCHER)
+    commit(tree, ".githooks/harness/push-to-checkout", (GITHOOKS / "push-to-checkout").read_text())
+    (tree / ".githooks" / "push-to-checkout").chmod(0o755)
+    (tree / ".githooks" / "harness" / "push-to-checkout").chmod(0o755)
+    git(tree, "commit", "--quiet", "--amend", "-a", "--no-edit")
+    (repo / "notes.txt").write_text("peer\n", encoding="utf-8")
+    git(repo, "add", "notes.txt")
+
+    done = land(tree)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert git(repo, "rev-parse", "trunk") == git(tree, "rev-parse", "HEAD")
     assert git(repo, "diff", "--cached", "--name-only") == "notes.txt"
 
 
