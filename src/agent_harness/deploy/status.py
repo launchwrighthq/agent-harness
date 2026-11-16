@@ -55,6 +55,7 @@ from agent_harness.deploy.records import (
     record_folders,
 )
 from agent_harness.deploy.serving import (
+    READ_TIMEOUT,
     Execute,
     Fetch,
     Reading,
@@ -160,7 +161,7 @@ class Versions:
 
     def _run(self, sha: str) -> str | None:
         try:
-            done = self.run([*self.command, sha], self.root)
+            done = self.run([*self.command, sha], self.root, READ_TIMEOUT)
         except HarnessError as error:
             self.failures[sha] = f"{self.command[0]} did not run for {sha[:8]}: {error}"
             return None

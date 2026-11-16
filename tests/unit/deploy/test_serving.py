@@ -16,9 +16,11 @@ class FakeCommands:
     def __init__(self, answers: dict[str, Done]) -> None:
         self.answers = answers
         self.calls: list[list[str]] = []
+        self.seconds: list[float] = []
 
-    def __call__(self, argv: list[str], cwd: Path) -> Done:
+    def __call__(self, argv: list[str], cwd: Path, seconds: float) -> Done:
         self.calls.append(argv)
+        self.seconds.append(seconds)
         key = next((k for k in self.answers if k in argv), None)
         if key is None:
             raise HarnessError(f"{argv[0]} is not on PATH")
@@ -151,6 +153,63 @@ def test_reads_the_node_list_from_a_nodes_command(tmp_path: Path) -> None:
     assert reading.problems == []
 
 
+def test_gives_each_read_of_a_target_the_timeout_of_the_target(tmp_path: Path) -> None:
+    out = f"app-web-v3 ghcr.io/o/app:v3 ghcr.io/o/app@{DIGEST}"
+    commands = FakeCommands(
+        {
+            "tools/nodes.sh": Done(0, "box-1\nbox-2\n", ""),
+            "box-1": Done(0, out, ""),
+            "box-2": Done(0, out, ""),
+        }
+    )
+    spec = {
+        "read": "ssh-docker",
+        "nodesCommand": "tools/nodes.sh",
+        "roles": {"web": "app-web-"},
+        "timeout": 45,
+    }
+
+    read_target("production", spec, tmp_path, commands)
+
+    assert commands.seconds == [45.0, 45.0, 45.0]
+
+
+def test_gives_a_read_20_seconds_when_the_target_sets_no_timeout(tmp_path: Path) -> None:
+    commands = FakeCommands({"box-1": Done(0, "", "")})
+    spec = {"read": "ssh-docker", "nodes": ["box-1"], "roles": {"web": "app-web-"}}
+
+    read_target("production", spec, tmp_path, commands)
+
+    assert commands.seconds == [20.0]
+
+
+def test_gives_an_http_read_the_timeout_of_the_target(tmp_path: Path) -> None:
+    asked: list[float] = []
+
+    def fetch(url: str, seconds: float) -> Fetched:
+        asked.append(seconds)
+        return Fetched("v1")
+
+    read_target(
+        "web", {"read": "http", "url": "https://x.test/v", "timeout": 2.5}, tmp_path, fetch=fetch
+    )
+
+    assert asked == [2.5]
+
+
+@pytest.mark.parametrize("value", [0, -5, "45", True])
+def test_rejects_a_timeout_that_is_not_a_positive_number(tmp_path: Path, value: object) -> None:
+    spec = {
+        "read": "ssh-docker",
+        "nodes": ["box-1"],
+        "roles": {"web": "app-web-"},
+        "timeout": value,
+    }
+
+    with pytest.raises(HarnessError, match=r"deploy\.targets\.production\.timeout must be"):
+        read_target("production", spec, tmp_path, FakeCommands({}))
+
+
 def test_names_no_problem_for_an_optional_role_that_a_node_lacks(tmp_path: Path) -> None:
     out = f"app-web-1 ghcr.io/o/app:v2 ghcr.io/o/app@{DIGEST}"
     commands = FakeCommands({"box-1": Done(0, out, "")})
@@ -170,7 +229,7 @@ def test_names_no_problem_for_an_optional_role_that_a_node_lacks(tmp_path: Path)
 def test_reads_a_version_field_from_an_http_body(tmp_path: Path) -> None:
     urls: list[str] = []
 
-    def fetch(url: str) -> Fetched:
+    def fetch(url: str, seconds: float) -> Fetched:
         urls.append(url)
         return Fetched(json.dumps({"build": {"number": 1234}}))
 
@@ -186,7 +245,7 @@ def test_reads_a_version_field_from_an_http_body(tmp_path: Path) -> None:
 def test_names_a_missing_version_header_as_a_problem(tmp_path: Path) -> None:
     spec = {"read": "http", "url": "https://app.example.com/healthz", "header": "X-Release"}
 
-    reading = read_target("api", spec, tmp_path, fetch=lambda url: Fetched("ok", {}))
+    reading = read_target("api", spec, tmp_path, fetch=lambda url, seconds: Fetched("ok", {}))
 
     assert reading.problems == ["GET https://app.example.com/healthz has no header X-Release"]
 

@@ -112,7 +112,7 @@ def run_report(
 ) -> str:
     out = io.StringIO()
 
-    def commands(args: list[str], cwd: Path) -> Done:
+    def commands(args: list[str], cwd: Path, seconds: float) -> Done:
         return lw_status(problems or [])
 
     code = report(list(argv), root, out, gh=gh or FakeGh(), run=commands, now=NOW)
@@ -231,7 +231,7 @@ def test_prints_a_dash_and_a_footer_when_the_version_command_fails(tmp_path: Pat
     write_config(tmp_path, command)
     out = io.StringIO()
 
-    def commands(args: list[str], cwd: Path) -> Done:
+    def commands(args: list[str], cwd: Path, seconds: float) -> Done:
         if args[0] == "tools/version.sh":
             return Done(3, "", "no such commit\n")
         return lw_status([])
@@ -427,7 +427,7 @@ def test_falls_back_on_the_record_build_number_for_a_commit_without_a_version(
     write_job_record(tmp_path, buildNumber="1234")
     out = io.StringIO()
 
-    def commands(args: list[str], cwd: Path) -> Done:
+    def commands(args: list[str], cwd: Path, seconds: float) -> Done:
         if args[0] == "tools/version.sh":
             return Done(0, "", "")
         return lw_status([])
@@ -503,7 +503,7 @@ def test_says_no_deploy_workflow_is_configured_with_the_default_config(tmp_path:
     out = io.StringIO()
     gh = FakeGh(failures={"run list": WORKFLOW_404})
 
-    code = report([], tmp_path, out, gh=gh, run=lambda args, cwd: lw_status([]), now=NOW)
+    code = report([], tmp_path, out, gh=gh, run=lambda args, cwd, seconds: lw_status([]), now=NOW)
 
     assert code == 0
     assert out.getvalue() == (

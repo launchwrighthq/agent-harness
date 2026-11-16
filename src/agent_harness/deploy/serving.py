@@ -8,6 +8,7 @@ Each target names a read method in `read`:
 - `command`: a command that prints one JSON object per line.
 
 Every method only reads. A node that does not answer gives a problem line with the reason.
+`timeout` gives the seconds that one read of the target may take.
 docs/deploy.md lists every key.
 """
 
@@ -28,7 +29,7 @@ from agent_harness import HarnessError
 
 READ_METHODS = ("lw", "ssh-docker", "http", "command")
 
-# Seconds that one node or URL may take to answer.
+# Seconds that one node or URL may take to answer, when the target sets no `timeout`.
 READ_TIMEOUT = 20
 
 # A CDN such as Cloudflare refuses the default `Python-urllib/<version>` agent with HTTP 403.
@@ -75,11 +76,11 @@ class Done:
     err: str
 
 
-# Runs one command in a folder with a timeout. A test passes its own.
-Execute = Callable[[list[str], Path], Done]
+# Runs one command in a folder with a timeout in seconds. A test passes its own.
+Execute = Callable[[list[str], Path, float], Done]
 
 
-def execute(argv: list[str], cwd: Path) -> Done:
+def execute(argv: list[str], cwd: Path, seconds: float) -> Done:
     """Runs `argv` with its program resolved on PATH, or against `cwd` for a path with a folder."""
     program = Path(argv[0])
     if program.is_absolute():
@@ -97,13 +98,17 @@ def execute(argv: list[str], cwd: Path) -> Done:
             capture_output=True,
             text=True,
             check=False,
-            timeout=READ_TIMEOUT,
+            timeout=seconds,
         )
     except subprocess.TimeoutExpired as error:
-        raise HarnessError(f"{argv[0]} gave no answer in {READ_TIMEOUT} s") from error
+        raise HarnessError(f"{argv[0]} gave no answer in {seconds:g} s") from error
     except OSError as error:
         raise HarnessError(f"{argv[0]} could not start: {error}") from error
     return Done(done.returncode, done.stdout, done.stderr)
+
+
+# One command of a target, with the timeout of the target bound.
+Run = Callable[[list[str], Path], Done]
 
 
 @dataclass(frozen=True)
@@ -114,15 +119,17 @@ class Fetched:
     headers: Mapping[str, str] = field(default_factory=dict)
 
 
-# Runs one GET. A test passes its own.
-Fetch = Callable[[str], Fetched]
+# Runs one GET with a timeout in seconds. A test passes its own.
+Fetch = Callable[[str, float], Fetched]
+# One GET of a target, with the timeout of the target bound.
+Get = Callable[[str], Fetched]
 
 
-def fetch_url(url: str) -> Fetched:
+def fetch_url(url: str, seconds: float) -> Fetched:
     """The body and the headers of a GET on `url`."""
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     try:
-        with urllib.request.urlopen(request, timeout=READ_TIMEOUT) as response:
+        with urllib.request.urlopen(request, timeout=seconds) as response:
             body: bytes = response.read()
             headers = {name.lower(): value for name, value in response.headers.items()}
     except (urllib.error.URLError, TimeoutError) as error:
@@ -160,15 +167,28 @@ def read_target(
     if method not in READ_METHODS:
         raise HarnessError(f"{key}.read must be one of {', '.join(READ_METHODS)}, not {method!r}")
     reading = Reading(name, str(method), str(spec.get("env") or name))
+    seconds = _seconds(spec.get("timeout"), f"{key}.timeout")
+
+    def bound(argv: list[str], cwd: Path) -> Done:
+        return run(argv, cwd, seconds)
+
     if method == "lw":
-        _read_lw(reading, spec, root, run, key)
+        _read_lw(reading, spec, root, bound, key)
     elif method == "ssh-docker":
-        _read_ssh_docker(reading, spec, root, run, key)
+        _read_ssh_docker(reading, spec, root, bound, key)
     elif method == "http":
-        _read_http(reading, spec, fetch, key)
+        _read_http(reading, spec, lambda url: fetch(url, seconds), key)
     else:
-        _read_command(reading, spec, root, run, key)
+        _read_command(reading, spec, root, bound, key)
     return reading
+
+
+def _seconds(value: object, key: str) -> float:
+    if value is None:
+        return READ_TIMEOUT
+    if isinstance(value, bool) or not isinstance(value, int | float) or value <= 0:
+        raise HarnessError(f"{key} must be a number of seconds above 0, not {value!r}")
+    return float(value)
 
 
 def _argv(value: object, key: str, default: Sequence[str]) -> list[str]:
@@ -181,7 +201,7 @@ def _argv(value: object, key: str, default: Sequence[str]) -> list[str]:
     raise HarnessError(f"{key} must be a command string or a list of strings")
 
 
-def _read_lw(reading: Reading, spec: Mapping[str, Any], root: Path, run: Execute, key: str) -> None:
+def _read_lw(reading: Reading, spec: Mapping[str, Any], root: Path, run: Run, key: str) -> None:
     """`lw deploy status <target> --json`. It exits 1 with JSON when it finds a problem."""
     lw = _argv(spec.get("lw"), f"{key}.lw", ["lw"])
     target = str(spec.get("target") or reading.target)
@@ -233,7 +253,7 @@ def _read_lw(reading: Reading, spec: Mapping[str, Any], root: Path, run: Execute
 
 
 def _ssh_nodes(
-    reading: Reading, spec: Mapping[str, Any], root: Path, run: Execute, key: str
+    reading: Reading, spec: Mapping[str, Any], root: Path, run: Run, key: str
 ) -> list[str]:
     """The hosts of `nodes`, or the lines that `nodesCommand` prints."""
     if spec.get("nodesCommand") is None:
@@ -257,7 +277,7 @@ def _ssh_nodes(
 
 
 def _read_ssh_docker(
-    reading: Reading, spec: Mapping[str, Any], root: Path, run: Execute, key: str
+    reading: Reading, spec: Mapping[str, Any], root: Path, run: Run, key: str
 ) -> None:
     roles = spec.get("roles")
     if not isinstance(roles, Mapping) or not roles:
@@ -308,7 +328,7 @@ def _docker_rows(reading: Reading, node: str, out: str, roles: Mapping[str, Any]
     return found
 
 
-def _read_http(reading: Reading, spec: Mapping[str, Any], fetch: Fetch, key: str) -> None:
+def _read_http(reading: Reading, spec: Mapping[str, Any], fetch: Get, key: str) -> None:
     url = spec.get("url")
     if not isinstance(url, str) or not url:
         raise HarnessError(f"{key}.url must be a URL")
@@ -346,7 +366,7 @@ def _read_http(reading: Reading, spec: Mapping[str, Any], fetch: Fetch, key: str
 
 
 def _read_command(
-    reading: Reading, spec: Mapping[str, Any], root: Path, run: Execute, key: str
+    reading: Reading, spec: Mapping[str, Any], root: Path, run: Run, key: str
 ) -> None:
     """A command that prints JSON lines: `node`, `role`, `version`, `digest`, `state`, `problem`."""
     argv = _argv(spec.get("command"), f"{key}.command", [])

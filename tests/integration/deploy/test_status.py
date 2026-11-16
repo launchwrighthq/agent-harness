@@ -10,7 +10,8 @@ from typing import ClassVar
 
 import pytest
 
-from agent_harness.deploy.serving import USER_AGENT, read_target
+from agent_harness import HarnessError
+from agent_harness.deploy.serving import USER_AGENT, execute, read_target
 
 PACKAGE = Path(__file__).resolve().parents[3]
 LAUNCHER = PACKAGE / "bin" / "ah"
@@ -240,3 +241,10 @@ def test_reads_the_live_version_from_a_response_header(tmp_path: Path, version_u
     reading = read_target("web", spec, tmp_path)
 
     assert [(r.node, r.version) for r in reading.rows] == [(version_url, "0f1e2d3c")]
+
+
+def test_stops_a_command_that_runs_past_its_timeout(tmp_path: Path) -> None:
+    argv = [sys.executable, "-c", "import threading; threading.Event().wait()"]
+
+    with pytest.raises(HarnessError, match=r"gave no answer in 0\.5 s"):
+        execute(argv, tmp_path, 0.5)

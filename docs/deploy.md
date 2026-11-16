@@ -129,6 +129,10 @@ A record without `environment` belongs to the environment that its file stem nam
 Each target has `env`, the environment that it serves. The default is the target name. A target
 whose `env` names no environment prints under every environment.
 
+Each target has `timeout`, the seconds that one read may take. The default is 20. An
+`ssh-docker` target reads each node and `nodesCommand` once, and each read gets the full
+`timeout`. Set it above the time of one read, such as a slow `ssh` wrapper.
+
 ## Example
 
 A project whose deploy workflow runs the jobs `gate`, `build`, `migrate`, `apply` and `verify`,
