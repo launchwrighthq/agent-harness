@@ -92,14 +92,9 @@ def test_makes_a_kinds_folder_under_a_spec_folder_a_folder_of_its_own(tmp_path: 
 
     assert found.domains == (
         layout.Domain("docs/specs", "spec", "SPECIFICATION"),
-        layout.Domain("docs/specs/assets", "qa", "QA REPORT"),
+        layout.Domain("docs/specs/assets", "qa", "QA REPORT", ("untested", "tested")),
     )
-    assert found.folders() == [
-        "docs/specs",
-        "docs/specs/archive",
-        "docs/specs/assets",
-        "docs/specs/assets/archive",
-    ]
+    assert found.folders() == ["docs/specs", "docs/specs/archive", "docs/specs/assets"]
     assert found.sources(tmp_path) == ["docs/specs/a.md", "docs/specs/assets/r.md"]
 
 
@@ -110,3 +105,39 @@ def test_refuses_a_kinds_folder_outside_every_spec_folder(tmp_path: Path) -> Non
 
     with pytest.raises(HarnessError, match=r'specs\.kinds\."notes/qa" names a folder'):
         layout.from_config(config.load(tmp_path))
+
+
+def test_gives_the_qa_kind_its_badge_and_its_two_statuses(tmp_path: Path) -> None:
+    write_config(tmp_path, '[specs]\ndirs = ["docs/qa"]\n\n[specs.kinds."docs/qa"]\nkind = "qa"\n')
+
+    (found,) = layout.from_config(config.load(tmp_path)).domains
+
+    assert found == layout.Domain("docs/qa", "qa", "QA REPORT", ("untested", "tested"))
+    assert not found.settles
+
+
+def test_gives_a_qa_folder_no_archive(tmp_path: Path) -> None:
+    write_config(tmp_path, QA_CONFIG)
+
+    found = layout.from_config(config.load(tmp_path))
+
+    assert found.folders() == ["docs/specs", "docs/specs/archive", "docs/qa"]
+    assert found.settling() == ["docs/specs"]
+
+
+def test_finds_the_folder_that_a_path_runs_through() -> None:
+    found = layout.Layout(dirs=("docs/specs", "docs/qa"), archive="archive", out="dist")
+
+    assert found.domain_at("/repo/docs/qa/r.md") == layout.domain_for("docs/qa")
+    assert found.domain_at("docs/specs/archive/a.md") == layout.domain_for("docs/specs")
+    assert found.domain_at("notes/docs/q.md") is None
+
+
+def test_finds_the_longest_folder_that_a_path_runs_through(tmp_path: Path) -> None:
+    write_config(tmp_path, NESTED_CONFIG)
+
+    found = layout.from_config(config.load(tmp_path))
+
+    assert found.domain_at("docs/specs/assets/r.md") == found.domains[1]
+    assert found.domain_at("docs/specs/a.md") == found.domains[0]
+    assert found.settling() == ["docs/specs"]

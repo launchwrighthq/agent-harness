@@ -1,0 +1,24 @@
+{
+  "environment": "production",
+  "sha": "e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0",
+  "branch": "main",
+  "startedAt": "2026-11-14T10:00:00Z",
+  "finishedAt": "2026-11-14T10:09:30Z",
+  "buildNumber": "10610",
+  "jobs": {
+    "changes": { "result": "success", "seconds": 4 },
+    "verify": { "result": "success", "seconds": 210 },
+    "build-and-push": { "result": "success", "seconds": 240 },
+    "build-and-push-renderer": { "result": "skipped", "seconds": null },
+    "migrate": { "result": "success", "seconds": 12 },
+    "apply": { "result": "success", "seconds": 35 },
+    "boxes": { "result": "success", "seconds": 61 },
+    "clients": { "result": "success", "seconds": 48 },
+    "tag-build": { "result": "success", "seconds": 2 }
+  },
+  "digests": {
+    "origin": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "renderer": null
+  },
+  "vpImages": null
+}

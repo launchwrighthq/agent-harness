@@ -17,6 +17,7 @@ import sys
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -231,6 +232,16 @@ DOTGLOB = re.compile(
     r"shopt|dotglob|GLOBIGNORE|\bset\s+-o|BASH_ENV|ENV=|\bsource\b|setopt"
     r"|(?i:g_*l_*o_*b_*d_*o_*t)|[*?\]][^\s()|;&<>]*\(|\)\(|\([^()\s]*D[^()\s]*\)"
 )
+
+# Commands that print file names. A reader that takes their names reads files the line never
+# names, so a listing that no pattern bounds reads as the glob `*`, which can match a key name.
+LISTERS = {"ls", "find", "fd", "fdfind", "locate", "plocate"}
+
+# The commands after a pipe that hand each name they read to a command as a file.
+NAME_TAKERS = {"xargs", "parallel", "while"}
+
+# The options of a grep stage that print a count or nothing in place of the lines.
+COUNT_OPTION = re.compile(r"--count|--quiet|--silent|-[A-Za-z]*[cq][A-Za-z]*")
 
 # A shell whose own options or rc files can match a name that starts with `.` to any glob. Any
 # shell with `-c` runs a command line that the guard reads only as text.
@@ -1043,13 +1054,14 @@ def ref_patterns(args: list[Word]) -> list[Word]:
     return [a for a in args if not a.text.startswith("-")]
 
 
-def name_filters(stage: list[Word]) -> list[Word]:
+def name_filters(stage: list[Word], names: Names) -> list[Word]:
     """The name filter values of a grep or rg stage that the glob scan skips.
 
     A filter drops files from a recursive search, and the same search with no filter reads every
     file, so a filter reads nothing more. A filter that names a credential family by its literal
-    part (`*.pem`, `.env*`) or holds a bracket class still counts. An unquoted `--include=*` is
-    safe: every name that bash makes of it starts with `--include=`.
+    part (`*.pem`, `.env*`) or the start of a guarded name (`vault*`), or that holds a bracket
+    class, still counts. An unquoted `--include=*` is safe: every name that bash makes of it
+    starts with `--include=`.
     """
     if not stage or stage[0].text not in SCRIPT_TOOLS:
         return []
@@ -1058,17 +1070,22 @@ def name_filters(stage: list[Word]) -> list[Word]:
     for k, word in enumerate(args):
         name, inline, value = word.text.partition("=")
         if inline and name in FILTER_OPTIONS:
-            found.extend([word] if broad_filter(value) else [])
+            found.extend([word] if broad_filter(value, names) else [])
         elif word.text in FILTER_OPTIONS and k + 1 < len(args):
             value_word = args[k + 1]
-            if not value_word.open_glob and broad_filter(value_word.text):
+            if not value_word.open_glob and broad_filter(value_word.text, names):
                 found.append(value_word)
     return found
 
 
-def broad_filter(glob: str) -> bool:
-    """True when the name filter `glob` names no credential family by its literal part."""
-    if "[" in glob:
+def broad_filter(glob: str, names: Names) -> bool:
+    """True when the name filter `glob` names no credential family by its literal part, and its
+    literal start (`vault` of `vault*`) starts no guarded name."""
+    start = re.split(r"[*?]", basename(glob))[0]
+    if "[" in glob or (
+        re.search(r"[A-Za-z0-9]", start)
+        and any(basename(t).startswith(start) for t in names.glob_targets)
+    ):
         return False
     for fill in (re.sub(r"[*?]", letter, glob) for letter in ("", "x")):
         base = basename(fill)
@@ -1282,14 +1299,14 @@ def span(word: Word) -> tuple[int, int]:
     return word.start, word.end
 
 
-def without_patterns(text: str) -> tuple[str, list[str]]:
+def without_patterns(text: str, names: Names) -> tuple[str, list[str]]:
     """`text` with each word that the glob scan skips blanked, and the name patterns of each
     `find` (see `command_blanks`)."""
-    blanks = command_blanks(text)
+    blanks = command_blanks(text, names)
     return blanked(text, blanks.glob), blanks.picks
 
 
-def command_blanks(text: str, inner: bool = False) -> Blanks:
+def command_blanks(text: str, names: Names, inner: bool = False) -> Blanks:
     """The words of `text` that read no file by their name or their glob.
 
     A quoted pattern is a dropped `find` name, an exclude pathspec, a ref pattern of git or a
@@ -1316,12 +1333,12 @@ def command_blanks(text: str, inner: bool = False) -> Blanks:
         else:
             patterns, picks = stage_patterns(stage)
             out.glob.extend(span(w) for w in patterns if not w.open_glob)
-            out.glob.extend(map(span, name_filters(stage)))
+            out.glob.extend(map(span, name_filters(stage, names)))
             out.named.extend(span(w) for w in search_scripts(stage) if not w.open_glob)
             out.picks.extend(picks)
         stage = []
     for start, end in substitutions(masked):
-        found = command_blanks(masked[start:end], inner=True).shifted(start)
+        found = command_blanks(masked[start:end], names, inner=True).shifted(start)
         out.glob.extend(found.glob)
         out.named.extend(found.named)
         out.picks.extend(found.picks)
@@ -1352,8 +1369,9 @@ def heredoc_masked(text: str) -> str:
     return "\n".join(out)
 
 
-def substitutions(text: str) -> list[tuple[int, int]]:
-    """The inner span of each outermost `$(...)` of `text` that is not in single quotes."""
+def substitutions(text: str, backticks: bool = False) -> list[tuple[int, int]]:
+    """The inner span of each outermost `$(...)` of `text` that is not in single quotes, and of
+    each backtick substitution with `backticks`."""
     out: list[tuple[int, int]] = []
     quote: str | None = None
     at = 0
@@ -1372,6 +1390,11 @@ def substitutions(text: str) -> list[tuple[int, int]]:
             if end is None:
                 return out
             out.append((at + 2, end))
+            at = end
+        elif backticks and char == "`":
+            end = text.find("`", at + 1)
+            end = len(text) if end < 0 else end
+            out.append((at + 1, end))
             at = end
         at += 1
     return out
@@ -1890,6 +1913,15 @@ def deny(path: str, names: Names) -> None:
     )
 
 
+def deny_listing(listing: str, names: Names) -> None:
+    hookio.deny(
+        f"`{listing}` lists file names, and a reader reads each one. A listing can name a "
+        "credential file, and `.claude/rules/lw/secrets.md` forbids reading one. Name the files, "
+        f"or bound the listing with a pattern such as `find . -name '*.md'`. Ask "
+        f"`{names.env_command}` about a key; it prints no value."
+    )
+
+
 def check(payload: dict[str, Any]) -> None:
     if payload.get("tool_name") != "Bash":
         return
@@ -1911,16 +1943,17 @@ def check(payload: dict[str, Any]) -> None:
         return
     key = hookio.env_reveal(command, names.env_commands, scope)
     inner = hookio.env_run_command(command, names.env_commands, scope)
-    secret = None
-    cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) else os.getcwd()
-    if not hookio.lone_env_command(command, names.env_commands, scope):
-        secret = secret_read(command, str(cwd), names)
-    elif inner is not None:
-        # A lone engine run is exempt, except the command that `run` starts.
-        secret = secret_read(inner, str(cwd), names)
+    cwd = str(payload.get("cwd")) if isinstance(payload.get("cwd"), str) else os.getcwd()
+    # A lone engine run is exempt, except the command that `run` starts.
+    lone = hookio.lone_env_command(command, names.env_commands, scope)
+    target = inner if lone else command
+    secret = None if target is None else secret_read(target, cwd, names)
+    listing = None if target is None or secret is not None else listing_read(target, cwd)
     # A deny wins. A reveal that no deny covers asks, in a lone run or not.
     if secret is not None:
         deny(secret, names)
+    elif listing is not None:
+        deny_listing(listing, names)
     elif key is not None:
         hookio.ask_env(command, names.env_commands, key)
 
@@ -1941,13 +1974,129 @@ def runs_dotglob_shell(command: str) -> bool:
     return False
 
 
+def substitution_bodies(text: str) -> list[str]:
+    """The body of each `$(...)` and backtick substitution of `text`, nested ones too."""
+    out: list[str] = []
+    for start, end in substitutions(text, backticks=True):
+        body = text[start:end]
+        out.extend([body, *substitution_bodies(body)])
+    return out
+
+
+def pipeline_stages(text: str) -> list[tuple[list[Word], bool]]:
+    """The stages of `text`, each with True when a pipe feeds its output to the next stage.
+
+    A brace does not end a stage, so the `{}` of `xargs -I{} cat {}` keeps `cat` in the `xargs`
+    stage.
+    """
+    spans = [w for w in word_spans(text) if not (w.operator and w.text in "{}")]
+    return [(words, joiner in ("|", "|&")) for words, _, joiner in simple_commands(spans)]
+
+
+def stage_text(text: str, stage: list[Word]) -> str:
+    return text[stage[0].start : stage[-1].end]
+
+
+def unbounded_listing(stage: list[Word], cwd: str) -> bool:
+    """True when the stage lists file names that no pattern of its own bounds.
+
+    A glob operand of `ls` and a name test of `find` or `git ls-files` bound the names, and the
+    glob scan reads each of them. A literal operand of `ls` bounds them only when it is a file.
+    """
+    while stage and ASSIGNMENT.match(stage[0].text):
+        stage = stage[1:]
+    if not stage:
+        return False
+    name, args = basename(stage[0].text), stage[1:]
+    if name == "ls":
+        texts = [a.text for a in args]
+        cut = texts.index("--") if "--" in texts else len(args)
+        operands = [a for a in args[:cut] if not a.text.startswith("-")] + args[cut + 1 :]
+        return not operands or any(
+            not a.open_glob and not os.path.isfile(os.path.join(cwd, a.text)) for a in operands
+        )
+    if name == "find":
+        return not stage_patterns(stage)[1]
+    if name == "git":
+        return "ls-files" in (a.text for a in args) and not git_operands(args)
+    return name in LISTERS
+
+
+def takes_names(stage: list[Word], text: str) -> bool:
+    """True when the stage hands each line it reads to a reader as a file name."""
+    first = next((w.text for w in stage if not ASSIGNMENT.match(w.text)), "")
+    if basename(first) not in NAME_TAKERS:
+        return False
+    return first == "while" or any(
+        basename(w) in READERS for w in command_words(stage_text(text, stage))
+    )
+
+
+def runs_reader_on_each(stage: list[Word]) -> bool:
+    """True for a `find` stage whose `-exec` or `-ok` action runs a reader or a wrapper."""
+    texts = [w.text for w in stage]
+    return any(
+        t in FIND_ACTIONS and basename(after) in READERS | WRAPPERS for t, after in pairwise(texts)
+    )
+
+
+def counts(stage: list[Word]) -> bool:
+    """True when the stage prints a count or nothing in place of the names it reads."""
+    name = basename(stage[0].text)
+    return name == "wc" or (
+        name in SCRIPT_TOOLS and any(COUNT_OPTION.fullmatch(w.text) for w in stage[1:])
+    )
+
+
+def listed_names(text: str, cwd: str) -> str | None:
+    """The first listing in `text` whose file names reach a reader, or None.
+
+    A listing reaches one through a substitution whose output keeps the names, a pipe into
+    `xargs` or a `while read` loop, or a `find` action. `cat $(ls -a | grep env)` reads `.env`.
+    """
+    for body in substitution_bodies(text):
+        stages = [stage for stage, _ in pipeline_stages(body) if stage]
+        if stages and not counts(stages[-1]):
+            hit = next((s for s in stages if unbounded_listing(s, cwd)), None)
+            if hit is not None:
+                return stage_text(body, hit)
+    source: str | None = None
+    for stage, piped in pipeline_stages(text):
+        if not stage:
+            source = None
+            continue
+        if source is not None and takes_names(stage, text):
+            return source
+        if unbounded_listing(stage, cwd):
+            if runs_reader_on_each(stage):
+                return stage_text(text, stage)
+            source = source or stage_text(text, stage)
+        source = source if piped else None
+    return None
+
+
+def command_forms(command: str) -> list[str]:
+    """The text this guard scans, as written and with its `$'...'` escapes decoded.
+
+    A heredoc body is exempt only in the two shapes of `scanned_text`; otherwise every byte is
+    scanned. Either form counts.
+    """
+    scanned = IFS.sub(" ", scanned_text(command))
+    return [scanned, decode_ansi_c(scanned)]
+
+
+def listing_read(command: str, cwd: str) -> str | None:
+    """The listing whose file names a reader of `command` reads, or None."""
+    forms = command_forms(command)
+    if all(reader_in(text) is None for text in forms):
+        return None
+    hits = (listed_names(without_quoted_bodies(text), cwd) for text in forms)
+    return next((hit for hit in hits if hit is not None), None)
+
+
 def secret_read(command: str, cwd: str, names: Names) -> str | None:
     """The credential path that a reader of `command` reads, or None."""
-    # A heredoc body is exempt only in the two shapes of `scanned_text`; otherwise every byte is
-    # scanned. The command is read as written and with its `$'...'` escapes decoded, and either
-    # form counts.
-    scanned = IFS.sub(" ", scanned_text(command))
-    forms = [scanned, decode_ansi_c(scanned)]
+    forms = command_forms(command)
     if all(reader_in(text) is None for text in forms):
         return None
     # `git -C`, `--git-dir`, `--work-tree`, `env --chdir` and a script's `chdir` read in another
@@ -1968,8 +2117,8 @@ def secret_read(command: str, cwd: str, names: Names) -> str | None:
         for text in bodiless
     )
     for text, bare in zip(forms, bodiless, strict=True):
-        globbed, picks = without_patterns(bare)
-        named = blanked(text, command_blanks(text).named)
+        globbed, picks = without_patterns(bare, names)
+        named = blanked(text, command_blanks(text, names).named)
         secret = names_a_secret(text, named, cwd, keys_by_name, names, globbed, picks, dotglob)
         if secret is not None:
             return secret

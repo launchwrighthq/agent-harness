@@ -189,6 +189,83 @@ user = "deploy"
 roles = { web = "app-web-", worker = "app-worker-" }
 ```
 
+### A workstation deploy with Kamal nodes
+
+The operator runs the deploy workflow on a workstation, and each box node runs Kamal
+containers. The deploy command writes one job record per run under the main checkout, for
+example `.claude/state/deploys/2026-11-14T10-00-00Z-production-e1f2a3b4.json`:
+
+```json
+{
+  "environment": "production",
+  "sha": "<commit>",
+  "branch": "main",
+  "startedAt": "2026-11-14T10:00:00Z",
+  "finishedAt": "2026-11-14T10:09:30Z",
+  "buildNumber": "10610",
+  "jobs": { "build-and-push": { "result": "success", "seconds": 240 } },
+  "digests": { "origin": "sha256:<digest>", "renderer": null }
+}
+```
+
+The existing keys say all of it. `records` reads each record as a run named `workstation`, with
+the verdict of the phase map. The version column counts the commit, and `recordVersion` gives
+the record's build number when this checkout lacks the commit. `ssh-docker` reads `docker ps` on
+each box node, and `nodesCommand` reads the node names from the fleet file. Kamal names a
+container `<service>-<role>[-<destination>]-<version>`, so a side role with its own destination
+has a longer prefix. The roles below use the service name `app`.
+
+```toml
+[deploy]
+records = ".claude/state/deploys"
+recordDigest = "digests.origin"
+recordVersion = "buildNumber"
+
+[deploy.ci]
+workflows = ["deploy.yml"]
+
+[deploy.environments.production]
+match = [{ branch = "env/production" }, { since = "2026-10-29T14:00:00Z" }]
+
+[deploy.phases]
+deployed = ["apply"]
+
+[deploy.phases.moves]
+build-and-push = "origin image"
+build-and-push-renderer = "media image"
+build-and-push-social = "social image"
+migrate = "schema"
+apply = "origin"
+boxes = "box nodes"
+sync-tenants = "tenant rows"
+seed-taxonomy = "taxonomy"
+push-email-templates = "email templates"
+clients = "workers"
+tag-build = "build tag"
+vp-deploy = "vp roles"
+
+[deploy.phases.serving]
+apply = "origin"
+boxes = "box nodes"
+clients = "workers"
+
+[deploy.targets.boxes]
+read = "ssh-docker"
+env = "production"
+user = "root"
+nodesCommand = [
+  "python3", "-c",
+  "import json; p = json.load(open('infra/fleet/production.json'))['pools']; print('\\n'.join(n for k in ('contabo', 'hetzner', 'droplets') for n in p.get(k, {}).get('nodes', [])))",
+]
+roles = { web = "app-web-", worker = "app-worker-", renderer = "app-renderer-renderer-", social = "app-social-social-" }
+```
+
+A run where only `clients` succeeded reads `served workers only`. The `SERVING` table names the
+run that last fed each of the three surfaces. SSH runs in batch mode, so a node whose host key
+is missing from `known_hosts` reads `did not answer`. Set `ssh` to a command that pins the host
+keys when the known hosts file lacks them. `tests/integration/deploy/test_workstation_kamal.py`
+runs this example against `fixtures/deploy/workstation-kamal/`.
+
 ## Read-only
 
 The command runs `gh run list`, `gh api` GETs (the repository and the jobs of a run), `gh run view --log` (only for `logPhases`),

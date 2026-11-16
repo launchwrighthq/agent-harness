@@ -160,6 +160,35 @@ def test_renders_a_spec_that_a_shell_command_wrote_at_the_end_of_the_turn(root: 
     assert (root / "docs/specs/dist/2026-01-01-heredoc.html").is_file()
 
 
+QA_CONFIG = '[specs]\ndirs = ["docs/specs", "docs/qa"]\n\n[specs.kinds."docs/qa"]\nkind = "qa"\n'
+REPORT = "# A pass\n\nDate: 2026-01-01\nStatus: untested\n\n## 1. Steps\n\nOne line.\n"
+
+
+@pytest.mark.parametrize("pattern", ["docs/qa/", "docs/qa/*"])
+def test_renders_a_qa_report_in_a_gitignored_folder_at_the_end_of_the_turn(
+    root: Path, pattern: str
+) -> None:
+    write(root, ".agents/harness.toml", QA_CONFIG)
+    write(root, ".gitignore", f"{pattern}\n")
+    write(root, "docs/qa/2026-01-01-pass.md", REPORT)
+
+    done = hook(root, {"hook_event_name": "Stop", "last_assistant_message": "done"})
+
+    assert done.returncode == 0
+    assert (root / "docs/qa/dist/2026-01-01-pass.html").is_file()
+
+
+def test_leaves_a_gitignored_file_of_a_spec_folder_unrendered(root: Path) -> None:
+    write(root, ".agents/harness.toml", QA_CONFIG)
+    write(root, ".gitignore", "docs/specs/scratch.md\n")
+    write(root, "docs/specs/scratch.md", SPEC)
+
+    done = hook(root, {"hook_event_name": "Stop", "last_assistant_message": "done"})
+
+    assert done.returncode == 0
+    assert not (root / "docs/specs/dist/scratch.html").exists()
+
+
 def test_skips_every_render_without_a_trusted_project_root(root: Path) -> None:
     source = write(root, "docs/specs/2026-01-01-x.md", SPEC)
     env = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}

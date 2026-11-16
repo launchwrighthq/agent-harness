@@ -33,6 +33,10 @@ specifications. With the default config:
 | Specification | `docs/specs/YYYY-MM-DD-<slug>.md` |
 | Implementation plan | `docs/superpowers/plans/YYYY-MM-DD-<slug>.md` |
 
+`ah config get specs.kinds` can give a folder another kind. A folder of kind `qa` holds QA
+reports: its statuses are `untested` and `tested`, it has no archive, and the audit skips it. A
+QA report needs no Done means table. Delete a report that is done.
+
 Keep a destination and a format the user named. Start a new specification from
 [skeleton.md](skeleton.md), and keep its section order. Do not move an existing spec only to give
 it the new format.

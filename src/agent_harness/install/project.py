@@ -62,6 +62,12 @@ STARTER_CONFIG = """\
 
 [specs]
 # dirs = ["docs/specs", "docs/superpowers/plans"]
+# A QA report folder (docs/spec.md): add "docs/qa" to dirs, then:
+# [specs.kinds."docs/qa"]
+# kind = "qa"
+
+[deploy]
+# docs/deploy.md has examples, one for a workstation deploy with Kamal nodes
 """
 
 
@@ -320,8 +326,10 @@ def install_project(
         extra_manifest_files(extras),
     )
     contents = read_all(files)
-    # Built before the first write: it refuses a project folder that the Codex command cannot name.
+    # Built before the first write: they refuse a project folder that the Codex command cannot
+    # name, and a hook file that is not valid JSON.
     codex_text = registry.codex_file(_read(root / registry.CODEX_FILE), plan, root)
+    settings_text = registry.settings_file(_read(root / registry.SETTINGS_FILE), plan)
     changes = _take_over(root, project_copies(root, contents, previous, plan), replace, out)
     changes += apply_files(root, contents, previous, out)
 
@@ -334,7 +342,7 @@ def install_project(
         changes += _link(root, rel, target, out)
 
     texts = {
-        registry.SETTINGS_FILE: registry.settings_file(_read(root / registry.SETTINGS_FILE), plan),
+        registry.SETTINGS_FILE: settings_text,
         registry.CODEX_FILE: codex_text,
         registry.AGENTS_FILE: registry.with_agents_block(
             _read(root / registry.AGENTS_FILE), regs.agents_block

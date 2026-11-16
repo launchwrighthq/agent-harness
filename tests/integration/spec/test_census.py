@@ -97,5 +97,21 @@ def test_counts_a_report_under_its_own_kinds_folder(tmp_path: Path) -> None:
         "docs/specs: 1 documents: draft 1\n"
         "docs/specs/archive: 0 documents\n"
         "docs/specs/assets: 1 documents: tested 1\n"
-        "docs/specs/assets/archive: 0 documents\n"
     )
+
+
+def test_counts_a_qa_folder_with_no_archive_row(tmp_path: Path) -> None:
+    root = make_repo(tmp_path)
+    (root / ".agents").mkdir()
+    (root / ".agents" / "harness.toml").write_text(
+        '[specs]\ndirs = ["docs/specs", "docs/qa"]\n\n[specs.kinds."docs/qa"]\nkind = "qa"\n',
+        encoding="utf-8",
+    )
+    (root / "docs" / "qa").mkdir()
+    (root / "docs" / "qa" / "r.md").write_text(doc("untested"), encoding="utf-8")
+    subprocess.run(["git", "-C", str(root), "add", "docs/qa/r.md"], check=True)
+
+    found = json.loads(census(root, "--json").stdout)
+
+    assert list(found["folders"]) == ["docs/specs", "docs/specs/archive", "docs/qa"]
+    assert found["folders"]["docs/qa"] == {"untested": 1}

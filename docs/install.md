@@ -153,10 +153,14 @@ hook. An install keeps it, with its matcher and its other keys.
 In each event, the harness entries come first and the project entries follow in their old order.
 So a project hook never moves a harness entry, and Codex keeps the trust of each harness entry. A
 project group that also holds a harness command keeps only its project commands. A second install
-with no change writes nothing.
+with no change writes nothing. A project entry above a harness entry makes `ah check` report the
+file as `differs`, and the next install moves the project entry below.
 
 A project hook that must survive every sync can also come from a project manifest (see "Extra
-manifests"). Then `ah selftest` runs its fixtures too.
+manifests"). Then `ah selftest` runs its fixtures too. A project git hook takes the same path: a
+`[[githook]]` of a project manifest installs to `.githooks/harness/<name>`, and the dispatcher
+runs it. Its name must differ from each enabled harness git hook, so disable the harness hook of
+that name to use your own.
 
 ## Likely duplicates
 

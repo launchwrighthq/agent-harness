@@ -89,3 +89,25 @@ The hooks, the rules and the git hooks are in [docs/hooks.md](docs/hooks.md).
 | `hooks/`, `skills/`, `rules/`, `githooks/`, `codex/` | The installed content and the Codex hook adapter. |
 | `docs/` | One document per area. |
 | `tests/unit/`, `tests/integration/` | The tests. |
+
+## Changes in 0.2.1
+
+0.2.1 merges the changes of 0.2.0 with the changes of 0.1.4 and 0.1.5. It adds no behavior of
+its own.
+
+| Release | Change | Details |
+|---|---|---|
+| 0.1.4 | A fenced code block or a blockquote indented under a list item renders inside that item. The long module docstrings of the hooks and the engine moved to the docs. | [docs/spec.md](docs/spec.md), [docs/hooks.md](docs/hooks.md) |
+| 0.1.5 | Each deploy target has `timeout`, the seconds that one read may take. The default is 20. | [docs/deploy.md](docs/deploy.md) |
+| 0.2.0 | The six changes below. | |
+
+## Changes in 0.2.0
+
+| Gap | Change | Details |
+|---|---|---|
+| G1 | A spec folder of kind `qa` holds QA reports with the statuses `untested` and `tested`. A QA report renders with its own badge and never moves to an archive. | [docs/spec.md](docs/spec.md) |
+| G2 | `ah deploy-status` reads a workstation deploy with Kamal nodes from the existing `[deploy]` keys. The deploy document has a worked example. | [docs/deploy.md](docs/deploy.md) |
+| G3 | The read guard refuses a file listing whose names reach a reader: through a substitution, a pipe into `xargs`, `parallel` or a `while read` loop, or a `find -exec` action. Tests pin the harmless patterns from real sessions that the guard passes: `jq` paths, parameter expansions, `--include` globs and bracket classes. | [docs/hooks.md](docs/hooks.md) |
+| G4 | 0.1.2 keeps the project hook entries of `.claude/settings.json` and `.codex/hooks.json` after the harness entries, and runs git hooks through a dispatcher. 0.2.0 adds no second mechanism. The install builds both hook files before its first write, and a project git hook comes from a `[[githook]]` of a manifest that `harness.manifests` names. | [docs/install.md](docs/install.md) |
+| G5 | The comment budget keeps the caps of the old path for a renamed file, measures Terraform files, and takes per-pattern caps in `comments.overrides` and a line length cap in `comments.maxLineLength`. | [docs/hooks.md](docs/hooks.md) |
+| G6 | The new rule `core-principles` holds truth over optimism and asking before an uncertain change. `code-limits` adds error handling. | [docs/hooks.md](docs/hooks.md) |

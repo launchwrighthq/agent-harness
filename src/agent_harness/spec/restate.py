@@ -5,9 +5,10 @@
 Only the first `Status:` token that starts in the first 4000 characters changes, the window of
 every status reader. On an HTML page the value ends at the earliest closing mark, which stays.
 
-`--archive` takes a settled status only and refuses a file already in the archive. It stages
-the new status before `git mv`, because `git mv` carries the index copy to the new path. Then
-it prints the `ah spec repoint` command for the old path.
+`--archive` takes a settled status only. It refuses a file already in the archive, and a QA
+report, which is never archived. It stages the new status before `git mv`, because `git mv`
+carries the index copy to the new path. Then it prints the `ah spec repoint` command for the
+old path.
 """
 
 from __future__ import annotations
@@ -81,6 +82,17 @@ def refuse_unless_archivable(path: Path, status: str, archive: str) -> None:
         raise HarnessError(f"--archive takes a settled status ({settled}), not {word!r}")
 
 
+def refuse_qa_report(path: Path, root: Path, where: layout.Layout) -> None:
+    full = path.resolve()
+    inside = full.is_relative_to(root.resolve())
+    domain = where.domain_at((full.relative_to(root.resolve()) if inside else full).as_posix())
+    if domain is not None and not domain.settles:
+        raise HarnessError(
+            f"{path}: {domain.dir}/ holds QA reports, which are never archived. "
+            "Delete a report that is done."
+        )
+
+
 def git_write(args: list[str]) -> None:
     done = subprocess.run(["git", *args], capture_output=True, text=True, check=False)
     if done.returncode != 0:
@@ -96,8 +108,10 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
     path = Path(args.file)
     root = config.find_root()
-    archive = layout.for_root(root).archive
+    where = layout.for_root(root)
+    archive = where.archive
     if args.archive:
+        refuse_qa_report(path, root, where)
         refuse_unless_archivable(path, args.status, archive)
     try:
         text = path.read_text(encoding="utf-8")

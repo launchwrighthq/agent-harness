@@ -7,7 +7,8 @@ decides the badge on a rendered page, and the vocabulary the statuses the render
 A `kinds` folder under a spec folder is a folder of its own, and the longest folder wins.
 
 Each folder can hold an `archive` folder for settled documents, and an `out` folder (`dist`)
-for the rendered pages. Both names come from the config.
+for the rendered pages. Both names come from the config. A `qa` folder holds disposable QA
+reports: it has no archive, and the audit and the reconcile commands leave it out.
 """
 
 from __future__ import annotations
@@ -22,8 +23,16 @@ from agent_harness import HarnessError, config
 ASSETS = "assets"
 # The index of a folder describes the folder, so it is no document.
 INDEX_NAME = "README.md"
-# The kinds the page template has a style for.
-KINDS = ("spec", "plan", "qa")
+# The kinds the page template has a style for, each with its badge word and its statuses.
+# No statuses means the vocabulary of the spec-format rule.
+KIND_DEFAULTS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "spec": ("SPECIFICATION", ()),
+    "plan": ("PLAN", ()),
+    "qa": ("QA REPORT", ("untested", "tested")),
+}
+KINDS = tuple(KIND_DEFAULTS)
+# The kind whose documents are never archived.
+QA = "qa"
 # The badge word reaches the page, so it takes plain characters only.
 LABEL_RE = re.compile(r"^[A-Za-z0-9 _.-]{1,40}$")
 
@@ -37,6 +46,11 @@ class Domain:
     kind: str
     label: str
     statuses: tuple[str, ...] = ()
+
+    @property
+    def settles(self) -> bool:
+        """Whether a settled document of this folder moves into its archive."""
+        return self.kind != QA
 
 
 @dataclass(frozen=True)
@@ -69,15 +83,32 @@ class Layout:
         return tuple(f"{other}/" for other in self.domain_dirs if other.startswith(f"{folder}/"))
 
     def folders(self) -> list[str]:
-        """Each folder of `domain_dirs`, then its archive folder, in config order."""
+        """Each spec folder, then its archive folder, in config order. A `qa` folder has none."""
         found: list[str] = []
-        for folder in self.domain_dirs:
-            found += [folder, f"{folder}/{self.archive}"]
+        for domain in self.domains:
+            found.append(domain.dir)
+            if domain.settles:
+                found.append(f"{domain.dir}/{self.archive}")
         return found
 
     def active(self, kind: str) -> list[str]:
         """The spec folders of one kind, without their archives."""
         return [domain.dir for domain in self.domains if domain.kind == kind]
+
+    def settling(self) -> list[str]:
+        """The spec folders whose settled documents move into an archive: every kind but `qa`."""
+        return [domain.dir for domain in self.domains if domain.settles]
+
+    def folder_re(self) -> re.Pattern[str]:
+        """A spec folder inside a path, at its start or after a slash. Group 1 is the folder. The
+        alternation is longest first, so a `kinds` folder under a spec folder wins."""
+        names = "|".join(re.escape(folder) for folder in self.longest_first())
+        return re.compile(rf"(?:^|/)({names})/")
+
+    def domain_at(self, path: str) -> Domain | None:
+        """The spec folder that `path` runs through, or None. The longest folder wins."""
+        match = self.folder_re().search(path.replace("\\", "/"))
+        return next((d for d in self.domains if match and d.dir == match.group(1)), None)
 
     def sources(self, root: Path) -> list[str]:
         """Each Markdown source under the spec folders and their archives, as a path from
@@ -123,17 +154,17 @@ def _kind(folder: str, value: object) -> Domain:
     key = f"specs.kinds.{folder}"
     if not isinstance(value, dict):
         raise HarnessError(f"{key} must be a table, got {value!r}")
-    found = domain_for(folder)
-    kind = value.get("kind", found.kind)
+    kind = value.get("kind", domain_for(folder).kind)
     if kind not in KINDS:
         raise HarnessError(f"{key}.kind must be one of {', '.join(KINDS)}, got {kind!r}")
-    label = value.get("label", found.label)
+    label, statuses = KIND_DEFAULTS[kind]
+    label = value.get("label", label)
     if not isinstance(label, str) or not LABEL_RE.match(label):
         raise HarnessError(f"{key}.label must match {LABEL_RE.pattern}, got {label!r}")
-    statuses = value.get("statuses", [])
-    if not isinstance(statuses, list) or not all(isinstance(v, str) and v for v in statuses):
-        raise HarnessError(f"{key}.statuses must be a list of words, got {statuses!r}")
-    return Domain(folder.strip("/"), kind, label, tuple(statuses))
+    words = value.get("statuses", list(statuses))
+    if not isinstance(words, list) or not all(isinstance(v, str) and v for v in words):
+        raise HarnessError(f"{key}.statuses must be a list of words, got {words!r}")
+    return Domain(folder.strip("/"), kind, label, tuple(words))
 
 
 def from_config(cfg: config.Config) -> Layout:

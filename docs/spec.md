@@ -18,12 +18,38 @@ The `[specs]` section of `.agents/harness.toml` holds the spec facts. Every key 
 | `archive` | `archive` | The folder name, inside each spec folder, for settled documents. |
 | `out` | `dist` | The folder name, inside each spec folder, for rendered pages. Keep it out of git. |
 | `auditDir` | `.claude/state` | The audit store, relative to the main checkout, so every worktree shares one store. An absolute path is used as it is. |
-| `kinds` | `{}` | Per spec folder, a table with `kind` (`spec`, `plan` or `qa`), `label` (the badge word) and `statuses` (the vocabulary the renderer accepts). For example `[specs.kinds."docs/qa"]` with `kind = "qa"`, `label = "QA REPORT"`, `statuses = ["untested", "tested"]`. The key names a folder of `dirs` or a folder under one, else the config fails and names the key. A folder under a spec folder is a folder of its own, with its own `archive` and `out` folders: the longest folder that holds a file decides its kind and its page for `render`, `check` and `census`. |
+| `kinds` | `{}` | Per spec folder, a table with `kind` (`spec`, `plan` or `qa`), `label` (the badge word) and `statuses` (the vocabulary the renderer accepts). `label` and `statuses` default to those of the kind. The key names a folder of `dirs` or a folder under one, else the config fails and names the key. A folder under a spec folder is a folder of its own, with its own `out` folder and, unless its kind is `qa`, its own `archive` folder: the longest folder that holds a file decides its kind and its page for `render`, `check` and `census`. See [QA reports](#qa-reports). |
 | `checks` | `["archive", "superseded", "pointers", "assets"]` | The checks that `spec check` runs. |
 | `pointerFiles` | `["*.md"]` | The git pathspecs of the files whose spec paths `spec check` resolves. |
 
 The audit, goal and Codex commands read the base branch from `harness.baseBranch`. `land.sh`
 also reads `harness.gateCommand`. `AGENT_STATE_DIR` overrides `auditDir` for one process.
+
+### QA reports
+
+A folder of kind `qa` holds disposable QA reports. Add it to `dirs`, or name a folder under a
+spec folder, and give it the kind:
+
+```toml
+[specs]
+dirs = ["docs/specs", "docs/plans", "docs/qa"]
+
+[specs.kinds."docs/qa"]
+kind = "qa"
+```
+
+| Kind | Badge | Statuses | Archive |
+|---|---|---|---|
+| `spec` | SPECIFICATION | the spec-format vocabulary | yes |
+| `plan` | PLAN | the spec-format vocabulary | yes |
+| `qa` | QA REPORT, in purple | `untested`, `tested` | none |
+
+A `tested` chip reads as live, like `approved`. The renderer and the `render-spec` hook treat a
+QA report like any spec. At the end of a turn the hook also finds a report in a gitignored QA
+folder, which `git status` lists only with `--ignored`. A QA folder has no archive, so
+`spec restate --archive` refuses a report, and `spec check` and `spec census` look for no archive
+there. `spec audit digest` and `spec audit record` refuse a named report, and `--open` and
+`--session` leave reports out. A project with no `qa` folder sees no change.
 
 ## Commands
 

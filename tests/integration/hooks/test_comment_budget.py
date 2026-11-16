@@ -20,8 +20,8 @@ def ts_file(block: int, code: int) -> str:
     return "\n".join([*lines, ""])
 
 
-def project_on_main(tmp_path: Path) -> Path:
-    project = hook_project.make_project(tmp_path / "project")
+def project_on_main(tmp_path: Path, config: str = "") -> Path:
+    project = hook_project.make_project(tmp_path / "project", config)
     git = ["git", "-C", str(project)]
     subprocess.run([*git, "symbolic-ref", "HEAD", "refs/heads/main"], check=True)
     return project
@@ -81,3 +81,26 @@ def test_reports_the_finding_of_a_written_file_as_added_context(tmp_path: Path) 
         "comment-budget: src/new.mts has a 13-line comment block, cap 12"
         in out["additionalContext"]
     )
+
+
+def test_gives_a_renamed_file_the_caps_of_its_old_path(tmp_path: Path) -> None:
+    project = project_on_main(tmp_path)
+    (project / "src").mkdir()
+    (project / "src/old.mts").write_text(ts_file(20, 10), encoding="utf-8")
+    commit(project)
+    subprocess.run(["git", "-C", str(project), "mv", "src/old.mts", "src/moved.mts"], check=True)
+
+    assert run(project, "PostToolUse", "Edit", {"file_path": str(project / "src/moved.mts")}) == ""
+
+
+def test_denies_a_terraform_block_over_the_cap_of_its_override(tmp_path: Path) -> None:
+    config = '[harness.comments.overrides."**/*.tf"]\nmaxBlock = 1\nminLines = 0\n'
+    project = project_on_main(tmp_path, config)
+    commit(project)
+    data = {"file_path": str(project / "infra/main.tf"), "content": "# a\n# b\nlocals {}\n"}
+
+    out = json.loads(run(project, "PreToolUse", "Write", data))["hookSpecificOutput"]
+
+    assert out["permissionDecision"] == "deny"
+    reason = out["permissionDecisionReason"]
+    assert "infra/main.tf would get a 2-line comment block, cap 1" in reason

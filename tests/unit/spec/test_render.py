@@ -173,8 +173,16 @@ def test_renders_a_qa_report_with_its_badge_and_its_own_status() -> None:
     )
 
     fields = html.split("|")
-    assert fields[2] == '<li class="chip">tested</li>'
+    assert fields[2] == '<li class="chip is-live">tested</li>'
     assert fields[6:8] == ["QA REPORT", "kind-qa"]
+
+
+def test_gives_an_untested_qa_report_a_chip_that_is_not_live() -> None:
+    html, _ = render_with_template(
+        "# R\n\nDate: 2026-01-01\nStatus: untested\n", "docs/qa/r.md", SHELL, QA_LAYOUT
+    )
+
+    assert html.split("|")[2] == '<li class="chip">untested</li>'
 
 
 def test_refuses_a_status_outside_the_vocabulary_of_its_folder() -> None:

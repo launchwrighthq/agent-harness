@@ -73,16 +73,21 @@ guards with the defaults.
 | `directives` | `prompt-directives` | Each prompt flag and the text it adds. |
 | `gateCommand`, `localRuns.hint`, `localRuns.dispatch` | `local-run-guard` | The gate command that always passes, the hint in a refusal, and the commands that pick their runner. A dispatch command passes, except with `--target local`. |
 | `scratchCap.memoryMax`, `scratchCap.cpuMax` | `scratch-cap` | The caps of the cgroup. |
-| `comments.maxBlock`, `comments.longBlock`, `comments.maxShare`, `comments.shareFloor`, `comments.minLines`, `comments.include`, `comments.exclude` | `comment-budget`, `ah comments` | The comment budget (below). |
+| `comments.maxBlock`, `comments.longBlock`, `comments.maxShare`, `comments.shareFloor`, `comments.minLines`, `comments.maxLineLength`, `comments.include`, `comments.exclude`, `comments.overrides` | `comment-budget`, `ah comments` | The comment budget (below). |
 
 A file pattern matches one whole base name and ignores case. `*` and `?` match inside one name.
 
 ## The comment budget
 
 `ah comments [path ...]` and the `comment-budget` hook share one measure, `agent_harness.comments`.
-It scans lines and does not parse: `//`, `/* */` and a JSDoc block in JS and TS, and `#` lines
-and a docstring that opens a line in Python and shell. A shebang is code. A file is new when the
-base branch (`harness.baseBranch`) does not hold it.
+It scans lines and does not parse: `//`, `/* */` and a JSDoc block in JS and TS, `#` lines
+and a docstring that opens a line in Python and shell, and `#`, `//` and `/* */` in Terraform. A
+shebang is code.
+
+A file is new when the base branch (`harness.baseBranch`) does not hold it. A file that git finds
+renamed from a path the base branch holds is not new: it keeps the caps of its old path. The
+check is `git diff --find-renames=30% <base>` over the `include` patterns, so it sees a rename
+that is staged or committed. The floor is 30% because a move rewrites the import lines.
 
 | Key | Default | Applies to |
 |---|---|---|
@@ -91,13 +96,32 @@ base branch (`harness.baseBranch`) does not hold it.
 | `comments.maxShare` | `0.35` | The share of comment lines in a new file with `shareFloor` code lines or more. |
 | `comments.shareFloor` | `60` | Below this many code lines, the share is not measured. |
 | `comments.minLines` | `20` | A file with fewer lines is not measured. |
-| `comments.include`, `comments.exclude` | TS, JS and Python files; tests, `docs/`, `.claude/`, `dist/` and declarations out | The path patterns (`**`, `*`, `?`) of the files that the budget reads. |
+| `comments.maxLineLength` | `0` | The longest comment line in characters, indent left out. `0` is no cap. |
+| `comments.include`, `comments.exclude` | TS, JS, Python and Terraform files; tests, `docs/`, `.claude/`, `dist/` and declarations out | The path patterns (`**`, `*`, `?`) of the files that the budget reads. |
+| `comments.overrides` | `{}` | A path pattern and the caps that replace the ones above for the files it matches. The first pattern that matches wins. |
+
+An override sets only the caps: `maxBlock`, `longBlock`, `maxShare`, `shareFloor`, `minLines`
+and `maxLineLength`. Any other key fails the run. This override gives Terraform one comment
+line per value or block, and 100 characters per line:
+
+```toml
+[harness.comments.overrides."**/*.tf"]
+maxBlock = 1
+longBlock = 1
+minLines = 0
+maxLineLength = 100
+```
+
+A project that moves to the budget with files over a cap names each of them in
+`comments.exclude`. That list is the exemption register. It only shrinks: a file leaves the list
+when it meets the budget, and no file joins it.
 
 `ah comments` reads the tracked and untracked files of the checkout, or the named files and
 folders, and prints one line per finding. The hook denies a Write or an Edit that makes a block
 longer than its cap. A block that the file already holds is the floor, so an edit near old prose
-passes. After the write, the hook reports each finding as added context. A Codex `apply_patch`
-gives the hook the path only, so Codex gets the report and not the deny.
+passes. After the write, the hook reports each finding as added context, the line length
+included. A Codex `apply_patch` gives the hook the path only, so Codex gets the report and not
+the deny.
 
 ## The credential name guard
 
@@ -309,7 +333,8 @@ Some words name no file that the command reads, so the scans skip them:
 - A name filter of grep or rg (`--include`, `--exclude`, `--exclude-dir`, `-g`, `--glob`,
   `--iglob`) only drops files from a recursive search, which reads every file without it. So
   `--include=*` and `--include=*.ts*` pass. A filter that names a credential family by its
-  literal part (`*.pem`, `.env*`) or holds a bracket class still counts.
+  literal part (`*.pem`, `.env*`) or by the start of a guarded name (`vault*` for `vault.json`),
+  or that holds a bracket class, still counts.
 - `ls` prints names, and `find` with no `-exec`, `-ok`, `-delete`, `-fprint` or `-fls` prints
   names. Their words skip both scans when their output, and the output of each `head`, `tail`,
   `grep`, `wc` or `cat` that a pipe feeds, reaches only the terminal or `/dev/null`. A pipe into
@@ -373,6 +398,16 @@ Any other quoted pathspec picks names, and git matches a name that starts with `
 `git grep x -- '?env'` is refused. Without `--`, each word after the subcommand that is no
 option is a pathspec, the pattern of `git grep` included. A pattern that is no glob of a
 credential name passes. Under the `icase` magic, the name test reads the pathspec in lower case.
+
+A listing hands a reader file names that the line never shows. `ls`, `find`, `fd`, `locate` and
+`git ls-files` list names, and a listing that no pattern of its own bounds reads as the glob
+`*`. The guard refuses one whose names reach a reader: through a `$(...)` or backtick
+substitution, a pipe into `xargs`, `parallel` or a `while read` loop, or a `find -exec` or `-ok`
+action that runs a reader. So `cat $(ls -a | grep env)` and `find . -type f | xargs cat` are
+refused. A glob operand of `ls`, an operand that is a file, a `find -name` test and a `git
+ls-files` pathspec bound the names, and the name test reads them. A substitution whose last
+stage is `wc` or a counting `grep` (`-c`, `-q`) keeps no name, so `n=$(ls | wc -l)` passes, and
+a pipe into `grep` or `head` reads the names as lines, not as files.
 
 ## Limits of the guards
 
@@ -460,6 +495,7 @@ than the rules on purpose, so a regex that takes prose fails it.
 | `spec-format` | `rules/spec-format.md` | `docs/specs/**`, `docs/superpowers/plans/**` |
 | `operator-report` | `rules/operator-report.md` | Every file |
 | `codex` | `rules/codex.md` | Every file |
+| `core-principles` | `rules/core-principles.md` | Every file |
 | `instance-agnostic` | `rules/instance-agnostic.md` | Every file |
 | `code-limits` | `rules/code-limits.md` | Every file |
 

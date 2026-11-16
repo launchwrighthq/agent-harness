@@ -1,0 +1,6 @@
+{
+  "pools": {
+    "contabo": { "kind": "box", "ssh_mode": "tailnet", "nodes": ["box-1", "box-2"] },
+    "edge": { "kind": "edge", "nodes": ["edge-1"] }
+  }
+}

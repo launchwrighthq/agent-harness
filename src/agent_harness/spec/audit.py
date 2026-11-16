@@ -8,7 +8,8 @@ The command judges nothing. `digest` lists the requirement rows, the operator's 
 messages and the branches that name the spec, for a fresh auditor to check against the base
 branch (`harness.baseBranch` unless `--base` names another). `record` saves that auditor's
 verdict in the spec store, and `table` prints it in the one shape the operator and the
-`goal-spec` Stop hook read.
+`goal-spec` Stop hook read. A QA report has no requirement rows: a named one is refused, and
+`--open` and `--session` leave it out.
 """
 
 from __future__ import annotations
@@ -471,6 +472,12 @@ def base_commit(base: str) -> str:
     return head
 
 
+def refuse_qa_report(spec: Path) -> None:
+    if store.qa_report(spec):
+        print(f"ah spec audit: {spec} is a QA report, which has no rows to audit", file=sys.stderr)
+        raise SystemExit(1)
+
+
 def build_digest(args: argparse.Namespace) -> dict[str, Any]:
     head = base_commit(args.base)
     specs: list[Path] = []
@@ -479,6 +486,7 @@ def build_digest(args: argparse.Namespace) -> dict[str, Any]:
         if resolved is None:
             print(f"ah spec audit: no spec matches {arg}", file=sys.stderr)
             raise SystemExit(1)
+        refuse_qa_report(resolved)
         specs.append(resolved)
 
     session = session_id_from(args.session)
@@ -499,7 +507,7 @@ def build_digest(args: argparse.Namespace) -> dict[str, Any]:
             resolved = store.resolve_spec(named)
             if resolved is None:
                 missing.append(named)
-            else:
+            elif not store.qa_report(resolved):
                 specs.append(resolved)
     if args.open:
         specs.extend(open_specs())
@@ -751,6 +759,7 @@ def record(args: argparse.Namespace) -> int:
     if spec is None:
         print(f"ah spec audit: no spec matches {args.spec}", file=sys.stderr)
         return 1
+    refuse_qa_report(spec)
     session = (
         args.session
         or os.environ.get("CLAUDE_CODE_SESSION_ID")

@@ -20,7 +20,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from agent_harness import comments, hookio  # noqa: E402
+from agent_harness import HarnessError, comments, hookio  # noqa: E402
 
 HOOK = "comment-budget"
 
@@ -39,24 +39,6 @@ def checkout_of(payload: dict[str, Any]) -> Path:
     except OSError:
         return Path(folder)
     return Path(top.stdout.strip()) if top.returncode == 0 else Path(folder)
-
-
-def is_new(root: Path, base: str, path: str) -> bool:
-    """True when the base branch does not hold `path`. Without git or the branch, a file is old."""
-    try:
-        held = subprocess.run(
-            ["git", "-C", str(root), "cat-file", "-e", f"{base}:{path}"],
-            capture_output=True,
-            check=False,
-        )
-        branch = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "--verify", "--quiet", base],
-            capture_output=True,
-            check=False,
-        )
-    except OSError:
-        return False
-    return branch.returncode == 0 and held.returncode != 0
 
 
 def resulting_text(tool: str, data: dict[str, Any], current: str | None) -> str | None:
@@ -86,10 +68,16 @@ def main() -> None:
     file = Path(os.path.join(root, data["file_path"]))
     path = os.path.relpath(file, root).replace("\\", "/")
     cfg = hookio.hook_config(HOOK, __file__)
-    budget = comments.budget_of(cfg)
-    if path.startswith("..") or not comments.in_scope(path, budget):
+    project = comments.budget_of(cfg)
+    if path.startswith("..") or not comments.in_scope(path, project):
         return
-    fresh = is_new(root, str(hookio.harness_value(cfg, "baseBranch") or "main"), path)
+    base = str(hookio.harness_value(cfg, "baseBranch") or "main")
+    try:
+        budget = comments.caps_for(path, project)
+        fresh = comments.is_new(root, base, path, project)
+    except HarnessError as error:
+        print(f"{HOOK}: {error}; no verdict", file=sys.stderr)
+        return
 
     if event == "PreToolUse":
         current = file.read_text(encoding="utf-8") if file.exists() else None

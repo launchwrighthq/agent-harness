@@ -119,6 +119,18 @@ def test_lists_each_unsettled_spec_of_the_spec_folders_with_its_audit(repo: Path
     ]
 
 
+def test_leaves_out_the_reports_of_a_qa_folder(repo: Path) -> None:
+    config = '[specs]\ndirs = ["docs/specs", "docs/qa"]\n\n[specs.kinds."docs/qa"]\nkind = "qa"\n'
+    write(repo / ".agents/harness.toml", config)
+    write(repo / "docs/qa/2026-01-05-pass.md", "# Q\n\nStatus: untested\n")
+    write(repo / "docs/qa/2026-01-06-done.md", "# R\n\nStatus: tested\n")
+
+    specs = report(repo)["specs"]
+
+    assert isinstance(specs, list)
+    assert [row["path"] for row in specs] == ["docs/specs/2026-01-01-draft-design.md"]
+
+
 def test_lists_the_live_goal_of_every_session(repo: Path) -> None:
     goals = repo / ".claude/state/goal-spec"
     live = {

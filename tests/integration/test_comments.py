@@ -14,11 +14,24 @@ IDENTITY = ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
 BUDGET = comments.budget_of(config.Config(Path("."), {}, None))
 
 
-def ts_file(block: int, code: int) -> str:
+TF_CAPS = """\
+[harness.comments.overrides."**/*.tf"]
+maxBlock = 1
+longBlock = 1
+minLines = 0
+maxLineLength = 100
+"""
+
+
+def ts_file(block: int, code: int, name: str = "v") -> str:
     """A TS file with one comment block of `block` lines and `code` code lines."""
-    lines = ["/**", *(f" * line {i}" for i in range(block - 2)), " */"]
-    lines += [f"export const v{i} = {i};" for i in range(code)]
+    lines = ["/**", *(f" * {name} line {i}" for i in range(block - 2)), " */"]
+    lines += [f"export const {name}{i} = {i};" for i in range(code)]
     return "\n".join([*lines, ""])
+
+
+def git(root: Path, *args: str) -> None:
+    subprocess.run([*IDENTITY, "-C", str(root), *args], check=True)
 
 
 def write(root: Path, rel: str, text: str) -> None:
@@ -65,6 +78,55 @@ def test_limits_the_comment_share_of_a_new_file_with_enough_code_lines(main_repo
     found = comments.comment_findings(main_repo, BUDGET, "main", ["src"])
 
     assert found == [f"src/chatty.mts is {share}% comments, cap {comments.percent(0.35)}%"]
+
+
+def test_keeps_the_caps_of_the_old_path_for_a_staged_rename_and_not_for_a_new_file(
+    main_repo: Path,
+) -> None:
+    write(main_repo, "src/old.mts", ts_file(20, 10))
+    commit(main_repo, "base")
+    git(main_repo, "mv", "src/old.mts", "src/moved.mts")
+    write(main_repo, "src/fresh.mts", ts_file(20, 10, name="fresh"))
+
+    found = comments.comment_findings(main_repo, BUDGET, "main")
+
+    assert found == [f"src/fresh.mts has a 20-line comment block, cap {BUDGET['maxBlock']}"]
+
+
+def test_keeps_the_caps_of_the_old_path_for_a_rename_committed_on_a_branch(
+    main_repo: Path, ah: Ah
+) -> None:
+    write(main_repo, "src/old.mts", ts_file(20, 10))
+    commit(main_repo, "base")
+    git(main_repo, "switch", "-q", "-c", "feature")
+    (main_repo / "lib").mkdir()
+    git(main_repo, "mv", "src/old.mts", "lib/moved.mts")
+    commit(main_repo, "move")
+
+    done = ah("comments")
+
+    assert (done.returncode, done.stdout) == (
+        0,
+        "ah comments: every file is within the comment budget\n",
+    )
+
+
+def test_measures_terraform_with_the_caps_of_its_override(main_repo: Path, ah: Ah) -> None:
+    write(main_repo, ".agents/harness.toml", TF_CAPS)
+    commit(main_repo, "base")
+    wide = "# " + "x" * 101
+    write(main_repo, "infra/main.tf", f'# one\n# two\nlocals {{}}\n{wide}\nvariable "a" {{}}\n')
+    write(main_repo, "infra/ok.tf", '# one value\nvariable "a" {}\n')
+
+    done = ah("comments")
+
+    assert (done.returncode, done.stdout.splitlines()[:-1]) == (
+        1,
+        [
+            "infra/main.tf has a 2-line comment block, cap 1",
+            "infra/main.tf:4 has a 103-character comment line, cap 100",
+        ],
+    )
 
 
 def test_refuses_a_path_outside_the_checkout(main_repo: Path) -> None:

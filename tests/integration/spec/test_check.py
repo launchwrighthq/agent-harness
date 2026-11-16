@@ -180,3 +180,19 @@ def test_judges_a_report_by_its_own_kinds_folder_and_not_as_an_asset(tmp_path: P
 
     assert done.returncode == 0, done.stdout
     assert done.stdout == "spec check: 2 documents, no finding\n"
+
+
+QA_CONFIG = '[specs]\ndirs = ["docs/specs", "docs/qa"]\n\n[specs.kinds."docs/qa"]\nkind = "qa"\n'
+
+
+def test_leaves_a_qa_folder_out_of_the_archive_check(tmp_path: Path) -> None:
+    root = make_repo(
+        tmp_path,
+        {"docs/specs/a.md": doc("draft"), "docs/qa/r.md": doc("tested")},
+        config=QA_CONFIG,
+    )
+
+    done = check(root)
+
+    assert done.returncode == 0, done.stdout
+    assert done.stdout == "spec check: 2 documents, no finding\n"

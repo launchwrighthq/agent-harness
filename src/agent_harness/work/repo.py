@@ -67,7 +67,7 @@ def worktrees(root: Path, base: str) -> list[Worktree]:
 def unsettled_specs(root: Path) -> list[Spec]:
     """Every spec and plan in the spec folders, the archives left out, that is not settled."""
     rows: list[Spec] = []
-    for folder in layout.for_root(root).dirs:
+    for folder in layout.for_root(root).settling():
         for file in sorted((root / folder).glob("*.md")):
             state = store.status_of(file)
             if state in store.SETTLED:

@@ -33,6 +33,18 @@ are below.
 - **No history in a source file.** "This used to be X" and a landing date belong in the commit
   message or the docs.
 
-A file is new when the base branch (`ah config get harness.baseBranch`) does not hold it.
-`ah comments` checks the budget, and the `comment-budget` hook refuses a write over a block cap
-when the project turns it on.
+A file is new when the base branch (`ah config get harness.baseBranch`) does not hold it. A file
+that git finds renamed from one the base branch holds keeps the caps of its old path. A path
+pattern in `harness.comments.overrides` gives its files their own caps, for example one line per
+block and `maxLineLength` 100 for `**/*.tf`. `harness.comments.exclude` is the exemption
+register: it only shrinks. `ah comments` checks the budget, and the `comment-budget` hook refuses
+a write over a block cap when the project turns it on.
+
+## Errors
+
+- **Fail fast at the boundary.** Validate input and config where they enter. Refuse a bad state
+  early, with a message that names the value and the fix.
+- **Never swallow an error.** No empty `catch`. Handle the error, or let it go up, and log it
+  with its context, such as the host or the id, through the project logger.
+- **Throw a specific error type** where it helps the caller decide what to do.
+- **A failure that a user sees is localized and escaped,** never a raw stack trace.

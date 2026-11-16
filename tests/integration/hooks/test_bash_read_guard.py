@@ -1065,3 +1065,102 @@ def test_reads_a_glob_word_that_program_punctuation_follows(project: Path) -> No
     got = hook_project.verdicts(project, HOOK, commands)
 
     assert list(zip(commands, got, strict=True)) == [(c, "deny") for c in commands]
+
+
+# Each command was refused in a real session and reads no credential file. A quoted regex or jq
+# filter, an `--include=` value, a bracket expression and a parameter expansion name no file.
+SESSION_COMMANDS_ALLOWED = [
+    "jq '.[].name' file.json",
+    "echo ${p%%:*}",
+    "grep -rn x --include=*.json dir",
+    "grep -rn x --include=*.yml dir",
+    "grep -o '[^\"]*' file.json",
+    "ls apps/*/docs",
+    'find dir -not -path "*/skills/*"',
+    "find . -name '**'",
+    'grep -n -A12 "[harness.comments]" harness.toml',
+    "wc -c $H/rules/*.md",
+    "python3 -c \"print(m['hooks'])\"",
+    "grep -o 'hooks/[a-z-]*.[a-z]*' settings.json",
+    "echo $?",
+    "echo ${PIPESTATUS[0]}",
+    "gh api x --jq '.commits[].commit.message'",
+]
+# A glob or a name that can expand to a guarded or secret file is still refused.
+SESSION_TRICKS_REFUSED = [
+    "cat .en?",
+    "cat .env*",
+    "cat vaul?.json",
+    "grep -rh . --include=.env* .",
+    "grep -rh . --include=vault* .",
+    "jq . vault.json",
+]
+# A listing that no pattern bounds hands a reader names the line never shows.
+LISTED_NAMES_REFUSED = [
+    "cat $(ls -a | grep env)",
+    "cat `ls -a | grep env`",
+    "for f in $(ls -a); do cat $f; done",
+    "ls -a | grep env | xargs cat",
+    'ls -a | while read f; do cat "$f"; done',
+    "ls -a | xargs -I{} cat {}",
+    "find . -type f -exec cat {} +",
+    "find . -type f | xargs cat",
+    "find . -not -name '*.md' | xargs cat",
+    "cat $(git ls-files -o)",
+    "fd -H | xargs cat",
+    "cat $(ls docs)",
+]
+# A pattern bounds the names, a count replaces them, and a pipe into a filter reads no file.
+LISTED_NAMES_ALLOWED = [
+    "wc -l $(find . -name '*.py')",
+    "ls docs | grep -c md",
+    'echo "$(ls | wc -l)"; cat file.json',
+    "n=$(ls docs | grep -c md); cat file.json",
+    "find . -name '*.py' -exec wc -l {} +",
+    "cat $(ls docs/*.md)",
+    "cat $(ls file.json)",
+    "git ls-files '*.py' | xargs wc -l",
+    "ls docs 2>/dev/null | head -3; cat file.json",
+    "cat file.json | xargs echo",
+]
+
+
+@pytest.fixture
+def session_tree(tmp_path: Path) -> Path:
+    """A project that guards a JSON roster, with the files the session commands name."""
+    config = '[harness]\nguardedFiles = ["vault.json"]\n'
+    root = hook_project.make_project(tmp_path / "project", config)
+    for name in ("file.json", "harness.toml", "settings.json", "docs/a.md", "apps/x/docs/a.md"):
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text("{}\n", encoding="utf-8")
+    (root / "dir").mkdir()
+    return root
+
+
+@pytest.mark.parametrize(
+    ("commands", "expected"),
+    [
+        (SESSION_COMMANDS_ALLOWED, "silent"),
+        (SESSION_TRICKS_REFUSED, "deny"),
+        (LISTED_NAMES_REFUSED, "deny"),
+        (LISTED_NAMES_ALLOWED, "silent"),
+    ],
+)
+def test_refuses_a_glob_or_listing_only_when_it_can_name_a_credential(
+    commands: list[str], expected: str, session_tree: Path
+) -> None:
+    got = hook_project.verdicts(session_tree, HOOK, commands)
+
+    assert list(zip(commands, got, strict=True)) == [(c, expected) for c in commands]
+
+
+def test_names_the_listing_in_its_deny(session_tree: Path) -> None:
+    done = hook_project.run_hook(
+        session_tree,
+        HOOK,
+        "PreToolUse",
+        hook_project.bash_payload("cat $(ls -a | grep env)", session_tree),
+    )
+
+    assert hook_project.decision(done) == "deny"
+    assert "`ls -a` lists file names, and a reader reads each one" in done.stdout

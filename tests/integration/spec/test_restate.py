@@ -70,3 +70,23 @@ def test_stages_the_new_status_at_the_archive_path(tmp_path: Path) -> None:
     staged = git(root, "show", ":docs/specs/archive/a.md")
     assert staged == "# A\n\nStatus: implemented - `a.py` runs it.\n"
     assert git(root, "diff", "--name-only") == ""
+
+
+def test_refuses_to_archive_a_qa_report(tmp_path: Path) -> None:
+    root = make_repo(tmp_path)
+    (root / ".agents").mkdir()
+    (root / ".agents" / "harness.toml").write_text(
+        '[specs]\ndirs = ["docs/specs", "docs/qa"]\n\n[specs.kinds."docs/qa"]\nkind = "qa"\n',
+        encoding="utf-8",
+    )
+    (root / "docs" / "qa").mkdir()
+    (root / "docs" / "qa" / "r.md").write_text("# R\n\nStatus: tested\n", encoding="utf-8")
+
+    done = ah(root, "docs/qa/r.md", "implemented - done.", "--archive")
+
+    assert done.returncode == 1
+    assert done.stderr == (
+        "ah spec: docs/qa/r.md: docs/qa/ holds QA reports, which are never archived. "
+        "Delete a report that is done.\n"
+    )
+    assert (root / "docs" / "qa" / "r.md").read_text() == "# R\n\nStatus: tested\n"

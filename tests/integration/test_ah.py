@@ -73,6 +73,12 @@ def test_runs_its_own_engine_in_a_repository_without_a_project_install(repo: Pat
     assert done.stdout == "dist\n"
 
 
+def test_prints_a_key_of_the_comment_budget_that_its_module_registers(repo: Path) -> None:
+    done = run_ah(repo, "config", "get", "harness.comments.overrides")
+
+    assert (done.returncode, done.stdout) == (0, "{}\n"), done.stderr
+
+
 def test_runs_its_own_engine_when_the_guard_is_set(repo: Path) -> None:
     install_project_engine(repo)
 

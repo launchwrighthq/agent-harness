@@ -10,6 +10,12 @@ Active statuses are `draft`, `approved`, `in-progress`, `analysis` and `blocked`
 statuses are `implemented`, `superseded-by`, `abandoned` and `answered`. A settled status carries
 its evidence or its successor path on the status line. The renderer refuses any other status.
 
+`specs.kinds` can give a spec folder the kind `qa`, for example `docs/qa/`. That folder holds
+disposable QA reports, rendered by the same renderer with the QA REPORT badge. A QA report takes
+`untested` or `tested`, and no other status. It is never archived: delete a report that is done.
+The audit and the reconcile commands leave the folder out. Keep the folder out of git when the
+reports are scratch notes.
+
 Start a new specification from `.claude/skills/lw-spec-write/skeleton.md` and keep its sections
 in order: numbered subsections, an Exclusions list, a Decisions table (`ID | Decision | Why |
 Rejected`), Risks, Open questions (`ID | Question | Default until answered`), an Amendments
