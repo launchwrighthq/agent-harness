@@ -617,6 +617,27 @@ def test_passes_the_check_after_the_project_adds_a_skill_of_its_own(
     assert checked_again.returncode == 0, checked_again.stdout + checked_again.stderr
 
 
+def test_leaves_out_a_project_skill_that_git_ignores(
+    repo: Path, package: Path, ah: Ah, tmp_path: Path
+) -> None:
+    local = tmp_path / "local-skill"
+    local.mkdir()
+    (local / "SKILL.md").write_text("---\nname: local\ndescription: Local.\n---\n# Local\n")
+    (repo / ".claude/skills").mkdir(parents=True)
+    (repo / ".claude/skills/@local").symlink_to(local, target_is_directory=True)
+    (repo / ".gitignore").write_text(".claude/skills/@*\n")
+
+    installed = ah("install", "--project", FROM, str(package))
+    checked = ah("check")
+
+    assert installed.returncode == 0, installed.stdout + installed.stderr
+    assert not (repo / ".agents/skills/@local").is_symlink()
+    assert "@local" not in (repo / "AGENTS.md").read_text()
+    lock = read_json(repo / ".claude/agent-harness/lock.json")
+    assert not any("@local" in link for link in lock["links"])
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+
+
 def test_lets_a_push_update_the_checkout_of_the_base_branch(
     repo: Path, package: Path, ah: Ah
 ) -> None:

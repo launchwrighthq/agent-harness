@@ -90,6 +90,12 @@ The hooks, the rules and the git hooks are in [docs/hooks.md](docs/hooks.md).
 | `docs/` | One document per area. |
 | `tests/unit/`, `tests/integration/` | The tests. |
 
+## Changes in 0.2.2
+
+A skill folder in `.claude/skills/` that git ignores is no project skill. `ah install` gives it no
+link in `.agents/skills/` and no line in `AGENTS.md`, so a local skill, such as a symlink that a
+session hook writes, never reaches a tracked file. Details: [docs/install.md](docs/install.md).
+
 ## Changes in 0.2.1
 
 0.2.1 merges the changes of 0.2.0 with the changes of 0.1.4 and 0.1.5. It adds no behavior of

@@ -72,15 +72,38 @@ STARTER_CONFIG = """\
 
 
 def list_skill_dirs(root: Path) -> list[str]:
-    """The skill folders in `.claude/skills/` that hold a SKILL.md, sorted."""
+    """The skill folders in `.claude/skills/` that hold a SKILL.md and git keeps, sorted.
+
+    A folder that git ignores is local to one checkout, so the tracked links and the AGENTS.md
+    block never name it.
+    """
     folder = root / SKILL_DIR
     if not folder.is_dir():
         return []
-    return sorted(
+    found = sorted(
         p.name
         for p in folder.iterdir()
         if p.is_dir() and not p.name.startswith(".") and (p / "SKILL.md").is_file()
     )
+    ignored = _ignored(root, [f"{SKILL_DIR}/{name}" for name in found])
+    return [name for name in found if f"{SKILL_DIR}/{name}" not in ignored]
+
+
+def _ignored(root: Path, paths: Sequence[str]) -> set[str]:
+    """The paths of `paths`, relative to `root`, that git ignores. None outside a repository."""
+    if not paths or _git(root, "rev-parse", "--git-dir").returncode != 0:
+        return set()
+    done = subprocess.run(
+        ["git", "-C", str(root), "check-ignore", "--stdin", "-z"],
+        input="".join(f"{p}\0" for p in paths),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    # check-ignore exits 0 when it ignores a path, 1 when it ignores none.
+    if done.returncode not in (0, 1):
+        raise HarnessError(f"git check-ignore failed: {done.stderr.strip()}")
+    return {p for p in done.stdout.split("\0") if p}
 
 
 def _texts(cfg: Config, key: str) -> list[str]:
