@@ -1,6 +1,6 @@
 ---
 name: lw-goal-spec
-description: Use when the user types /lw-goal-spec, or asks to implement a spec until it is fully done, to keep working until the spec is built, or not to stop until it is implemented. Also when the user asks for Codex to review or approve that work. Not for writing a spec or only reporting its status.
+description: Use when the user types /lw-goal-spec, or asks to implement a spec until it is fully done, to keep working until the spec is built, or not to stop until it is implemented. Also when the user asks for Codex to review or approve that work. Builds in a git worktree with an agent workflow, also when the user does not say so. Not for writing a spec or only reporting its status.
 ---
 
 # Build a spec to done
@@ -38,7 +38,7 @@ ah spec goal start --session <session-id> [--level merged|pushed] [--codex] [--b
 - With no spec, the command takes the unsettled spec the session named. Exit 3 prints the
   candidates, numbered: ask the user one question that lists them, then start again with the
   chosen paths. Exit 1 names what is missing.
-- Your first reply line is one plain sentence that names the spec and the level.
+- Your first reply line is one plain sentence that names the spec, the level and the worktree.
 
 `ah spec goal status`, `check` and `clear` take the same `--session`. `status` prints the goal,
 its last verdict and a fresh one. `clear` ends the goal. `/lw-goal-spec status` and
@@ -72,16 +72,24 @@ explicit stop of the user or a higher-priority budget rule.
 
 ## 5. Build
 
-1. Work in a worktree at `.claude/worktrees/<name>`, from the local base branch.
-2. Each agent brief lists the requirement IDs it covers and the IDs it leaves out.
-3. Agents own disjoint files, test files included. Agents commit nothing. The orchestrator
+A bare `/lw-goal-spec` builds this way too. The user does not need to ask for a worktree or a
+workflow.
+
+1. Work in a git worktree at `.claude/worktrees/<name>`, from the local base branch:
+   `ah worktree add <name> --from <base branch>`.
+2. In Claude Code, build with an agent workflow. Load the `workflow-authoring` skill, then call
+   the `Workflow` tool with a script. This skill is the user's opt-in to the workflow. Keep the
+   workflow size guideline of the session. In Codex, start one subagent per task.
+3. Each agent brief names the worktree path, the requirement IDs it covers and the IDs it
+   leaves out.
+4. Agents own disjoint files, test files included. Agents commit nothing. The orchestrator
    commits by path.
-4. The gate command is the gate. Nothing is done before it is green.
-5. Never `git stash`. Never `git add -A`.
-6. Consider every wiring row of the spec: env examples, infrastructure, migrations, docs, the CLI
+5. The gate command is the gate. Nothing is done before it is green.
+6. Never `git stash`. Never `git add -A`.
+7. Consider every wiring row of the spec: env examples, infrastructure, migrations, docs, the CLI
    and the console, and the rows of `<adapterDir>/spec-write/` when it exists. Add a row for each
    one that applies.
-7. Land with the land command at level `merged` or higher.
+8. Land with the land command at level `merged` or higher.
 
 ## 6. A requirement you cannot build
 

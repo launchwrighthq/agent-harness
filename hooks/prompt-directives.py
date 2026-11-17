@@ -39,9 +39,11 @@ HARNESS_MARKERS = (
 
 # A slash or a word character before the slash means a path such as `skills/lw-goal-spec/`.
 # Python's `\w` is a Unicode letter, digit or underscore, so a non-Latin word counts too.
-GOAL_SPEC_RE = re.compile(r"(?<![\w/])/(?:lw-)?goal-spec(?![\w/-])")
+# A quote mark or a backtick before it means the user quotes the command and asks for nothing.
+NOT_A_COMMAND = r"(?<![\w/\"'`])"
+GOAL_SPEC_RE = re.compile(NOT_A_COMMAND + r"/(?:lw-)?goal-spec(?![\w/-])")
 # Not followed by `-`, so `/lw-goal-spec` never also reads as the built-in.
-GOAL_RE = re.compile(r"(?<![\w/])/goal(?![\w/-])")
+GOAL_RE = re.compile(NOT_A_COMMAND + r"/goal(?![\w/-])")
 
 GOAL_WARNING = (
     "The user typed /goal inside a longer message, so no built-in goal is active. "

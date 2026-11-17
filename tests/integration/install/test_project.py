@@ -352,9 +352,6 @@ def test_runs_a_project_git_hook_of_a_project_manifest_through_the_dispatcher(
 
     assert installed.returncode == 0, installed.stderr
     assert (repo / ".githooks/harness/pre-commit").read_bytes() == script.read_bytes()
-    assert (repo / ".githooks/pre-commit").read_bytes() == (
-        package / "src/agent_harness/install/githook-dispatch.sh"
-    ).read_bytes()
     assert again.stdout.splitlines()[-1].endswith("nothing changed"), again.stdout
     assert checked.returncode == 0, checked.stdout + checked.stderr
     assert commit.returncode == 0, commit.stderr

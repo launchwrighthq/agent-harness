@@ -15,7 +15,7 @@ the config keys it reads, the manifest format and the limits of the guards.
 | `bash-read-guard` | PreToolUse (Bash) | Refuses a shell reader (`cat`, `grep`, `sed`, ...) of an env, key or credential file. |
 | `env-drift` | SessionStart | Says when a local env file holds edits that a secret store has not received. |
 | `load-memory` | SessionStart, PreToolUse | Injects the memory index once per session, keyed on the session id. |
-| `prompt-directives` | UserPromptSubmit | Turns prompt flags (`-u`, `-e`, `-d`) and an embedded `/lw-goal-spec` into added context. |
+| `prompt-directives` | UserPromptSubmit | Turns prompt flags (`-u`, `-e`, `-d`) and an embedded `/lw-goal-spec` into added context. A command after a quote mark or a backtick is a quote and adds nothing. |
 | `render-spec` | PostToolUse, Stop | Renders a changed spec to its HTML page (see `docs/spec.md`). |
 | `goal-spec` | Stop | Holds a turn open until the saved spec audit shows zero open rows. |
 | `local-run-guard` | UserPromptSubmit, PreToolUse | Off by default. Keeps tests, lints and builds on a remote runner unless the user asks for a local run. |

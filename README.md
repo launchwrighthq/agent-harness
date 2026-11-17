@@ -90,6 +90,12 @@ The hooks, the rules and the git hooks are in [docs/hooks.md](docs/hooks.md).
 | `docs/` | One document per area. |
 | `tests/unit/`, `tests/integration/` | The tests. |
 
+## Changes in 0.2.3
+
+A bare `/lw-goal-spec` builds in a git worktree, and in Claude Code with an agent workflow. The
+user does not need to ask for either. The `prompt-directives` hook takes a `/lw-goal-spec` or a
+`/goal` after a quote mark or a backtick as a quote, and asks for nothing.
+
 ## Changes in 0.2.2
 
 A skill folder in `.claude/skills/` that git ignores is no project skill. `ah install` gives it no

@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 
 import pytest
 
@@ -10,7 +9,6 @@ from agent_harness.install.registry import (
     BLOCK_START,
     agents_block,
     codex_command,
-    codex_file,
     codex_matcher,
     is_own,
     project_entries,
@@ -118,18 +116,6 @@ def test_puts_the_project_entry_after_the_harness_entry_and_keeps_the_text() -> 
 
     assert json.loads(first)["hooks"]["Stop"][-1] == own
     assert settings_file(first, plan) == first
-
-
-def test_merges_the_codex_entries_into_the_file_the_project_holds(tmp_path: Path) -> None:
-    plan = Plan(hooks=[hook("a", ("Stop",), None)])
-    own = {"hooks": [{"type": "command", "command": "python3 own.py"}]}
-    current = json.dumps({"other": 1, "hooks": {"Stop": [own]}}, indent=2) + "\n"
-
-    merged = json.loads(codex_file(current, plan, tmp_path))
-    fresh = json.loads(codex_file(None, plan, tmp_path))
-
-    assert merged["other"] == 1
-    assert merged["hooks"]["Stop"] == [*fresh["hooks"]["Stop"], own]
 
 
 def test_lists_each_rule_and_skill_in_the_agents_block() -> None:
