@@ -90,6 +90,15 @@ The hooks, the rules and the git hooks are in [docs/hooks.md](docs/hooks.md).
 | `docs/` | One document per area. |
 | `tests/unit/`, `tests/integration/` | The tests. |
 
+## Changes in 0.2.4
+
+`[specs] keep` lists settled documents that stay in their active folder as a living reference.
+`ah spec check` does not ask to archive them, and `lw-spec-reconcile` never moves them. The
+spec-audit skill reports unknown amendments when no session history exists, and gives a missed
+requirement the row ID M1, M2. The work-status skill lists a request that got an answer but no
+action. The core principles add two rules: fix the failures your change causes, and start a new
+subsystem or a contract change with a spec.
+
 ## Changes in 0.2.3
 
 A bare `/lw-goal-spec` builds in a git worktree, and in Claude Code with an agent workflow. The

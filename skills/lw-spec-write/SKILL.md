@@ -66,8 +66,9 @@ folder (`ah config get specs.out`, default `dist`). Keep the page folder out of 
 9. Render the page and check it (section 6).
 
 A draft stays `draft` until the user accepts it. An approved design does not allow a commit, a
-push, a deploy or a real account action by itself. When the user approves a spec, ask whether to
-commit it.
+push, a deploy or a real account action by itself. A request for a spec does not allow you to
+build it. When the user approves a spec, ask whether to commit it, unless the user already
+allowed the commit.
 
 ## 3. The header block
 

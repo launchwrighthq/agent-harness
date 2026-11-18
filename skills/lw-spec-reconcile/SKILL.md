@@ -22,6 +22,9 @@ Age alone is no reason to archive a document. The archive folder holds the settl
 the active folder holds the others. So a document waits to be restated, and the move follows in
 the same change.
 
+A document of `specs.keep` (`ah config get specs.keep`) is a living reference, such as the main
+spec of an application. It stays in its active folder when it is settled. Never move it.
+
 | Settled status | When it applies |
 |---|---|
 | `implemented` | What the document describes is on the base branch. A recon whose client shipped counts. |

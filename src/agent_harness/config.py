@@ -153,6 +153,8 @@ SECTION_DEFAULTS: dict[str, dict[str, Any]] = {
         # The checks that `ah spec check` runs, and the git pathspecs it reads pointers from.
         "checks": ["archive", "superseded", "pointers", "assets"],
         "pointerFiles": ["*.md"],
+        # Settled documents that stay in their active folder as a living reference.
+        "keep": [],
         # Per spec folder: another kind, badge word or status vocabulary.
         "kinds": {},
     },

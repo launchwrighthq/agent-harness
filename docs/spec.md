@@ -21,6 +21,7 @@ The `[specs]` section of `.agents/harness.toml` holds the spec facts. Every key 
 | `kinds` | `{}` | Per spec folder, a table with `kind` (`spec`, `plan` or `qa`), `label` (the badge word) and `statuses` (the vocabulary the renderer accepts). `label` and `statuses` default to those of the kind. The key names a folder of `dirs` or a folder under one, else the config fails and names the key. A folder under a spec folder is a folder of its own, with its own `out` folder and, unless its kind is `qa`, its own `archive` folder: the longest folder that holds a file decides its kind and its page for `render`, `check` and `census`. See [QA reports](#qa-reports). |
 | `checks` | `["archive", "superseded", "pointers", "assets"]` | The checks that `spec check` runs. |
 | `pointerFiles` | `["*.md"]` | The git pathspecs of the files whose spec paths `spec check` resolves. |
+| `keep` | `[]` | Paths of settled documents that stay in their active folder, such as the living reference spec of an application. `spec check` does not ask to archive them and reports a path that names no document of an active folder. `lw-spec-reconcile` never moves them. |
 
 The audit, goal and Codex commands read the base branch from `harness.baseBranch`. `land.sh`
 also reads `harness.gateCommand`. `AGENT_STATE_DIR` overrides `auditDir` for one process.
@@ -90,9 +91,6 @@ A code block loses the indent of its opening fence, so a line in it that looks l
 marker stays code. A paragraph indented under the item after the block stays in the item too.
 A fenced code block in an item refuses a line at or left of the item marker, and the refusal says
 to indent the line under the item text.
-
-The TypeScript renderer of the qa module refuses a block nested in a list item, so a spec that
-nests one renders here and not there.
 
 ## The audit store
 

@@ -9,6 +9,10 @@
   or a value. When you cannot check, say so.
 - **Smallest change that solves it.** Use an existing function before you write a new one, and
   match the style around the change.
+- **Fix the failures that your change causes.** Report a failure that your change did not cause,
+  with its output, and leave it to its owner.
+- **A new subsystem or a contract change starts with a spec.** Write the spec, or revise the one
+  that covers the contract, before the code.
 
 ## Ask before an uncertain change
 

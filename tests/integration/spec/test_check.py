@@ -185,6 +185,41 @@ def test_judges_a_report_by_its_own_kinds_folder_and_not_as_an_asset(tmp_path: P
 QA_CONFIG = '[specs]\ndirs = ["docs/specs", "docs/qa"]\n\n[specs.kinds."docs/qa"]\nkind = "qa"\n'
 
 
+def test_lets_a_kept_reference_spec_stay_settled_in_its_folder(tmp_path: Path) -> None:
+    root = make_repo(
+        tmp_path,
+        {
+            "docs/specs/app.md": doc("implemented - the app runs it."),
+            "docs/specs/old.md": doc("implemented - `a.py` runs it."),
+        },
+        config='[specs]\nkeep = ["docs/specs/app.md"]\n',
+    )
+
+    done = check(root)
+
+    assert done.returncode == 1
+    assert done.stdout == (
+        "docs/specs/old.md: status implemented is settled, so it belongs in docs/specs/archive/\n"
+        "spec check: 1 findings in 2 documents\n"
+    )
+
+
+def test_reports_a_kept_path_that_names_no_document(tmp_path: Path) -> None:
+    root = make_repo(
+        tmp_path,
+        {"docs/specs/a.md": doc("draft")},
+        config='[specs]\nkeep = ["docs/specs/gone.md"]\n',
+    )
+
+    done = check(root)
+
+    assert done.returncode == 1
+    assert done.stdout == (
+        "specs.keep: docs/specs/gone.md is no document of an active spec folder\n"
+        "spec check: 1 findings in 1 documents\n"
+    )
+
+
 def test_leaves_a_qa_folder_out_of_the_archive_check(tmp_path: Path) -> None:
     root = make_repo(
         tmp_path,

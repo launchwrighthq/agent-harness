@@ -49,7 +49,8 @@ account file.
    `running`, then the items the user owes. Oldest first within a state. `Solution` is one clause
    from the spec or the agent's report, or `unknown`. Sections that no agent covers share one
    `not started` row. `Who` is the agent description and short id, `me`, `peer <name>`, or `you`.
-2. One line per unanswered chat item that is not in the table, quoted.
+2. One line per unanswered chat item that is not in the table, quoted. Also one line per request
+   that got an answer but no action: no commit, agent or later step did what it asked.
 3. The Hidden line of the digest.
 4. One line per spec the session named that is unsettled or has an open audit: file name, status,
    audit state. Offer `/lw-spec-audit` for a spec that reads `not audited` or `stale`.

@@ -3,9 +3,10 @@
     ah spec check
 
 `[specs] checks` picks the checks, and any finding exits 1. `archive`: a settled document in an
-active folder, or an unsettled one in the archive. A `qa` folder has no archive, so `archive`
-leaves it out. `superseded`: a `superseded-by` path that does
-not resolve. `pointers`: a spec path in a file of `[specs] pointerFiles` that does not exist.
+active folder, or an unsettled one in the archive. A document of `[specs] keep` is a living
+reference and stays in its active folder when it is settled. A `qa` folder has no archive, so
+`archive` leaves it out. `superseded`: a `superseded-by` path that does not resolve.
+`pointers`: a spec path in a file of `[specs] pointerFiles` that does not exist.
 `assets`: a file in `<folder>/assets/` whose name no document of the folder holds.
 
 A pointer inside an archive is history, and a path with a placeholder is a pattern, so neither
@@ -39,13 +40,18 @@ def status_word(root: Path, name: str) -> str | None:
     return parts[0] if parts else None
 
 
-def archive_findings(root: Path, layout: Layout, docs: Docs) -> list[str]:
-    found: list[str] = []
+def archive_findings(root: Path, layout: Layout, docs: Docs, keep: list[str]) -> list[str]:
+    active = {name for folder in layout.settling() for name in docs[folder]}
+    found = [
+        f"specs.keep: {name} is no document of an active spec folder"
+        for name in keep
+        if name not in active
+    ]
     for folder in layout.settling():
         archive = f"{folder}/{layout.archive}"
         for name in docs[folder]:
             status = status_word(root, name)
-            if status in store.SETTLED:
+            if status in store.SETTLED and name not in keep:
                 found.append(f"{name}: status {status} is settled, so it belongs in {archive}/")
         for name in docs[archive]:
             status = status_word(root, name)
@@ -155,7 +161,7 @@ def findings(root: Path, cfg: config.Config) -> tuple[list[str], int]:
         raise HarnessError(f"specs.checks: unknown check {', '.join(unknown)}")
     docs = tree.documents(root, layout)
     runs: dict[str, Callable[[], list[str]]] = {
-        "archive": lambda: archive_findings(root, layout, docs),
+        "archive": lambda: archive_findings(root, layout, docs, strings(cfg, "specs.keep")),
         "superseded": lambda: superseded_findings(root, layout, docs),
         "pointers": lambda: pointer_findings(root, layout, strings(cfg, "specs.pointerFiles")),
         "assets": lambda: asset_findings(root, layout),

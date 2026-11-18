@@ -28,13 +28,16 @@ ah spec audit digest <spec> [--base <branch>]
 folders of `specs.dirs` and their archives. `--open` adds every unsettled spec. `--json` prints
 data. `--session <id>` adds every spec the session named and the user's later messages as
 amendment candidates. In Codex, pass the paths and the amendments of the current conversation.
+When no session history is available, the amendments are unknown. Say so in the report. An empty
+list of candidates then does not mean "no amendments".
 
 The digest prints the exact base commit, the status, whether git tracks the file, the requirement
 rows, the amendment candidates and the related branches. An explicit Done means row wins over a
 numbered decision or a heading. That fallback for an older spec does not replace a read of the
 whole document. When the rows come from headings, tell the reviewer to judge the build order or
 the phases section first, and the other headings as context. Add a missing requirement to the
-audit. An empty or partial digest cannot prove that a spec is done.
+audit as a row M1, M2, so that its ID cannot clash with an R ID of the digest. An empty or
+partial digest cannot prove that a spec is done.
 
 ## 2. One reviewer per spec
 
@@ -71,7 +74,8 @@ Rules:
 4. Work not on the base branch: commits on a branch only are `branch-only`; changes in a
    worktree that nobody committed are `uncommitted`. The digest names branches and worktrees.
 5. An amendment candidate that changed the scope and has no row becomes a new row: A1, A2.
-   The user's words are its requirement.
+   The user's words are its requirement. A requirement that the spec states and the digest
+   missed becomes a row M1, M2.
 6. `deferred-by-operator` needs the user's words from the digest in `quote`. A deferral by an
    agent, a plan or a brief is `missing`.
 7. `blocked` needs `question`: the one question the user must answer.
