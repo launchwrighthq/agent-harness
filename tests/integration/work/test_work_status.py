@@ -33,8 +33,11 @@ from transcript import (
     assistant_text,
     attachment,
     compact,
+    enqueued,
     human,
     notification,
+    notification_text,
+    peer_prompt,
     queued,
     rec,
     tool_result,
@@ -176,7 +179,7 @@ def test_makes_a_queued_human_message_a_chat_row_typed_while_busy(fx: Projects) 
     assert [c.text for c in d.chat] == ["build the thing", "also rename X please"]
     first, typed = d.chat
     assert (first.typed_while_busy, first.answered) == (False, True)
-    assert (typed.typed_while_busy, typed.answered) == (True, False)
+    assert (typed.typed_while_busy, typed.answered) == (True, True)
     assert typed.at == T0 + timedelta(minutes=2)
     assert [(p.source, p.text, p.answered) for p in d.peers] == [
         ("peer:session-a", "main moved to 1a2b3c4", True)
@@ -913,3 +916,115 @@ def test_reads_a_spec_path_written_inside_the_archive_folder(named: Projects) ->
     d = digest(named, show_all=True)
 
     assert [(s.path, s.status) for s in d.specs_named] == [(archived, "implemented")]
+
+
+def test_reads_a_notification_from_the_queue_and_from_a_queued_attachment(fx: Projects) -> None:
+    first = notification_text(AGENT_A, result="Built.")
+    fx.write(
+        SLUG,
+        [
+            human(0, "go"),
+            *agent_spawn(1, "t1", AGENT_A, "Build the loader", "build it"),
+            *agent_spawn(2, "t2", AGENT_B, "Review the loader", "review it"),
+            enqueued(3, first),
+            queued(4, first, None),
+            queued(5, notification_text(AGENT_B, status="failed", result="Red."), None),
+        ],
+    )
+
+    by_id = {row.task_id: row for row in digest(fx).agents}
+
+    a, b = by_id[AGENT_A], by_id[AGENT_B]
+    assert (a.state, a.report, a.notifications) == ("reported", "Built.", 1)
+    assert (b.state, b.report) == ("failed", "Red.")
+
+
+def test_ends_an_agent_whose_subagent_file_ends_its_turn(fx: Projects) -> None:
+    fx.write(SLUG, [human(0, "go"), *agent_spawn(1, "t1", AGENT_A, "Audit A", "read A")])
+    fx.subagent(SLUG, AGENT_A, "Audit A", "read A", "SAFE", stop_reason="end_turn")
+    fx.subagent(SLUG, AGENT_B, "Audit B", "read B", "No findings.", stop_reason="end_turn")
+    fx.subagent(SLUG, AGENT_C, "Audit C", "read C", "Reading.", stop_reason="tool_use")
+
+    by_id = {row.task_id: row for row in digest(fx).agents}
+
+    assert [(by_id[i].state, by_id[i].report) for i in (AGENT_A, AGENT_B, AGENT_C)] == [
+        ("reported", "SAFE"),
+        ("reported", "No findings."),
+        ("running", "Reading."),
+    ]
+
+
+def test_reads_a_peer_message_filed_as_a_meta_user_record(fx: Projects) -> None:
+    fx.write(
+        SLUG,
+        [
+            human(0, "go"),
+            assistant_text(1, "working"),
+            peer_prompt(2, "release", "Hold every landing."),
+            assistant_text(3, "holding"),
+        ],
+    )
+
+    d = digest(fx)
+
+    assert [c.text for c in d.chat] == ["go"]
+    assert [(p.source, p.text, p.answered) for p in d.peers] == [
+        ("peer:release", "Hold every landing.", True)
+    ]
+
+
+def test_counts_a_reply_after_a_peer_message_for_the_prompt_before_it(fx: Projects) -> None:
+    fx.write(
+        SLUG,
+        [
+            human(0, "land it and push"),
+            queued(1, "peer text", {"kind": "peer", "name": "release", "body": "Hold."}),
+            assistant_text(2, "landed and pushed"),
+            human(3, "next"),
+        ],
+    )
+
+    chat = digest(fx).chat
+
+    assert [(c.text, c.answered) for c in chat] == [("land it and push", True), ("next", False)]
+
+
+def test_joins_a_prompt_cut_by_an_interrupt_to_the_one_after_it(fx: Projects) -> None:
+    fx.write(
+        SLUG,
+        [
+            human(0, "make the goal skill build in a worktree"),
+            human(1, "[Request interrupted by user]"),
+            human(2, "merge to local main after"),
+            assistant_text(3, "done and merged"),
+        ],
+    )
+
+    chat = digest(fx).chat
+
+    assert [(c.text, c.answered) for c in chat] == [
+        ("make the goal skill build in a worktree", True),
+        ("merge to local main after", True),
+    ]
+
+
+def test_names_no_spec_from_the_body_of_an_edit_or_a_write(fx: Projects) -> None:
+    body = f"fixture names {SPECS}/2026-09-07-gone-design.md"
+    fx.write(
+        SLUG,
+        with_cwd(
+            fx,
+            [
+                human(0, "go"),
+                tool_use(1, "t1", "Read", {"file_path": f"{SPECS}/2026-09-05-draft-design.md"}),
+                tool_use(
+                    2, "t2", "Edit", {"file_path": "t.py", "old_string": "x", "new_string": body}
+                ),
+                tool_use(3, "t3", "Write", {"file_path": "u.py", "content": body}),
+            ],
+        ),
+    )
+
+    names = [s.basename for s in digest(fx).specs_named]
+
+    assert names == ["2026-09-05-draft-design.md"]

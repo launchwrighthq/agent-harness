@@ -90,6 +90,15 @@ The hooks, the rules and the git hooks are in [docs/hooks.md](docs/hooks.md).
 | `docs/` | One document per area. |
 | `tests/unit/`, `tests/integration/` | The tests. |
 
+## Changes in 0.2.5
+
+`ah work-status` reads the transcript records of the current Claude Code. A finish notification
+in a queued attachment or a queue record now ends its agent, an agent whose own file ends its turn
+counts as finished, and a peer message filed as a meta user record reaches the Peers section. A
+peer message no longer takes the reply from the request before it, an interrupted request takes
+the answer of the next message, and the body of an Edit or Write call names no spec. Details:
+[docs/work.md](docs/work.md).
+
 ## Changes in 0.2.4
 
 `[specs] keep` lists settled documents that stay in their active folder as a living reference.

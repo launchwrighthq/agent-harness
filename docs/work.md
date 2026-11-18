@@ -24,12 +24,20 @@ An answer from the memory of a session loses work in three ways.
 
 The files under `~/.claude/projects` keep all three, so the digest reads them.
 
+The client files one event in more than one record type, and the types change between client
+versions. A finish notification can be a user record, a `queued_command` attachment, or only the
+`enqueue` record of the queue. The digest reads all three and counts each notification text once.
+A peer message is a `queued_command` attachment while the session is busy, and a user record with
+`isMeta` and an `origin` of kind `peer` while it is idle. An agent that another agent or a workflow
+started notifies its parent only, so its own file decides its state: a file that ends in an
+assistant record with `stop_reason` `end_turn` is a finished agent.
+
 ### Sources
 
 | Source | What the digest takes from it |
 |---|---|
 | `~/.claude/projects/*/<session>.jsonl` | Every file of the session, merged by time. A session that enters a worktree writes under a second folder. |
-| `~/.claude/projects/*/<session>/subagents/agent-<id>.jsonl` | The report of each agent: its last assistant text. |
+| `~/.claude/projects/*/<session>/subagents/agent-<id>.jsonl` | The report of each agent: its last assistant text. A file that ends its turn marks the agent finished. |
 | The spec folders of `specs.dirs` and their archives | The `Status:` and the numbered sections of each spec that the session named. |
 | `<auditDir>/spec-audit/<stem>.json` | The audit state of each spec that the session named. |
 | `git` in each agent worktree | Whether the agent landed a commit during its run, and whether the worktree is dirty. |
@@ -49,7 +57,7 @@ only in a worktree of the repository that the digest reports on, with `core.fsmo
 | Specs named | One row per spec or plan path named: file name, status (`missing` with no file), first and last mention, audit state. |
 | Agents | One row per `Agent` spawn: short id, description, model, section, worktree, state, last seen, report. |
 | Background | One row per background command or workflow: description, state, exit code. |
-| Chat | Each human prompt and each typed-while-busy message, flagged `unanswered` when no assistant text followed it. |
+| Chat | Each human prompt and each typed-while-busy message, flagged `unanswered` when no assistant text followed it before the next human message. A peer message does not end that window. A request that the user interrupted (`[Request interrupted by user]`) and went on with takes the answer of the next message. |
 | Peers | Each message from a peer session. |
 | Hidden | How many finished rows the window hides, and the flags that show them. |
 

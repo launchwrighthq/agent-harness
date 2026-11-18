@@ -40,6 +40,9 @@ ALL_DONE = "all done"
 # section may fold it into one count line. Every other state keeps its own line.
 FOLDABLE_AUDITS = (ALL_DONE, NOT_AUDITED)
 
+# The client files an interrupt as a user record. The next prompt carries the request.
+INTERRUPT = "[Request interrupted by user"
+
 # Claude Code files slash commands, their output, agent notifications and the user's own shell
 # commands with their output as user records too. A prompt opening with one is not a request,
 # and shell output can echo a token, so the digest drops it.
@@ -53,7 +56,11 @@ CHAT_MARKERS = (
     "<local-command-stderr>",
     "<local-command-caveat>",
     "<system-reminder>",
+    INTERRUPT,
 )
+
+# The body of a file edit or write is file text. A spec path in test code names no spec.
+BODY_KEYS = frozenset({"content", "old_string", "new_string", "edits", "new_source"})
 
 # The time a record carries when it has none of its own and nothing precedes it.
 NO_TIME = datetime.min.replace(tzinfo=UTC)
@@ -415,6 +422,7 @@ def chat_rows(records: list[Record]) -> list[ChatRow]:
     is how a request goes missing.
     """
     seeds: list[tuple[int, datetime, str, str, bool]] = []
+    peers_seen: set[str] = set()
     for index, record in enumerate(records):
         at = record.get("_ts")
         if at is None:
@@ -423,37 +431,70 @@ def chat_rows(records: list[Record]) -> list[ChatRow]:
             text = excerpt(text_of((record.get("message") or {}).get("content")))
             seeds.append((index, at, text, "human", False))
             continue
-        if record.get("type") != "attachment":
+        # A peer message that finds the session idle is a meta user record with its origin.
+        # One that finds it busy is a queued attachment.
+        if record.get("type") == "user":
+            origin, prompt = record.get("origin") or {}, None
+        elif record.get("type") == "attachment":
+            attachment = record.get("attachment") or {}
+            if attachment.get("type") != "queued_command":
+                continue
+            origin, prompt = attachment.get("origin") or {}, attachment.get("prompt")
+            if text_of(prompt).strip().startswith(CHAT_MARKERS):
+                continue
+            if origin.get("kind") == "human":
+                seeds.append((index, at, _queued_text(prompt), "human", True))
+                continue
+        else:
             continue
-        attachment = record.get("attachment") or {}
-        if attachment.get("type") != "queued_command":
+        if origin.get("kind") != "peer":
             continue
-        origin = attachment.get("origin") or {}
-        if text_of(attachment.get("prompt")).strip().startswith(CHAT_MARKERS):
+        body = origin.get("body") or prompt
+        key = str(origin.get("msg_id") or text_of(body))
+        if key in peers_seen:
             continue
-        if origin.get("kind") == "human":
-            seeds.append((index, at, _queued_text(attachment.get("prompt")), "human", True))
-        elif origin.get("kind") == "peer":
-            body = origin.get("body") or attachment.get("prompt")
-            seeds.append(
-                (index, at, _queued_text(body), f"peer:{origin.get('name') or '?'}", False)
-            )
+        peers_seen.add(key)
+        seeds.append((index, at, _queued_text(body), f"peer:{origin.get('name') or '?'}", False))
 
-    rows: list[ChatRow] = []
-    for position, (index, at, text, source, typed_while_busy) in enumerate(seeds):
-        # Answered means a reply landed before the next message, so each row's window ends
-        # where the next one starts, and the last row's window runs to the end.
-        end = seeds[position + 1][0] if position + 1 < len(seeds) else len(records)
-        rows.append(
-            ChatRow(
-                at=at,
-                text=text,
-                source=source,
-                typed_while_busy=typed_while_busy,
-                answered=_answered_between(records, index + 1, end),
-            )
+    return [
+        ChatRow(at=at, text=text, source=source, typed_while_busy=busy, answered=answered)
+        for (_, at, text, source, busy), answered in zip(
+            seeds, _answers(records, seeds), strict=True
         )
-    return rows
+    ]
+
+
+def _answers(
+    records: list[Record], seeds: list[tuple[int, datetime, str, str, bool]]
+) -> list[bool]:
+    """Whether a reply followed each message before the next human message.
+
+    A peer message that arrives mid-turn does not end the window, so it cannot take the reply
+    from the user's request before it. A request that the user interrupted and went on with
+    takes the answer of the message after the interrupt.
+    """
+    humans = [seed[0] for seed in seeds if seed[3] == "human"]
+    answered: list[bool] = []
+    for start in (seed[0] for seed in seeds):
+        later = [index for index in humans if index > start]
+        end = later[0] if later else len(records)
+        while (
+            not _answered_between(records, start + 1, end)
+            and later
+            and _interrupted_between(records, start + 1, end)
+        ):
+            start, later = later[0], later[1:]
+            end = later[0] if later else len(records)
+        answered.append(_answered_between(records, start + 1, end))
+    return answered
+
+
+def _interrupted_between(records: list[Record], start: int, end: int) -> bool:
+    return any(
+        record.get("type") == "user"
+        and text_of((record.get("message") or {}).get("content")).strip().startswith(INTERRUPT)
+        for record in records[start:end]
+    )
 
 
 def _worktree_named(prompt: str) -> str | None:
@@ -564,23 +605,36 @@ def _read_json(path: Path) -> Record:
     return loaded if isinstance(loaded, dict) else {}
 
 
-def _subagent_report(path: Path) -> str:
-    """The last thing a subagent said, which is its report.
-    An async Agent call answers with an id alone, so the report is here or in a notification."""
-    for record in reversed(load_records([path])):
+def _subagent_end(path: Path) -> tuple[str, datetime | None]:
+    """The last thing a subagent said, which is its report, and the time its turn ended.
+
+    An async Agent call answers with an id alone, so the report is here or in a notification.
+    An agent that another agent or a workflow started sends its notification to that parent,
+    never to this session, so the end of its own file is the only proof that it stopped.
+    """
+    records = [r for r in load_records([path]) if r.get("type") in ("assistant", "user")]
+    last = records[-1] if records else {}
+    message = last.get("message") or {}
+    ended = (
+        last.get("_ts")
+        if last.get("type") == "assistant" and message.get("stop_reason") == "end_turn"
+        else None
+    )
+    for record in reversed(records):
         if record.get("type") != "assistant":
             continue
         text = text_of((record.get("message") or {}).get("content"))
         if text.strip():
-            return first_line(text)
-    return ""
+            return first_line(text), ended
+    return "", ended
 
 
 def _adopt_subagent_files(
     rows: list[TaskRow], by_task: dict[str, TaskRow], dirs: list[Path]
 ) -> None:
     """Compaction can drop a spawn while its agent's files survive. A file with no row becomes one.
-    A file is read only for a row with no report, because a long session leaves hundreds."""
+    A file is read only for a row with no report or still running, because a long session
+    leaves hundreds."""
     for directory in dirs:
         for path in sorted(directory.glob("agent-*.jsonl")):
             agent_id = path.stem.removeprefix("agent-")
@@ -593,8 +647,13 @@ def _adopt_subagent_files(
                 row.agent_type = meta.get("agentType")
                 rows.append(row)
                 by_task[agent_id] = row
-            if not row.report:
-                row.report = _subagent_report(path)
+            if row.report and row.state != "running":
+                continue
+            report, ended = _subagent_end(path)
+            row.report = row.report or report
+            if row.state == "running" and ended is not None:
+                row.state = "reported"
+                row.last_seen = ended
 
 
 def task_rows(
@@ -610,6 +669,7 @@ def task_rows(
     by_tool_use: dict[str, TaskRow] = {}
     by_task: dict[str, TaskRow] = {}
     stopped: set[str] = set()
+    notices: set[str] = set()
 
     for record in records:
         at = record.get("_ts", NO_TIME)
@@ -651,34 +711,61 @@ def task_rows(
                 if isinstance(spawned_id, str):
                     row.task_id = spawned_id
                     by_task[spawned_id] = row
-            for chunk in NOTIFICATION_BLOCK_RE.finditer(text_of(content)):
-                tags = dict(NOTIFICATION_RE.findall(chunk.group(1)))
-                task_id = tags.get("task-id")
-                if not task_id:
-                    continue
-                row = by_task.get(task_id)
-                if row is None:
-                    kind_of_id = "agent" if AGENT_ID_RE.match(task_id) else "background"
-                    row = _task_row(kind_of_id, tags.get("summary", ""), at)
-                    row.task_id = task_id
-                    rows.append(row)
-                    by_task[task_id] = row
-                if task_id in stopped:
-                    row.state = "stopped"
-                _notified(row, tags, at)
         elif kind == "attachment":
             attachment = record.get("attachment") or {}
-            if attachment.get("type") != "task_status":
-                continue
             row = by_task.get(str(attachment.get("taskId")))
-            if row is None:
+            if attachment.get("type") == "task_status" and row is not None:
+                row.last_seen = at
+                if attachment.get("status") == "running" and attachment.get("deltaSummary"):
+                    row.report = excerpt(attachment["deltaSummary"])
+        for chunk in NOTIFICATION_BLOCK_RE.finditer(_notice_text(record)):
+            notice = chunk.group(0).strip()
+            if notice in notices:
                 continue
-            row.last_seen = at
-            if attachment.get("status") == "running" and attachment.get("deltaSummary"):
-                row.report = excerpt(attachment["deltaSummary"])
+            notices.add(notice)
+            _fold_notice(chunk.group(1), at, rows, by_task, stopped)
 
     _adopt_subagent_files(rows, by_task, subagent_dirs)
     return rows
+
+
+def _notice_text(record: Record) -> str:
+    """The text that can carry a `<task-notification>`. The client files one in a user record,
+    in a queued attachment while the session is busy, or only in the queue record of its
+    enqueue. One notice often appears in two of them, so the caller counts each text once."""
+    kind = record.get("type")
+    if kind == "user":
+        return text_of((record.get("message") or {}).get("content"))
+    if kind == "attachment":
+        attachment = record.get("attachment") or {}
+        queued = attachment.get("type") == "queued_command"
+        return text_of(attachment.get("prompt")) if queued else ""
+    if kind == "queue-operation" and record.get("operation") == "enqueue":
+        return text_of(record.get("content"))
+    return ""
+
+
+def _fold_notice(
+    body: str,
+    at: datetime,
+    rows: list[TaskRow],
+    by_task: dict[str, TaskRow],
+    stopped: set[str],
+) -> None:
+    tags = dict(NOTIFICATION_RE.findall(body))
+    task_id = tags.get("task-id")
+    if not task_id:
+        return
+    row = by_task.get(task_id)
+    if row is None:
+        kind_of_id = "agent" if AGENT_ID_RE.match(task_id) else "background"
+        row = _task_row(kind_of_id, tags.get("summary", ""), at)
+        row.task_id = task_id
+        rows.append(row)
+        by_task[task_id] = row
+    if task_id in stopped:
+        row.state = "stopped"
+    _notified(row, tags, at)
 
 
 def spec_mentions(
@@ -697,7 +784,9 @@ def spec_mentions(
         if record.get("type") == "assistant":
             blocks = content if isinstance(content, list) else []
             spoken = [text_of(content)] + [
-                json.dumps(block.get("input") or {})
+                json.dumps(
+                    {k: v for k, v in (block.get("input") or {}).items() if k not in BODY_KEYS}
+                )
                 for block in blocks
                 if isinstance(block, dict) and block.get("type") == "tool_use"
             ]

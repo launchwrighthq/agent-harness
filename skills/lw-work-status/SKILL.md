@@ -68,7 +68,7 @@ empty.
 | `merged` | The tip of its worktree is on the base branch. |
 | `stopped` | `TaskStop` was called. |
 | `failed` | A failed notification or a non-zero exit. |
-| `unanswered` | A chat row that no assistant text followed. |
+| `unanswered` | A chat row that no assistant text followed before the next human message. |
 
 ## Mistakes
 

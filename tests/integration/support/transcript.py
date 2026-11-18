@@ -63,6 +63,20 @@ def attachment(minutes: int, att: dict[str, Any]) -> Record:
     return rec("attachment", minutes, attachment=att)
 
 
+def notification_text(
+    task_id: str,
+    status: str = "completed",
+    summary: str = 'Agent "x" finished',
+    result: str = "Done.",
+) -> str:
+    return (
+        "<task-notification>\n"
+        f"<task-id>{task_id}</task-id>\n<tool-use-id>toolu_x</tool-use-id>\n"
+        f"<status>{status}</status>\n<summary>{summary}</summary>\n"
+        f"<result>{result}</result>\n</task-notification>"
+    )
+
+
 def notification(
     minutes: int,
     task_id: str,
@@ -70,13 +84,25 @@ def notification(
     summary: str = 'Agent "x" finished',
     result: str = "Done.",
 ) -> Record:
-    text = (
-        "<task-notification>\n"
-        f"<task-id>{task_id}</task-id>\n<tool-use-id>toolu_x</tool-use-id>\n"
-        f"<status>{status}</status>\n<summary>{summary}</summary>\n"
-        f"<result>{result}</result>\n</task-notification>"
+    return human(minutes, notification_text(task_id, status, summary, result))
+
+
+def enqueued(minutes: int, content: str) -> Record:
+    """A message the client queued while the session was busy, before it delivered it."""
+    return rec("queue-operation", minutes, operation="enqueue", content=content)
+
+
+def peer_prompt(minutes: int, name: str, body: str) -> Record:
+    """A peer message delivered while the session was idle: a meta user record with its origin."""
+    text = f'Another Claude session sent a message:\n<cross-session-message from-name="{name}">'
+    return rec(
+        "user",
+        minutes,
+        userType="external",
+        isMeta=True,
+        origin={"kind": "peer", "name": name, "body": body},
+        message={"role": "user", "content": f"{text}\n{body}\n</cross-session-message>"},
     )
-    return human(minutes, text)
 
 
 def compact(minutes: int) -> Record:
@@ -137,7 +163,13 @@ class Projects:
         return path
 
     def subagent(
-        self, slug: str, agent_id: str, description: str, prompt: str, report: str
+        self,
+        slug: str,
+        agent_id: str,
+        description: str,
+        prompt: str,
+        report: str,
+        stop_reason: str | None = None,
     ) -> None:
         folder = self.projects / slug / SID / "subagents"
         folder.mkdir(parents=True, exist_ok=True)
@@ -154,7 +186,11 @@ class Projects:
                 "type": "assistant",
                 "agentId": agent_id,
                 "timestamp": ts(1),
-                "message": {"role": "assistant", "content": [{"type": "text", "text": report}]},
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": report}],
+                    "stop_reason": stop_reason,
+                },
             },
         ]
         text = "".join(json.dumps(row) + "\n" for row in rows)
