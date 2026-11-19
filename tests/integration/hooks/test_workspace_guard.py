@@ -691,3 +691,32 @@ def test_refuses_a_worktree_path_or_move_target_through_a_link(
     got = hook_project.verdicts(project, HOOK, commands, worktrees[0])
 
     assert got == ["deny", "deny", "silent"]
+
+
+def test_lets_a_session_change_a_worktree_that_it_owns_from_another_checkout(
+    tmp_path: Path, project: Path, worktrees: tuple[Path, Path]
+) -> None:
+    own, peer = worktrees
+    marker = Path(
+        subprocess.run(
+            ["git", "-C", str(own), "rev-parse", "--absolute-git-dir"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    )
+    (marker / "lw-owner").write_text("session-a\n", encoding="utf-8")
+    other = hook_project.make_project(tmp_path / "other")
+    commits = [
+        f"git -C {own} commit --allow-empty -m x",
+        f"git -C {peer} commit --allow-empty -m x",
+    ]
+
+    got = [
+        hook_project.verdicts(project, HOOK, commits, project, "session-a"),
+        hook_project.verdicts(project, HOOK, commits[:1], project, "session-b"),
+        hook_project.verdicts(project, HOOK, commits[:1], project),
+        hook_project.verdicts(other, HOOK, [f"git -C {project} commit -m x"], other, "session-a"),
+    ]
+
+    assert got == [["silent", "deny"], ["deny"], ["deny"], ["deny"]]

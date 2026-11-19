@@ -540,3 +540,18 @@ def test_checks_the_folders_of_the_dirs_setting_by_default(repo: Path) -> None:
     assert (folder / ".env.local").read_text(encoding="utf-8") == (
         "# Api\nAPI_A=a-value-2\nAPI_B=b-value-1\n"
     )
+
+
+def test_copies_a_key_into_a_folder_of_the_write_roots(repo: Path, tmp_path: Path) -> None:
+    scratch = tmp_path / "scratch-a"
+    scratch.mkdir()
+    (repo / ".agents").mkdir()
+    (repo / ".agents" / "harness.toml").write_text(
+        f'[env]\nwriteRoots = ["{tmp_path}/scratch-*"]\n', encoding="utf-8"
+    )
+    run = Run(repo)
+
+    assert run("copy", "APP_TOKEN", ".env.local", str(scratch / ".env.fleet")) == 0
+
+    assert f"APP_TOKEN={TOKEN}" in (scratch / ".env.fleet").read_text(encoding="utf-8")
+    assert TOKEN not in run.text()

@@ -74,7 +74,7 @@ Run each command as `python3 .claude/agent-harness/bin/ah <command>` in a projec
 | `ah deploy-status` | Prints the verdict of the last deploy, its phases and what each target serves. It only reads. | [docs/deploy.md](docs/deploy.md) |
 | `ah work-status [--repo]` | Reports the work in progress from transcripts, git and saved audits. `--repo` reads git and the store alone. | [docs/work.md](docs/work.md) |
 | `ah branch-audit` | Judges what each worktree, branch and stray folder holds that the base lacks, and prints a prune plan. `--apply --only <ids>` runs the rows the user names. | [docs/work.md](docs/work.md) |
-| `ah worktree add <name> [--from <ref>]` and `ah worktree remove <name>` | Adds `.claude/worktrees/<name>` of the main checkout on the new branch `<name>` (from `harness.baseBranch`, or `<ref>`) and prints its path. Removes a clean worktree of this repository and keeps its branch. Neither takes a path. | [docs/hooks.md](docs/hooks.md) |
+| `ah worktree add <name> [--from <ref>]`, `ah worktree remove <name>` and `ah worktree claim <name>` | Adds `.claude/worktrees/<name>` of the main checkout on the new branch `<name>` (from `harness.baseBranch`, or `<ref>`), records the agent session that made it, and prints its path. Removes a clean worktree of this repository and keeps its branch. Claims a worktree that has no owner for this session. None takes a path. | [docs/hooks.md](docs/hooks.md) |
 | `ah land-results files\|unaccounted <log>` | Prints the failed files or the unaccounted steps of the `verify: failures <json>` record in a gate log, for `lw-land`. | [docs/hooks.md](docs/hooks.md) |
 
 The hooks, the rules and the git hooks are in [docs/hooks.md](docs/hooks.md).
@@ -89,6 +89,16 @@ The hooks, the rules and the git hooks are in [docs/hooks.md](docs/hooks.md).
 | `hooks/`, `skills/`, `rules/`, `githooks/`, `codex/` | The installed content and the Codex hook adapter. |
 | `docs/` | One document per area. |
 | `tests/unit/`, `tests/integration/` | The tests. |
+
+## Changes in 0.2.8
+
+`ah worktree add` records the agent session that made a worktree, and `ah worktree claim <name>`
+records it for a worktree that has no owner. `workspace-guard` lets that session change its own
+worktree from any checkout, also in a repository of `harness.workspace.repos`. A peer worktree and
+a main checkout stay refused. A hook of a worktree install runs the main checkout's copy when
+that install is newer, so an old branch never keeps old guards. `ah env` may write into the
+folders of `[env] writeRoots`, by default the agent scratch folders. Details:
+[docs/hooks.md](docs/hooks.md) and [docs/env.md](docs/env.md).
 
 ## Changes in 0.2.7
 

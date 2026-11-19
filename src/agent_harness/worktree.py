@@ -1,9 +1,10 @@
-"""`ah worktree add <name> [--from <ref>]` and `ah worktree remove <name>`.
+"""`ah worktree add <name> [--from <ref>]`, `ah worktree remove <name>`, `ah worktree claim <name>`.
 
 A worktree of a repository goes in `<main checkout>/.claude/worktrees/<name>`, on a new branch
 with the same name (`.claude/rules/lw/git-workflow.md`). `add` makes one from the base branch, or
-from `--from <ref>`, and prints its path. `remove` removes a clean worktree of this repository
-and keeps its branch. Neither takes a path, so neither can put a worktree anywhere else.
+from `--from <ref>`, records the agent session that made it, and prints its path. `remove`
+removes a clean worktree of this repository and keeps its branch. `claim` records this session as
+the owner of a worktree that has none. None takes a path, so none can reach another folder.
 """
 
 from __future__ import annotations
@@ -65,6 +66,46 @@ def add(cwd: Path, name: str, ref: str | None) -> Path:
         raise HarnessError(f"the branch {name} exists. Pick another name.")
     start = ref or str(config.load(root).get("harness.baseBranch"))
     _must(root, "worktree", "add", "--quiet", "-b", name, str(folder), start)
+    if session := session_id():
+        owner_file(folder).write_text(session + "\n", encoding="utf-8")
+    return folder
+
+
+# The file in the private Git folder of a worktree that names the agent session that made it.
+# workspace-guard lets that session change the worktree, also from another checkout.
+OWNER = "lw-owner"
+
+
+def session_id() -> str | None:
+    """The id of the agent session this command runs in: Claude Code, then Codex."""
+    return os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("CODEX_THREAD_ID") or None
+
+
+def owner_file(folder: Path) -> Path:
+    return Path(_must(folder, "rev-parse", "--absolute-git-dir")) / OWNER
+
+
+def claim(cwd: Path, name: str) -> Path:
+    """Record this session as the owner of the worktree `<main>/.claude/worktrees/<name>`.
+
+    A worktree made with plain `git worktree add` has no owner. One that another session owns
+    stays with it.
+    """
+    check_name(name)
+    session = session_id()
+    if session is None:
+        raise HarnessError("no agent session id: CLAUDE_CODE_SESSION_ID and CODEX_THREAD_ID unset")
+    root = main_checkout(cwd)
+    folder = root / WORKTREES / name
+    if folder.resolve() not in [path.resolve() for path in _worktrees(root)]:
+        raise HarnessError(f"{folder} is no worktree of this repository ({root}).")
+    marker = owner_file(folder)
+    held = marker.read_text(encoding="utf-8").strip() if marker.exists() else ""
+    if held and held != session:
+        raise HarnessError(
+            f"{folder} belongs to the session {held}. Work in a worktree of your own."
+        )
+    marker.write_text(session + "\n", encoding="utf-8")
     return folder
 
 
@@ -108,10 +149,15 @@ def main(argv: list[str]) -> int:
     made.add_argument("--from", dest="ref", help="the start point (default: harness.baseBranch)")
     gone = sub.add_parser("remove", help="remove the clean worktree <name>; its branch stays")
     gone.add_argument("name")
+    owned = sub.add_parser("claim", help="record this session as the owner of the worktree <name>")
+    owned.add_argument("name")
     args = parser.parse_args(argv)
     cwd = Path.cwd()
     if args.action == "add":
         print(add(cwd, args.name, args.ref))
+        return 0
+    if args.action == "claim":
+        print(f"{claim(cwd, args.name)} belongs to this session")
         return 0
     folder, branch = remove(cwd, args.name)
     print(f"removed {folder}; the branch {branch} stays")

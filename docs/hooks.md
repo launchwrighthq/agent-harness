@@ -45,6 +45,14 @@ installed hook sits three levels below the project root. Neither the payload nor
 `CLAUDE_PROJECT_DIR` can move it. A shell hook reads a config value with
 `python3 ../bin/ah config get <key>`, run from its own folder, and only when it needs the value.
 
+A worktree keeps the harness that its branch held when it was made. When a Python hook starts
+from the install of a linked worktree and the main checkout's install records a newer version in
+its `lock.json`, the hook runs the main checkout's copy of itself instead (`agent_harness.fresh`).
+So a harness update reaches every session at once, and an old branch never runs old guards. The
+main checkout comes from the worktree's `.git` file, with no git command. The hand-over sets
+`AH_HOOK_FROM_MAIN`, so it happens at most once. A worktree made before 0.2.8 lacks this code:
+merge the base branch into it once.
+
 A guard prints a PreToolUse `deny` or `ask`, or prints nothing. An `allow` from a PreToolUse hook
 would bypass the permission rules, so no guard prints one. Only an env engine step that can put
 a value in the context gets an `ask` (see below). Nothing shows that Codex honors an `ask`, so
@@ -228,6 +236,13 @@ python3 .claude/agent-harness/bin/ah worktree remove fix-login
 that exists. It prints the path of the new worktree. `remove` refuses a folder that is no
 worktree of this repository, a worktree with a changed or untracked file, and the worktree that
 the command runs in. It keeps the branch: the `lw-branch-audit` skill decides about the branch.
+
+`add` records the session that made the worktree in `lw-owner` of its private Git folder, from
+`CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`. `claim <name>` records the session for a worktree
+that has no owner, such as one that plain `git worktree add` made, and refuses one that another
+session owns. `workspace-guard` lets a session change a worktree that it owns from any checkout,
+in this repository or in one of `harness.workspace.repos`. Every other worktree and every main
+checkout stays refused. A git change in the scratchpad or another unlisted folder stays refused.
 
 ## Git configuration in an agent command
 

@@ -3,6 +3,8 @@ names."""
 
 from __future__ import annotations
 
+import glob
+import os
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -174,10 +176,17 @@ class Context:
                     "or .env.<name>, and refuses a backup, a temp file or a push marker."
                 )
         bases = [base.resolve() for base in (self.root, self.main_checkout) if base is not None]
-        if not any(real.is_relative_to(base) for base in bases):
+        roots = [
+            Path(found).resolve()
+            for pattern in self.settings.get("writeRoots") or []
+            for found in glob.glob(os.path.expanduser(str(pattern)))
+            if os.path.isdir(found)
+        ]
+        if not any(real.is_relative_to(base) for base in bases + roots):
             raise HarnessError(
                 f"{self.show(path)} resolves to {real}, outside the repository root "
-                f"{bases[0]}. ah env writes only inside the repository."
+                f"{bases[0]} and the folders of env.writeRoots. ah env writes only inside the "
+                "repository."
             )
         return path
 

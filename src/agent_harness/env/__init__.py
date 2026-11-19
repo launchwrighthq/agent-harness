@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
+
 from agent_harness import config
 
 config.register_defaults(
@@ -52,6 +55,9 @@ config.register_defaults(
             *("*_DRIVER", "*_DRIVERS", "*_REGION", "*_BUCKET", "*_HOST", "*_PORT"),
             *("*_MODE", "*_LEVEL", "*_ENDPOINT_URL", "NODE_ENV", "APP_ENV"),
         ],
+        # Folders beside the repository where `copy` and `set` may write an env file: by default
+        # the agent scratch folders, where a session stages a key for a tool it runs.
+        "writeRoots": [os.path.join(tempfile.gettempdir(), "claude-*")],
     },
 )
 

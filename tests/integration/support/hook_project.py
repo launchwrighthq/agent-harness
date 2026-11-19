@@ -83,13 +83,16 @@ def run_hook(
     )
 
 
-def bash_payload(command: str, cwd: Path) -> dict[str, Any]:
-    return {
+def bash_payload(command: str, cwd: Path, session: str | None = None) -> dict[str, Any]:
+    payload: dict[str, Any] = {
         "hook_event_name": "PreToolUse",
         "cwd": str(cwd),
         "tool_name": "Bash",
         "tool_input": {"command": command},
     }
+    if session is not None:
+        payload["session_id"] = session
+    return payload
 
 
 def file_payload(tool: str, path: Path) -> dict[str, Any]:
@@ -110,9 +113,15 @@ def decision(done: subprocess.CompletedProcess[str]) -> str:
     return str(json.loads(done.stdout)["hookSpecificOutput"]["permissionDecision"])
 
 
-def verdicts(project: Path, script: str, commands: list[str], cwd: Path | None = None) -> list[str]:
+def verdicts(
+    project: Path,
+    script: str,
+    commands: list[str],
+    cwd: Path | None = None,
+    session: str | None = None,
+) -> list[str]:
     """The decision of `script` for each Bash command, in order."""
     return [
-        decision(run_hook(project, script, "PreToolUse", bash_payload(c, cwd or project)))
+        decision(run_hook(project, script, "PreToolUse", bash_payload(c, cwd or project, session)))
         for c in commands
     ]

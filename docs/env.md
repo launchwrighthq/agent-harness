@@ -27,6 +27,7 @@ The `[env]` section of `.agents/harness.toml` holds the env facts. Every key has
 | `stores` | `[]` | Named secret stores. See Stores. |
 | `protected` | `[]` | Environments whose push needs `--yes --confirm <env>`, whose GitHub Environment a push never creates, and whose `run` always asks. |
 | `publicKeys` | `*_DRIVER`, `*_DRIVERS`, `*_REGION`, `*_BUCKET`, `*_HOST`, `*_PORT`, `*_MODE`, `*_LEVEL`, `*_ENDPOINT_URL`, `NODE_ENV`, `APP_ENV` | Key name patterns of config, not secrets. `*` matches any text, and case counts. The read guards let `get --reveal` of such a key pass with no question, and the engine masks its value when it looks like a credential (see Masks). A value replaces the default list. |
+| `writeRoots` | `<temp>/claude-*` | Folders beside the repository where `copy`, `set` and the other writing subcommands may write an env file, as glob patterns. The default is the agent scratch folders, where a session stages a key for a tool it runs. The repository and its main checkout need no entry. |
 
 Global options come before the subcommand and win over the file: `--root <dir>`,
 `--master <file>` and `--declarations <file>` (repeatable). A wrapper command passes them.

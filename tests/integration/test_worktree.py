@@ -27,8 +27,11 @@ def git(root: Path, *args: str) -> str:
     return done.stdout.strip()
 
 
-def run_ah(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    env = {k: v for k, v in os.environ.items() if k not in ("AH_HANDED_OVER", "AH_ROOT")}
+def run_ah(cwd: Path, *args: str, session: str | None = None) -> subprocess.CompletedProcess[str]:
+    skip = ("AH_HANDED_OVER", "AH_ROOT", "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID")
+    env = {k: v for k, v in os.environ.items() if k not in skip}
+    if session is not None:
+        env["CLAUDE_CODE_SESSION_ID"] = session
     return subprocess.run(
         [sys.executable, str(LAUNCHER), "worktree", *args],
         cwd=cwd,
@@ -37,6 +40,11 @@ def run_ah(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
         env={**env, **IDENTITY},
         check=False,
     )
+
+
+def owner(folder: Path) -> str | None:
+    marker = Path(git(folder, "rev-parse", "--absolute-git-dir")) / "lw-owner"
+    return marker.read_text(encoding="utf-8").strip() if marker.exists() else None
 
 
 def make_repo(tmp_path: Path) -> Path:
@@ -156,3 +164,32 @@ def test_lands_a_branch_from_a_worktree_that_it_made(tmp_path: Path) -> None:
     assert done.returncode == 0, done.stdout + done.stderr
     assert git(repo, "rev-parse", "trunk") == git(tree, "rev-parse", "HEAD")
     assert (repo / "feature.txt").read_text(encoding="utf-8") == "feature\n"
+
+
+def test_records_the_session_that_adds_a_worktree(tmp_path: Path) -> None:
+    repo = make_repo(tmp_path)
+
+    run_ah(repo, "add", "mine", session="session-a")
+    run_ah(repo, "add", "plain")
+
+    assert (owner(repo / ".claude/worktrees/mine"), owner(repo / ".claude/worktrees/plain")) == (
+        "session-a",
+        None,
+    )
+
+
+def test_claims_a_worktree_with_no_owner_and_refuses_one_of_another_session(
+    tmp_path: Path,
+) -> None:
+    repo = make_repo(tmp_path)
+    git(repo, "worktree", "add", "--quiet", "-b", "plain", str(repo / ".claude/worktrees/plain"))
+    run_ah(repo, "add", "theirs", session="session-b")
+
+    claimed = run_ah(repo, "claim", "plain", session="session-a")
+    refused = run_ah(repo, "claim", "theirs", session="session-a")
+
+    assert claimed.returncode == 0, claimed.stderr
+    assert owner(repo / ".claude/worktrees/plain") == "session-a"
+    assert refused.returncode != 0
+    assert "belongs to the session session-b" in refused.stderr
+    assert owner(repo / ".claude/worktrees/theirs") == "session-b"

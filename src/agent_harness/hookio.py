@@ -18,7 +18,11 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from agent_harness import HarnessError, config
+from agent_harness import HarnessError, config, fresh
+
+# Every Python hook imports this module first. A hook of a stale worktree install hands over to
+# the main checkout's newer copy here, before it reads its payload.
+fresh.hand_over()
 
 # The folder of the installed hooks, relative to the project root.
 INSTALLED_HOOKS = (".claude", "agent-harness", "hooks")

@@ -12,7 +12,8 @@ Other sessions work in this repository at the same time, and you cannot see thei
 
 - **Work and commit in your own worktree:** `<repo>/.claude/worktrees/<name>` and nowhere else.
   `python3 .claude/agent-harness/bin/ah worktree add <name> [--from <ref>]` makes one on the new
-  branch `<name>`, and `ah worktree remove <name>` removes a clean one. The
+  branch `<name>` and records your session as its owner, `ah worktree claim <name>` takes one
+  that has no owner, and `ah worktree remove <name>` removes a clean one. The
   `worktree-path-guard` hook refuses a `git worktree add` at another path.
 - **Land with the `lw-land` skill** from the worktree that holds the branch. It merges the base
   branch in, runs the gate, and pushes into the checkout of the base branch through the

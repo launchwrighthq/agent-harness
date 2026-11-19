@@ -1053,7 +1053,22 @@ def flag_refusal(args: list[str]) -> str | None:
     return None
 
 
-def reason(args: list[str], cwd: Path, own: Path, after_other: bool) -> str | None:
+def owned(target: Path, shared: Path, session: str | None) -> bool:
+    """True when `target` is a worktree in `.claude/worktrees/` of its repository whose
+    `lw-owner` file, which `ah worktree add` and `ah worktree claim` write in its private Git
+    folder, names `session`. A main checkout is never owned."""
+    if session is None or not target.is_relative_to(shared / ".claude" / "worktrees"):
+        return False
+    try:
+        marker = Path(git(target, "rev-parse", "--absolute-git-dir")) / "lw-owner"
+        return marker.read_text(encoding="utf-8").strip() == session
+    except (subprocess.SubprocessError, OSError):
+        return False
+
+
+def reason(
+    args: list[str], cwd: Path, own: Path, after_other: bool, session: str | None = None
+) -> str | None:
     sub, *rest = args
     if read_only(args) or sub == "fetch":
         return None
@@ -1095,8 +1110,14 @@ def reason(args: list[str], cwd: Path, own: Path, after_other: bool) -> str | No
         return f"Never move a branch ref alone. Run `{LAND}` from your worktree."
     if sub == "push" and any(x in rest for x in (".", str(shared))):
         return f"Run `{LAND}` to update the local base branch; do not push into a checkout by hand."
-    if target != own or (WORKTREES_ONLY and target == shared):
-        return f"Mutate only your own worktree. Run `{LAND}` to update the local base branch."
+    if (target != own and not owned(target, shared, session)) or (
+        WORKTREES_ONLY and target == shared
+    ):
+        return (
+            f"Mutate only your own worktree. Run `{LAND}` to update the local base branch. A "
+            "worktree that `ah worktree add` or `ah worktree claim` made for this session is yours "
+            "from any checkout."
+        )
     if sub in ("restore", "checkout", "clean") and any(
         (cwd / path).is_dir() for path in rest if not path.startswith("-")
     ):
@@ -1175,7 +1196,9 @@ def move_target_refusal(target: str, cwd: Path, shared: Path, after_other: bool)
     return None
 
 
-def check_shapes(tokens: list[Token], cwd: Path, root: Path) -> str | None:
+def check_shapes(
+    tokens: list[Token], cwd: Path, root: Path, session: str | None = None
+) -> str | None:
     """Why the command is refused, or None. Each git step is checked in every directory it may
     run in.
 
@@ -1206,7 +1229,7 @@ def check_shapes(tokens: list[Token], cwd: Path, root: Path) -> str | None:
                         return refusal
                     if not read_only(args):
                         own = own or checkout(cwd)
-                        if denied := reason(args, directory, own, after_other):
+                        if denied := reason(args, directory, own, after_other, session):
                             return denied
         if joiner != "&&":
             dirs = dirs | stopped
@@ -1214,7 +1237,7 @@ def check_shapes(tokens: list[Token], cwd: Path, root: Path) -> str | None:
     return None
 
 
-def check_command(command: str, cwd: Path) -> str | None:
+def check_command(command: str, cwd: Path, session: str | None = None) -> str | None:
     """Why the command is refused when it runs in `cwd`, or None."""
     if "GIT_CONFIG" in unquote(command):
         return "Do not set Git configuration through GIT_CONFIG* variables in an agent command."
@@ -1236,7 +1259,7 @@ def check_command(command: str, cwd: Path) -> str | None:
             f"git would run from {cwd}, outside this project ({shared}) and its worktrees. Run "
             "git only there, or in a repository that `harness.workspace.repos` lists."
         )
-    return check_shapes(tokens, cwd, root)
+    return check_shapes(tokens, cwd, root, session)
 
 
 def check(payload: dict[str, Any]) -> str | None:
@@ -1245,7 +1268,8 @@ def check(payload: dict[str, Any]) -> str | None:
     fields = payload.get("tool_input") or {}
     command = fields.get("command", fields.get("cmd", ""))
     cwd = Path(fields.get("workdir") or payload.get("cwd") or Path.cwd()).resolve()
-    return check_command(command, cwd)
+    session = payload.get("session_id")
+    return check_command(command, cwd, session if isinstance(session, str) and session else None)
 
 
 def main() -> int:
