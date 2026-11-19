@@ -38,6 +38,11 @@ def copy_tree(source: Path, target: Path) -> None:
 def make_project(root: Path, config: str = "") -> Path:
     """A git checkout at `root` with the hooks installed and `config` as `.agents/harness.toml`."""
     git_init(root)
+    return install_hooks(root, config)
+
+
+def install_hooks(root: Path, config: str = "") -> Path:
+    """The hooks installed into the existing checkout or worktree at `root`."""
     home = root / INSTALLED
     copy_tree(PACKAGE / "hooks", home / "hooks")
     (home / "src").symlink_to(PACKAGE / "src")

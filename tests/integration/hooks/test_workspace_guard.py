@@ -581,6 +581,38 @@ def worktrees(project: Path) -> tuple[Path, Path]:
     return paths
 
 
+def test_lets_a_session_in_a_worktree_run_git_in_a_sibling_worktree(
+    project: Path, worktrees: tuple[Path, Path], outside: Path
+) -> None:
+    own, peer = worktrees
+    hook_project.install_hooks(own)
+
+    got = [
+        hook_project.verdicts(own, HOOK, ["git status"], peer)[0],
+        hook_project.verdicts(own, HOOK, [f"git -C {peer} log -1"], own)[0],
+        hook_project.verdicts(own, HOOK, ["git status"], project)[0],
+        hook_project.verdicts(own, HOOK, ["git status"], outside)[0],
+    ]
+
+    assert got == ["silent", "silent", "silent", "deny"]
+
+
+def test_lets_git_run_in_a_repository_that_the_config_lists(tmp_path: Path, outside: Path) -> None:
+    other = hook_project.git_init(tmp_path / "other")
+    config = f'[harness.workspace]\nrepos = ["{outside}"]\n'
+    root = hook_project.make_project(tmp_path / "project", config)
+
+    got = [
+        hook_project.verdicts(root, HOOK, ["git status"], outside)[0],
+        hook_project.verdicts(root, HOOK, [f"git -C {outside} log -1"], root)[0],
+        hook_project.verdicts(root, HOOK, [f"cd {outside} && git status"], root)[0],
+        hook_project.verdicts(root, HOOK, ["git status"], other)[0],
+        hook_project.verdicts(root, HOOK, [f"git -C {other} status"], root)[0],
+    ]
+
+    assert got == ["silent", "silent", "silent", "deny", "deny"]
+
+
 def test_lets_a_worktree_command_name_only_the_callers_own_worktree(
     project: Path, worktrees: tuple[Path, Path]
 ) -> None:

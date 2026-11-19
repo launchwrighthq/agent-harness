@@ -65,6 +65,7 @@ guards with the defaults.
 | `land.overlapExclude` | `lw-land` | Default `[]`. Paths, relative to the repository root, that the check for a carried gate does not count. A base move that touches only these paths and paths the branch did not change carries a green gate over. |
 | `workspace.worktreesOnly` | `workspace-guard` | Also refuse a git mutation in the main checkout. |
 | `workspace.gitConfigAllow` | `workspace-guard` | The keys `git -c` may set in an agent command. |
+| `workspace.repos` | `workspace-guard` | Other repositories where git may run, as absolute paths or `~/` paths, for example a client library beside the project. git runs in the main checkout of the project and every worktree of it without this key. |
 | `guardedFiles` | `deny-env-reads`, `bash-read-guard` | Names no tool call may carry. An entry is a pattern or `{ pattern, hint }`. |
 | `secretFiles` | `bash-read-guard` | More credential names. An entry is a pattern or `{ pattern, hint }`. |
 | `envCommand` | `deny-env-reads`, `bash-read-guard` | One more env engine command form, for example `lw env`. A deny names it. |

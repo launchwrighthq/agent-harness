@@ -90,6 +90,13 @@ The hooks, the rules and the git hooks are in [docs/hooks.md](docs/hooks.md).
 | `docs/` | One document per area. |
 | `tests/unit/`, `tests/integration/` | The tests. |
 
+## Changes in 0.2.7
+
+`workspace-guard` takes the main checkout of the repository as the project, so a session that
+starts in a worktree can run git in every sibling worktree, where its agents work.
+`harness.workspace.repos` lists other repositories where git may run, such as a client library
+beside the project. Details: [docs/hooks.md](docs/hooks.md).
+
 ## Changes in 0.2.6
 
 The env guards ask only when a value can reach the agent context. They read a command line step

@@ -136,6 +136,7 @@ SECTION_DEFAULTS: dict[str, dict[str, Any]] = {
         "workspace": {
             "worktreesOnly": False,
             "gitConfigAllow": DEFAULT_GIT_CONFIG_ALLOW,
+            "repos": [],
         },
         "directives": DEFAULT_DIRECTIVES,
         # `dispatch`: commands that pick their runner, for example "ci test".

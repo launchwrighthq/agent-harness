@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Refuse Git mutations that overwrite another session's checkout or shared state.
 
-Reads `harness.landCommand`, `harness.workspace.worktreesOnly` and
-`harness.workspace.gitConfigAllow` from `.agents/harness.toml` of the project that holds this
-file, never from a directory that the payload names. With `worktreesOnly`, a mutation in the main
-checkout is refused too. The guard stops accidents by cooperating agents and is no sandbox. A
-command that involves git must have one of a few simple shapes, which the guard reads completely,
-and every other form is refused with one message that names them. docs/hooks.md, "Git command
-shapes", lists them.
+Reads `harness.landCommand`, `harness.workspace.worktreesOnly`,
+`harness.workspace.gitConfigAllow` and `harness.workspace.repos` from `.agents/harness.toml` of
+the project that holds this file, never from a directory that the payload names. git runs in the
+main checkout of the project, in every worktree of it, and in each repository of `repos`. With
+`worktreesOnly`, a mutation in the main checkout is refused too. The guard stops accidents by
+cooperating agents and is no sandbox. A command that involves git must have one of a few simple
+shapes, which the guard reads completely, and every other form is refused with one message that
+names them. docs/hooks.md, "Git command shapes", lists them.
 """
 
 from __future__ import annotations
@@ -302,6 +303,13 @@ CONFIG_ALLOW = tuple(
         if isinstance(WORKSPACE.get("gitConfigAllow"), list)
         else DEFAULT_CONFIG_ALLOW
     )
+)
+# Other repositories of the operator where git may run, such as a client library beside the
+# project. A repository can hold configuration that runs a program, so only listed ones pass.
+TRUSTED_REPOS = tuple(
+    Path(os.path.expanduser(p)).resolve()
+    for p in (WORKSPACE.get("repos") if isinstance(WORKSPACE.get("repos"), list) else [])
+    if isinstance(p, str) and p
 )
 
 
@@ -897,12 +905,34 @@ def common_dir(directory: Path) -> Path:
     return Path(git(directory, "rev-parse", "--path-format=absolute", "--git-common-dir")).resolve()
 
 
+def trusted_repo(directory: Path) -> Path | None:
+    """The repository of `harness.workspace.repos` that `directory` is a folder of, or None.
+    git at `directory` must use that repository, so a nested repository in it is no member."""
+    for repo in TRUSTED_REPOS:
+        if not directory.is_relative_to(repo):
+            continue
+        try:
+            same = common_dir(directory) == common_dir(repo)
+        except (subprocess.SubprocessError, OSError):
+            return None
+        return repo if same else None
+    return None
+
+
+def shared_checkout(root: Path) -> Path:
+    """The main checkout of the repository of `root`. A session that starts in a worktree runs
+    the hooks of that worktree, and its agents work in sibling worktrees of the same repository."""
+    return common_dir(root).parent
+
+
 def require_shared(directory: Path, root: Path) -> None:
     """Raise Refused unless git at `directory` uses the repository of `root`, the project root.
 
     The directory must sit in the shared checkout (the main checkout and its worktrees), and its
     common Git directory must be the one of `root`, so a nested repository is refused too.
     """
+    if trusted_repo(directory) is not None:
+        return
     common = common_dir(root)
     shared = common.parent
     why = (
@@ -1200,10 +1230,11 @@ def check_command(command: str, cwd: Path) -> str | None:
     if not involves_git(tokens, subs):
         return None
     root = project_root()
-    if not cwd.is_relative_to(root):
+    shared = shared_checkout(root)
+    if not cwd.is_relative_to(shared) and trusted_repo(cwd) is None:
         return (
-            f"git would run from {cwd}, outside this project ({root}), the checkout that holds "
-            "this hook. Run git only inside this checkout and its .claude/worktrees/ worktrees."
+            f"git would run from {cwd}, outside this project ({shared}) and its worktrees. Run "
+            "git only there, or in a repository that `harness.workspace.repos` lists."
         )
     return check_shapes(tokens, cwd, root)
 
