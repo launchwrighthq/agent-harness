@@ -106,7 +106,7 @@ HIDDEN_RUNS = [
     "AH=ah; $AH env get API_KEY .env.local",
     "bash <<'EOF'\nah env get API_KEY .env.local --reveal\nEOF",
     'echo "$(lw env get API_KEY .env.local --reveal)"',
-    "timeout 5 ah env status",
+    "timeout $T ah env status",
 ]
 # The global options of the engine come before the subcommand. Each value resolves inside the
 # project and names no credential file.

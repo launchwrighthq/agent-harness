@@ -20,6 +20,11 @@ from typing import Any
 from agent_harness import HarnessError
 
 INT = re.compile(r"^-?[0-9]+$")
+# The number types: `decimal` has no exponent, `float` may have one.
+DECIMAL = r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)"
+DECIMAL_VALUE = re.compile(rf"^{DECIMAL}$")
+FLOAT_VALUE = re.compile(rf"^{DECIMAL}(?:[eE][+-]?[0-9]+)?$")
+TYPES = ("string", "int", "bool", "url", "enum", "json", "float", "decimal", "path")
 # UPPER_SNAKE_CASE with one `<PART>` placeholder, for example `LLM_<NAME>_API_KEY`.
 FAMILY_NAME = re.compile(r"^([A-Z][A-Z0-9_]*)?<[A-Z]+>([A-Z0-9_]*)$")
 # What replaces the placeholder.
@@ -86,10 +91,14 @@ class Declarations:
 
 def matches_type(key: Key, value: str) -> bool:
     """True when a value parses as the type of `key`. An empty value always matches."""
-    if value == "" or key.type == "string":
+    if value == "" or key.type in ("string", "path"):
         return True
     if key.type == "int":
         return INT.match(value) is not None
+    if key.type == "float":
+        return FLOAT_VALUE.match(value) is not None
+    if key.type == "decimal":
+        return DECIMAL_VALUE.match(value) is not None
     if key.type == "bool":
         return value in ("true", "false")
     if key.type == "url":
@@ -259,10 +268,10 @@ def _apply(key: Key, fields: dict[str, Any], path: Path, problems: list[str]) ->
         else:
             problems.append(f"{where}: field 'secret' must be a boolean")
     if "type" in fields:
-        if fields["type"] in ("string", "int", "bool", "url", "enum", "json"):
+        if fields["type"] in TYPES:
             key.type = fields["type"]
         else:
-            problems.append(f"{where}: field 'type' must be string, int, bool, url, enum or json")
+            problems.append(f"{where}: field 'type' must be one of {', '.join(TYPES)}")
     if "enum" in fields:
         if _strings(fields["enum"]):
             key.enum = list(fields["enum"])

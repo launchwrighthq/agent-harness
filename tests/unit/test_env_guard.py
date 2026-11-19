@@ -110,6 +110,37 @@ def test_asks_when_an_expansion_can_change_what_the_step_prints(
     assert decisions(command, tmp_path) == ["ask"]
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cd /srv/app/tree; timeout 300 npx lw env check 2>&1 | tail -10; echo exit=$?",
+        "timeout -k 5 300 ah env keys .env.local",
+        "nice -n 5 nohup ah env status",
+        "env -u HOME LANG=C ah env diff .env.local .env.ci",
+        "stdbuf -o L npx -y lw env layout",
+        "timeout 60 ah env get S3_BUCKET .env.production --reveal",
+    ],
+)
+def test_judges_the_engine_step_inside_a_plain_wrapper(command: str, tmp_path: Path) -> None:
+    assert decisions(command, tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "timeout 300 ah env get DATABASE_URL .env.local --reveal",
+        "env -S 'ah env get A .env.local --reveal'",
+        "timeout $T ah env status",
+        "xargs ah env get A --reveal",
+        "npx -c 'ah env get A .env.local --reveal'",
+    ],
+)
+def test_asks_about_a_wrapped_engine_step_that_it_cannot_clear(
+    command: str, tmp_path: Path
+) -> None:
+    assert decisions(command, tmp_path) == ["ask"]
+
+
 def test_skips_only_the_words_of_a_quiet_engine_step_in_the_name_scan(tmp_path: Path) -> None:
     engine = "ah env keys .env.production"
     command = f"cd /srv/app && {engine} 2>&1 | head; cat .env.local"

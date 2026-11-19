@@ -167,9 +167,13 @@ to `sh`, `bash`, `zsh` or another shell is read as steps, and so is each `$(...)
 `<(...)` substitution, also inside double quotes and in an unquoted heredoc body.
 
 Some steps can hide an engine run, so they ask. A step whose command word holds a `$` or a
-backtick asks when the line holds the word `env` (`$AH env status`). A wrapper (`env`, `eval`,
-`exec`, `sudo`, `timeout`, `xargs` and the like), a package runner (`npx`, `pnpm`, `uv` and the
-like) or a shell whose arguments hold the engine words asks (`bash -c 'ah env status'`). A command that the parser cannot read, such as one with an
+backtick asks when the line holds the word `env` (`$AH env status`). A plain wrapper (`timeout`,
+`nice`, `nohup`, `time`, `setsid`, `stdbuf`, `command`, `exec`, `env`, `npx` and `bunx`) runs
+the command after its options, so the guard judges that command as a step:
+`timeout 300 npx lw env check` passes like `lw env check`. A plain wrapper word with a `$`, and
+`env -S`, `env -C` and `npx -c`, make the step another wrapper. Another wrapper (`eval`, `sudo`,
+`xargs` and the like), another package runner (`pnpm`, `uv` and the like) or a shell whose
+arguments hold the engine words asks (`bash -c 'ah env status'`). A command that the parser cannot read, such as one with an
 unclosed quote, gets no exemption, and it asks when its words hold the engine words anywhere.
 
 An `ah`, `./bin/ah` or `python3 <path>/ah` followed by `env` is an engine step that is no form of

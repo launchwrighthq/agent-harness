@@ -80,6 +80,51 @@ def test_checks_a_value_against_the_declared_type(tmp_path: Path) -> None:
     assert declarations.matches_type(level, "")
 
 
+NUMBERS = """
+[keys.SAMPLE_RATE]
+type = "float"
+
+[keys.PRICE]
+type = "decimal"
+
+[keys.SPOOL_DIR]
+type = "path"
+"""
+
+
+def test_checks_values_of_the_float_decimal_and_path_types(tmp_path: Path) -> None:
+    loaded = declarations.load([write(tmp_path, "env.toml", NUMBERS)])
+    rate, price, spool = (loaded.find(n) for n in ("SAMPLE_RATE", "PRICE", "SPOOL_DIR"))
+    assert rate is not None
+    assert price is not None
+    assert spool is not None
+
+    assert [declarations.matches_type(rate, v) for v in ("0.25", "-1e-3", ".5", "x")] == [
+        True,
+        True,
+        True,
+        False,
+    ]
+    assert [declarations.matches_type(price, v) for v in ("19.99", "+3", "1e3", "1.2.3")] == [
+        True,
+        True,
+        False,
+        False,
+    ]
+    assert declarations.matches_type(spool, "/var/spool/actions")
+
+
+def test_refuses_an_unknown_key_type(tmp_path: Path) -> None:
+    bad = write(tmp_path, "env.toml", '[keys.SIZE]\ntype = "bytes"\n')
+
+    with pytest.raises(HarnessError) as caught:
+        declarations.load([bad])
+
+    assert f"{bad}: key SIZE: field 'type' must be one of {', '.join(declarations.TYPES)}" in str(
+        caught.value
+    )
+
+
 FAMILIES = """
 [keys.DATABASE_URL]
 block = "Database"

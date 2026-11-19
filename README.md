@@ -90,6 +90,16 @@ The hooks, the rules and the git hooks are in [docs/hooks.md](docs/hooks.md).
 | `docs/` | One document per area. |
 | `tests/unit/`, `tests/integration/` | The tests. |
 
+## Changes in 0.2.9
+
+The env engine reads three more key types: `float`, `decimal` and `path`. Before, `ah env get`
+refused an `env.toml` that declared one of them. Details:
+[docs/env.md](docs/env.md).
+
+The env guard judges the env command inside a plain wrapper, such as
+`timeout 300 npx lw env check`, like the same command alone. Before, every wrapped env command
+asked. Details: [docs/hooks.md](docs/hooks.md).
+
 ## Changes in 0.2.8
 
 `ah worktree add` records the agent session that made a worktree, and `ah worktree claim <name>`

@@ -48,6 +48,21 @@ WRAPPERS = frozenset(
 )
 SHELLS = frozenset({"sh", "bash", "dash", "ash", "zsh", "ksh", "mksh", "fish", "csh", "tcsh"})
 
+# The wrappers whose arguments are options, then one plain command. Each entry gives the options
+# that take a value and the operands, such as the duration of `timeout`, before that command.
+PLAIN_WRAPPERS: dict[str, tuple[frozenset[str], int]] = {
+    "timeout": (frozenset({"-s", "--signal", "-k", "--kill-after"}), 1),
+    "nice": (frozenset({"-n", "--adjustment"}), 0),
+    "stdbuf": (frozenset({"-i", "-o", "-e", "--input", "--output", "--error"}), 0),
+    "env": (frozenset({"-u", "--unset"}), 0),
+    "exec": (frozenset({"-a"}), 0),
+    "npx": (frozenset({"-p", "--package"}), 0),
+    **{name: (frozenset(), 0) for name in ("nohup", "time", "setsid", "command", "bunx")},
+}
+# The wrapper options that make the words after them more than one plain command.
+NOT_PLAIN = frozenset({"-S", "--split-string", "-C", "--chdir", "-c", "--call"})
+ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*")
+
 # The shell operators and blanks that end a word in the fallback test.
 WORD_END = re.compile(r"[\s;|&()<>`]+")
 
@@ -190,7 +205,11 @@ class _Line:
             return
         match = self.engine(step.words)
         if match is None:
-            self.other(step)
+            inner = unwrap(step.words)
+            if inner is not None:
+                self.step(dataclasses.replace(step, words=inner), nested, cwd)
+            else:
+                self.other(step)
             return
         size, own = match
         _EngineStep(self, step.words, size, own and not nested, nested, cwd).check()
@@ -350,6 +369,31 @@ class _EngineStep:
         else:
             base = here if moved and not here.is_relative_to(project) else project
         return Path(os.path.realpath(base / file)).is_relative_to(project)
+
+
+def unwrap(words: list[Word]) -> list[Word] | None:
+    """The words of the command that a plain wrapper runs, such as `lw env check` of
+    `timeout 300 lw env check`. None for another program, or when a wrapper word expands."""
+    program = basename(words[0].text)
+    rule = PLAIN_WRAPPERS.get(program)
+    if rule is None:
+        return None
+    takes_value, operands = rule
+    at = 1
+    while at < len(words) and words[at].text.startswith("-") and words[at].text != "--":
+        name = words[at].text.split("=", 1)[0]
+        if name in NOT_PLAIN:
+            return None
+        at += 2 if name in takes_value and "=" not in words[at].text else 1
+    if at < len(words) and words[at].text == "--":
+        at += 1
+    if program == "env":
+        while at < len(words) and ASSIGNMENT.fullmatch(words[at].text):
+            at += 1
+    at += operands
+    if at >= len(words) or any(dynamic(w) for w in words[:at]):
+        return None
+    return words[at:]
 
 
 def dynamic(word: Word) -> bool:

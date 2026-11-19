@@ -42,7 +42,7 @@ and `[environments.<env>]` tables of one-line values. The key fields:
 | `block` | The block header of the key in the master. Default `Other`. |
 | `apps` | The apps that read the key. Absent: every app. |
 | `secret` | `true` for a credential. `secret = false` marks a plain key: `get` shows a short literal of it, a push leaves it home unless `--all`, and the `github` store sets it as a variable. |
-| `type`, `enum` | `string`, `int`, `bool`, `url`, `enum` or `json`. `set` checks a value against it. |
+| `type`, `enum` | `string`, `int`, `bool`, `url`, `enum`, `json`, `float` (a decimal number with an optional exponent), `decimal` (a decimal number, no exponent) or `path` (any text). `set` checks a value against it. |
 | `required` | `true`: `check` reports the key when a live file of its environments lacks it or leaves it empty, and `run` refuses to start without it. |
 | `summary` | One line. `template --master` writes it as the comment above the key. |
 | `default` | One line. `template --master` writes it as the master value. |
