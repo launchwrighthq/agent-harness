@@ -361,7 +361,29 @@ contains = "prints the value of API_KEY"
 tool = "Bash"
 command = "ah env get API_KEY .env.local \"--reveal\""
 expect = "ask"
+contains = "prints the value of API_KEY"
+
+[[hook.fixture]]
+tool = "Bash"
+command = "AH=ah; $AH env status"
+expect = "ask"
 contains = "prints the value of a key"
+
+[[hook.fixture]]
+tool = "Bash"
+command = "ah env get S3_BUCKET .env.production --reveal"
+expect = "silent"
+
+[[hook.fixture]]
+tool = "Bash"
+command = "cd app && ah env keys .env.production 2>&1 | head; echo \"exit=$?\""
+expect = "silent"
+
+[[hook.fixture]]
+tool = "Bash"
+command = "ah env run .env.production -- pnpm test"
+expect = "ask"
+contains = "every key of .env.production"
 
 [[hook]]
 id = "bash-read-guard"
@@ -653,7 +675,17 @@ contains = "prints the value of API_KEY"
 tool = "Bash"
 command = "ah env get API_KEY .env.local --rev\\eal"
 expect = "ask"
-contains = "prints the value of a key"
+contains = "prints the value of API_KEY"
+
+[[hook.fixture]]
+tool = "Bash"
+command = "ah env run .env.local -- node -e 'console.log(process.env.APP_PORT)'"
+expect = "silent"
+
+[[hook.fixture]]
+tool = "Bash"
+command = "grep -n \"ah env\\|reveal\" docs/env.md; echo rc=$?"
+expect = "silent"
 
 [[hook.fixture]]
 tool = "Bash"

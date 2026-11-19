@@ -5,8 +5,9 @@
 the reader: every other `.env*`, a session file, the key and certificate family and the
 `secretFiles` of the config are refused to `cat`, `awk`, `sed` and the rest. A command that
 names no secret gets no verdict, because an `allow` would bypass the permission rules. The hook
-prints only the path that matched, never the contents of a file. A lone run of the env engine
-passes, and a run with `--reveal` asks (docs/hooks.md, "The env engine exemption").
+prints only the path that matched, never the contents of a file. The words of an env engine
+step that `env_guard.check_line` clears are left out of the checks, and a reveal of a key that
+is not public asks (docs/hooks.md, "The env engine exemption").
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from typing import Any, NamedTuple
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from agent_harness import hookio  # noqa: E402
+from agent_harness import env_guard, hookio  # noqa: E402
 
 HOOK = "bash-read-guard"
 
@@ -1931,31 +1932,30 @@ def check(payload: dict[str, Any]) -> None:
         return
     cfg = hookio.hook_config(HOOK, __file__)
     names = Names(cfg)
-    scope = hookio.env_scope(
+    scope = env_guard.env_scope(
         cfg,
         payload,
         lambda path: is_credential(path, names, True),
         lambda path: any(rx.fullmatch(basename(path)) for _, rx in names.extra),
     )
-    verdict = hookio.env_run_verdict(command, names.env_commands, scope)
-    if verdict is not None:
-        hookio.answer_env_run(verdict)
+    check = env_guard.check_line(command, names.env_commands, scope)
+    denied = check.first("deny")
+    if denied is not None:
+        hookio.deny(denied.reason)
         return
-    key = hookio.env_reveal(command, names.env_commands, scope)
-    inner = hookio.env_run_command(command, names.env_commands, scope)
     cwd = str(payload.get("cwd")) if isinstance(payload.get("cwd"), str) else os.getcwd()
-    # A lone engine run is exempt, except the command that `run` starts.
-    lone = hookio.lone_env_command(command, names.env_commands, scope)
-    target = inner if lone else command
-    secret = None if target is None else secret_read(target, cwd, names)
-    listing = None if target is None or secret is not None else listing_read(target, cwd)
-    # A deny wins. A reveal that no deny covers asks, in a lone run or not.
+    # The checks skip the words of each engine step that the env check exempts.
+    target = env_guard.blank(command, check.exempt)
+    secret = secret_read(target, cwd, names)
+    listing = None if secret is not None else listing_read(target, cwd)
+    asked = check.first("ask")
+    # A deny wins. An ask of the env check that no deny covers asks.
     if secret is not None:
         deny(secret, names)
     elif listing is not None:
         deny_listing(listing, names)
-    elif key is not None:
-        hookio.ask_env(command, names.env_commands, key)
+    elif asked is not None:
+        hookio.ask(asked.reason)
 
 
 def runs_dotglob_shell(command: str) -> bool:

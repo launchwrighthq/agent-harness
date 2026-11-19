@@ -217,14 +217,45 @@ ENGINE_REVEAL = [
     "ah env get API_KEY .env.local --reveal",
     "lw env get API_KEY .env.local --reveal",
     "python3 .claude/agent-harness/bin/ah env get API_KEY '--reveal' .env.local",
+    "lw env get DATABASE_URL .env.production --reveal",
 ]
-# A glob, a brace, a tilde or a quote trick voids the exemption, so the guard reads the names.
-ENGINE_TRICKS_REFUSED = [
+# A glob, a brace or a tilde in a later argument of a quiet step changes no printed value: the
+# engine prints key names only, and the name scan skips the words of the step.
+ENGINE_QUIET_EXPANSIONS = [
     "python3 .claude/agent-harness/bin/ah env keys .env.loc*",
     "python3 .claude/agent-harness/bin/ah env keys .e?v",
     "python3 .claude/agent-harness/bin/ah env keys .e[n]v",
     "python3 .claude/agent-harness/bin/ah env keys .{env,x}",
     "python3 .claude/agent-harness/bin/ah env keys ~/.ssh/id_rsa",
+]
+# A quiet step or a get with no reveal passes in a line with other steps when each other step
+# passes. A line of one session: a cd, an assignment, a copy to an expanded path and a masked get.
+ENGINE_QUIET_IN_A_LINE = [
+    "ah env get API_KEY .env.local | cat",
+    'python3 .claude/agent-harness/bin/ah env get API_KEY ".env.local"',
+    "cd /srv && python3 .claude/agent-harness/bin/ah env get API_KEY .env.local",
+    "cd /srv/wt\nSCRATCH=/tmp/s\n"
+    'lw env copy APP_KEY /srv/wt/.env.local "$SCRATCH/x.env" 2>&1 | tail -8\n'
+    "echo '--- verify (masked) ---'\n"
+    'lw env get APP_KEY "$SCRATCH/x.env" 2>&1 | tail -3',
+    "cd /srv/app && lw env status 2>&1 | head -15; echo rc=$?",
+    'lw env check; echo "exit=$?"',
+    'echo "== keys ==" && lw env keys .env.local 2>/dev/null | grep -i "API_KEY"',
+    "for f in a b; do lw env keys $f 2>&1 | grep -i x; done; echo done",
+]
+# The engine words in quoted text or in a heredoc that no shell runs are data, so an expansion in
+# the line asks nothing.
+ENGINE_DATA_LINES = [
+    'F=/srv/x; sed -n 80,200p $F/README.md; grep -n "subcommand\\|ah env\\|spawn" $F/a.mts | head',
+    "git status --short && git commit -q -F - <<'EOF'\nfeat(env): ah env status --matrix\n\n"
+    "Run $X on *.py.\nEOF\ngit log --oneline -1",
+    "cd /srv/x && python3 - <<'EOF'\nprint('ah env status; echo \"exit=$?\"')\nEOF\n"
+    'grep -n "exit" src/x.py | head',
+]
+# A public key holds config. Its reveal asks nothing in any file.
+ENGINE_PUBLIC_REVEAL = [
+    "lw env get STORAGE_DRIVER .env.local --reveal",
+    "python3 .claude/agent-harness/bin/ah env --root apps get CACHE_REGION config/app.env --reveal",
 ]
 # A reveal hidden by a quote, an escape or an expansion still asks, and so does one in a command
 # that is no lone engine run. A deny of a credential name wins over the ask.
@@ -238,30 +269,28 @@ ENGINE_HIDDEN_REVEAL = [
     "lw env get API_KEY x{,} --reveal",
 ]
 ENGINE_REVEAL_WITH_READ = ["lw env get API_KEY .env.local --reveal | cat .env.local"]
-# The command that `run` starts passes only when `[env] runCommands` names it and nothing in
-# it can print the environment. An allowed command still gets the checks of any command.
+# The engine redacts the values of the file in the output of the command that `run` starts, so
+# any program passes on a plain project file. The command still gets the checks of any command.
 ENGINE_RUN_ALLOWED = [
     "python3 .claude/agent-harness/bin/ah env run .env.local -- pnpm test",
     "ah env run .env.local -- pnpm run seed",
+    "ah env run .env.ci -- sh -c 'echo $X'",
+    "ah env run .env.local -- node -e 'console.log(new URL(process.env.DATABASE_URL).host)'",
+    "ah env run .env.ci -- head /proc/self/environ",
+    "ah env run .env.ci -- /srv/wt/.venv/bin/python /tmp/x.py",
+    "ah env run .env.local-extra --require K -- node /tmp/x.mjs",
 ]
 ENGINE_RUN_REFUSED = [
     "python3 .claude/agent-harness/bin/ah env run .env.ci -- head -n 3 .env.local",
     "ah env run /srv/other/.env.ci -- pnpm test",
 ]
-ENGINE_RUN_ASKS = [
-    "ah env run .env.ci -- sh -c 'echo $X'",
-    "ah env run .env.ci -- node -e 'process.env'",
-    "ah env run .env.ci -- head /proc/self/environ",
-    "ah env run .env.ci -- make test",
-]
+ENGINE_RUN_ASKS = ["ah env run .env.production -- pnpm test", "ah env run app.secret -- make"]
 ENGINE_NOT_ALONE = [
     "python3 .claude/agent-harness/bin/ah env --root /other/project keys .env.local",
     "python3 .claude/agent-harness/bin/ah env --master .env.local keys .env.staging",
-    "ah env get API_KEY .env.local | cat",
     "ah env get API_KEY .env.local; cat .env.local",
-    'python3 .claude/agent-harness/bin/ah env get API_KEY ".env.local"',
-    "cd /srv && python3 .claude/agent-harness/bin/ah env get API_KEY .env.local",
     "python3 bin/ah env get API_KEY .env.local",
+    "for f in .env.local .env.ci; do lw env keys $f | grep -i x; done",
 ]
 # A quoted regex is data to the reader: bash removes the outer quotes only.
 QUOTED_REGEX_ALLOWED = [
@@ -443,7 +472,10 @@ REVIEW_CASES = {
     "QUALIFIER_DOTGLOB_REFUSED": (QUALIFIER_DOTGLOB_REFUSED, "deny"),
     "EXPANSION_GLOBS_REFUSED": (EXPANSION_GLOBS_REFUSED, "deny"),
     "SED_SCRIPTS_ALLOWED": (SED_SCRIPTS_ALLOWED, "silent"),
-    "ENGINE_TRICKS_REFUSED": (ENGINE_TRICKS_REFUSED, "deny"),
+    "ENGINE_QUIET_EXPANSIONS": (ENGINE_QUIET_EXPANSIONS, "silent"),
+    "ENGINE_QUIET_IN_A_LINE": (ENGINE_QUIET_IN_A_LINE, "silent"),
+    "ENGINE_DATA_LINES": (ENGINE_DATA_LINES, "silent"),
+    "ENGINE_PUBLIC_REVEAL": (ENGINE_PUBLIC_REVEAL, "silent"),
     "ENGINE_RUN_ALLOWED": (ENGINE_RUN_ALLOWED, "silent"),
     "ENGINE_RUN_REFUSED": (ENGINE_RUN_REFUSED, "deny"),
     "ENGINE_RUN_ASKS": (ENGINE_RUN_ASKS, "ask"),
@@ -469,7 +501,7 @@ QUOTE_CASES = {
 
 @pytest.fixture
 def project(tmp_path: Path) -> Path:
-    config = '[harness]\nenvCommand = "lw env"\n\n[env]\nrunCommands = ["pnpm", "node", "head"]\n'
+    config = '[harness]\nenvCommand = "lw env"\n'
     root = hook_project.make_project(tmp_path / "project", config)
     (root / "server.key").write_text("not a key\n", encoding="utf-8")
     return root
@@ -523,20 +555,6 @@ def test_names_the_key_when_it_asks_to_confirm_a_reveal(project: Path) -> None:
 
     assert hook_project.decision(done) == "ask"
     assert "prints the value of API_KEY" in done.stdout
-
-
-def test_asks_to_run_a_quiet_subcommand_alone_after_a_step_with_an_expansion(
-    project: Path,
-) -> None:
-    command = 'lw env check; echo "exit=$?"'
-
-    done = hook_project.run_hook(
-        project, HOOK, "PreToolUse", hook_project.bash_payload(command, project)
-    )
-
-    assert hook_project.decision(done) == "ask"
-    assert "the guard cannot clear the whole line" in done.stdout
-    assert "prints the value" not in done.stdout
 
 
 # A bracket expression that the guard cannot read as a range, in program text: it stands for one

@@ -5,9 +5,8 @@ The guarded names are `harness.guardedFiles` of the config (default `.env.produc
 `*.secret`). In Bash, a command that holds such a name is refused, whatever program it runs: a
 list of readers misses `source`, `< file` and `python3 -c open(...)`. The file tools are refused
 every env file except a `.example`. A credential backup in the tree (`.env.production.bak`,
-`.local/secrets/`) is refused too. The one exemption is a lone run of the env engine
-(`hookio.lone_env_command`, `hookio.env_reveal`, `hookio.env_run_verdict`). docs/hooks.md, "The
-credential name guard", gives the reasons.
+`.local/secrets/`) is refused too. The one exemption is the words of an env engine step that
+`env_guard.check_line` clears. docs/hooks.md, "The credential name guard", gives the reasons.
 """
 
 from __future__ import annotations
@@ -20,7 +19,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from agent_harness import hookio  # noqa: E402
+from agent_harness import env_guard, hookio  # noqa: E402
 
 HOOK = "deny-env-reads"
 
@@ -40,7 +39,7 @@ ENV_FILE = re.compile(r"\.env(\..+)?")
 class Guard:
     def __init__(self, payload: dict[str, Any]) -> None:
         cfg = hookio.hook_config(HOOK, __file__)
-        self.scope = hookio.env_scope(cfg, payload, self.credential, self.held)
+        self.scope = env_guard.env_scope(cfg, payload, self.credential, self.held)
         guarded = hookio.harness_value(cfg, "guardedFiles")
         self.guarded = [
             (entry, hookio.name_pattern(entry["pattern"]))
@@ -74,8 +73,8 @@ class Guard:
 
     def refuse(self, name: str, entry: dict[str, str]) -> None:
         how = entry.get("hint") or (
-            f"To read or change it, run `{self.env_command} <subcommand>` ALONE (no cd, pipe, ;, "
-            "&&, $, <, >, newline, double quote or backslash outside single quotes)."
+            f"To read or change it, run `{self.env_command} <subcommand>` in its own step, with no "
+            "`$` or backtick in the words of a `get` or a `run`."
         )
         hookio.deny(
             f"{name} holds live production credentials, and this hook refuses any command naming "
@@ -104,26 +103,23 @@ class Guard:
         if any(is_backup(fragment) for fragment in fragments):
             self.refuse_backup("That file")
             return
-        key = hookio.env_reveal(command, self.env_commands, self.scope)
-        verdict = hookio.env_run_verdict(command, self.env_commands, self.scope)
-        if verdict is not None:
-            hookio.answer_env_run(verdict)
+        check = env_guard.check_line(command, self.env_commands, self.scope)
+        denied = check.first("deny")
+        if denied is not None:
+            hookio.deny(denied.reason)
             return
-        inner = hookio.env_run_command(command, self.env_commands, self.scope)
-        # A lone engine run is exempt, except the command that `run` starts.
-        if not hookio.lone_env_command(command, self.env_commands, self.scope):
-            scanned: str | None = command
-        else:
-            scanned = inner
-        if scanned is not None:
-            parts = [f.lstrip("@") for f in NOT_PATH.split(re.sub(r"['\"\\]", "", scanned))]
-            entry = next(filter(None, map(self.guarded_entry, parts)), None)
-            if entry is not None:
-                self.refuse("That file", entry)
-                return
-        # A deny wins. A reveal that no deny covers asks, in a lone run or not.
-        if key is not None:
-            hookio.ask_env(command, self.env_commands, key)
+        # The scan skips the words of each engine step that the check exempts, and reads every
+        # other step and every heredoc body.
+        scanned = env_guard.blank(command, check.exempt)
+        parts = [f.lstrip("@") for f in NOT_PATH.split(re.sub(r"['\"\\]", "", scanned))]
+        entry = next(filter(None, map(self.guarded_entry, parts)), None)
+        if entry is not None:
+            self.refuse("That file", entry)
+            return
+        # A deny wins. An ask of the check that no deny covers asks.
+        asked = check.first("ask")
+        if asked is not None:
+            hookio.ask(asked.reason)
 
 
 def env_file(path: str) -> bool:

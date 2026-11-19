@@ -3,28 +3,44 @@ env file in its environment.
 
 A value that the environment of the engine exports wins over the file. Each declared `required`
 key of the file's environment, and each `--require` key, must then be set and not empty, or
-nothing runs. The engine prints no value: the output is the command's own, and the exit code is
-the command's.
+nothing runs. The command gets the standard input of the engine. The engine reads its standard
+output and error line by line, writes each line out with every value of the file redacted
+(`redact.Redaction`), and exits with the command's exit code.
 """
 
 from __future__ import annotations
 
 import os
 import subprocess
+import sys
+import threading
 from collections.abc import Callable, Mapping
+from typing import IO
 
 from agent_harness import HarnessError
 from agent_harness.env import envfile
 from agent_harness.env.args import UsageError, check_key, parse_args
 from agent_harness.env.checks import environment_of
 from agent_harness.env.context import Context
+from agent_harness.env.redact import Redaction, pump
 
-# Starts the command with the environment and gives its exit code.
-Spawn = Callable[[list[str], dict[str, str]], int]
+# Starts the command with the environment, redacts its output and gives its exit code.
+Spawn = Callable[[list[str], dict[str, str], Redaction], int]
 
 
-def spawn_process(argv: list[str], environ: dict[str, str]) -> int:
-    return subprocess.run(argv, env=environ, check=False).returncode
+def spawn_process(argv: list[str], environ: dict[str, str], redaction: Redaction) -> int:
+    child = subprocess.Popen(argv, env=environ, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    assert child.stdout is not None and child.stderr is not None
+    streams: list[tuple[IO[bytes], IO[bytes]]] = [
+        (child.stdout, sys.stdout.buffer),
+        (child.stderr, sys.stderr.buffer),
+    ]
+    pumps = [threading.Thread(target=pump, args=(s, t, redaction)) for s, t in streams]
+    for each in pumps:
+        each.start()
+    for each in pumps:
+        each.join()
+    return child.wait()
 
 
 def cmd_run(
@@ -46,7 +62,8 @@ def cmd_run(
             f"{ctx.show(path)} is outside the repository. ah env run reads only an env file of "
             "the repository."
         )
-    merged = {**envfile.read(path).values(), **environ}
+    loaded = envfile.read(path).values()
+    merged = {**loaded, **environ}
     needed = [check_key(key) for key in args.lists.get("--require", [])]
     if ctx.settings.get("declarations"):
         environment = environment_of(path.name)
@@ -60,6 +77,6 @@ def cmd_run(
         )
     command = argv[at + 1 :]
     try:
-        return spawn(command, merged)
+        return spawn(command, merged, Redaction(loaded.values()))
     except FileNotFoundError as error:
         raise HarnessError(f"cannot run {command[0]}: the command is not found") from error

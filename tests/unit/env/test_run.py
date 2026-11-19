@@ -6,6 +6,7 @@ from agent_harness import HarnessError
 from agent_harness.env import run, stores
 from agent_harness.env.args import UsageError
 from agent_harness.env.context import Context
+from agent_harness.env.redact import Redaction
 
 TOKEN = "token-value-romeo-61"
 DECLARED = (
@@ -19,9 +20,11 @@ class Spawn:
     def __init__(self, code: int = 0) -> None:
         self.code = code
         self.calls: list[tuple[list[str], dict[str, str]]] = []
+        self.redactions: list[Redaction] = []
 
-    def __call__(self, argv: list[str], environ: dict[str, str]) -> int:
+    def __call__(self, argv: list[str], environ: dict[str, str], redaction: Redaction) -> int:
         self.calls.append((argv, environ))
+        self.redactions.append(redaction)
         return self.code
 
 
@@ -46,6 +49,16 @@ def test_runs_the_command_with_the_file_keys_and_an_exported_value_wins(ctx: Con
     assert spawn.calls == [
         (["pnpm", "test"], {"APP_TOKEN": TOKEN, "APP_NAME": "exported", "PATH": "/bin"})
     ]
+
+
+def test_hands_the_command_a_redaction_of_every_value_of_the_file(ctx: Context) -> None:
+    spawn = Spawn()
+
+    run.cmd_run(ctx, [".env.ci", "--", "node", "x.mjs"], spawn, {"APP_NAME": "exported"})
+
+    assert spawn.redactions[0].line(f"{TOKEN} from-file exported\n".encode()) == (
+        b"*** *** exported\n"
+    )
 
 
 def test_fails_by_name_on_a_missing_required_key_and_runs_nothing(ctx: Context) -> None:
@@ -84,7 +97,7 @@ def test_needs_a_command_after_the_separator(ctx: Context) -> None:
 
 
 def test_names_a_command_that_is_not_found(ctx: Context) -> None:
-    def missing(argv: list[str], environ: dict[str, str]) -> int:
+    def missing(argv: list[str], environ: dict[str, str], redaction: Redaction) -> int:
         raise FileNotFoundError(argv[0])
 
     with pytest.raises(HarnessError) as caught:

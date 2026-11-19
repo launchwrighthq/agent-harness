@@ -148,3 +148,40 @@ def test_prints_a_short_literal_only_for_a_key_marked_plain() -> None:
 def test_describes_any_other_value_by_length_and_digest() -> None:
     assert masking.mask("abc#def") == "set, 7 chars, " + masking.digest("abc#def")
     assert len(masking.digest("x")) == len("sha256:") + 8
+
+
+@pytest.mark.parametrize(
+    ("value", "shape"),
+    [
+        ("https://user:pw-x@host.example/x", "a URL with a password"),
+        ("-----BEGIN " + "CERTIFICATE-----\nabc", "a PEM block"),
+        ("0123456789abcdef0123456789abcdef", "32 or more base64 or hex characters"),
+        ("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo=", "32 or more base64 or hex characters"),
+        ("fake_token-0123456789-abcdefghij_KLMNO", "32 or more base64 or hex characters"),
+    ],
+)
+def test_names_the_credential_shape_of_a_value(value: str, shape: str) -> None:
+    assert masking.credential_shape(value) == shape
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "s3",
+        "eu-west-1",
+        "https://0123456789abcdef0123456789abcdef.r2.example.com",
+        "https://user@host.example",
+        "0123456789abcdef0123456789abcde",
+        "",
+    ],
+)
+def test_finds_no_credential_shape_in_a_config_value(value: str) -> None:
+    assert masking.credential_shape(value) is None
+
+
+def test_matches_a_whole_key_name_against_the_public_key_patterns() -> None:
+    keys = ["STORAGE_DRIVER", "NODE_ENV", "DRIVER", "NODE_ENV_X", "storage_driver"]
+
+    got = [masking.public_key(key, ["*_DRIVER", "NODE_ENV"]) for key in keys]
+
+    assert got == [True, True, False, False, False]

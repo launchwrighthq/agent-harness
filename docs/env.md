@@ -1,7 +1,8 @@
 # The env engine
 
 `ah env <subcommand>` reads and changes `.env*` files and moves them to and from a secret store.
-It works in any git repository. No subcommand prints a value, except `get --reveal`.
+It works in any git repository. No subcommand prints a value, except `get --reveal`. `run`
+replaces each value of its file with `***` in the output of the command it starts.
 
 ```bash
 python3 .claude/agent-harness/bin/ah env status
@@ -25,7 +26,7 @@ The `[env]` section of `.agents/harness.toml` holds the env facts. Every key has
 | `store` | `{ kind = "" }` | The one secret store. See Stores. |
 | `stores` | `[]` | Named secret stores. See Stores. |
 | `protected` | `[]` | Environments whose push needs `--yes --confirm <env>`, whose GitHub Environment a push never creates, and whose `run` always asks. |
-| `runCommands` | `[]` | Bare program names that `ah env run` may start with no question from the read guards. |
+| `publicKeys` | `*_DRIVER`, `*_DRIVERS`, `*_REGION`, `*_BUCKET`, `*_HOST`, `*_PORT`, `*_MODE`, `*_LEVEL`, `*_ENDPOINT_URL`, `NODE_ENV`, `APP_ENV` | Key name patterns of config, not secrets. `*` matches any text, and case counts. The read guards let `get --reveal` of such a key pass with no question, and the engine masks its value when it looks like a credential (see Masks). A value replaces the default list. |
 
 Global options come before the subcommand and win over the file: `--root <dir>`,
 `--master <file>` and `--declarations <file>` (repeatable). A wrapper command passes them.
@@ -63,7 +64,7 @@ for each field and each value. The engine reads no other field.
 | `status [<file> ...] [--matrix]` | Per file: key count, empty keys, keys missing against its master, keys not in its master. The master of a file is its own `<file>.example` when `check` and `layout` take that template as its master, else the root master. `--matrix` prints one row per key, one column per live file with `set`, `empty` or `-`, and an APP column: the declared apps, `all`, or `-` for an undeclared key. |
 | `check` | Each key that code reads and no master or declaration names, each key of a live file that none names, each empty or missing `required` key, each env file outside the master folder and `dirs`, and each live env file that git tracks. Exit 1 on a finding. |
 | `where <KEY>` | Each env file that sets the key, the declaration that reads it, each line of a scanned file that names it, and each code line that reads it (`path:line`, never the line text). |
-| `get <KEY> <file> [--reveal]` | The masked value (see Masks). `--reveal` prints the value. |
+| `get <KEY> <file> [--reveal]` | The masked value (see Masks). `--reveal` prints the value, except the value of a public key that looks like a credential. |
 | `set <KEY> <file> --value <v>` or `--stdin` | Sets the key in place, or adds it in its master block and order. |
 | `unset <KEY> <file>` | Removes the key. A block left with no key goes too. |
 | `copy <KEY> <from> <to> [--as <NEW>]` | Copies one key. The entry keeps its lines as written. |
@@ -98,6 +99,10 @@ The connection string form prints only when the parser reads the userinfo exactl
 between the scheme and the last `@`. A password with `/`, `?` or `#` makes a parser read part of
 it as the host or the path, so such a value prints in the digest form. An http or https URL can
 carry its token in the path or the query, so it always prints in the digest form.
+
+`get --reveal` of a key that `publicKeys` names prints the value, unless the value looks like a
+credential: a URL with a password, a PEM block (`-----BEGIN`), or a whole value of 32 or more
+base64 or hex characters. Such a value prints in its masked form, with the reason after it.
 
 ## Code readers
 
@@ -147,13 +152,19 @@ template differs from the declarations. A gate runs it.
 `ah env run <file> [--require <KEY> ...] -- <command> [args]` starts one command with the keys
 of `<file>` in its environment. An exported value wins over the file. Each declared `required`
 key of the file's environment, and each `--require` key, must be set and not empty, or nothing
-runs. The file must be inside the repository. The engine prints no value, and the exit code is
-the command's.
+runs. The file must be inside the repository.
 
-The command can print what it gets, so the read guards let a run pass with no question only for
-a bare program of `[env] runCommands` (default empty) on a plain project file, with plain
-arguments. A shell, an interpreter, a wrapper, a guarded file or a protected environment asks
-the user. The rules are in `docs/hooks.md`, The env engine exemption.
+The command gets the standard input of the engine. The engine reads the standard output and the
+standard error of the command line by line. In each line it replaces with `***` every value of
+the file that has 6 characters or more, each such line of a value that spans lines, and the
+password of each URL value at any length. A longer value goes first. The engine then writes the
+line to its own standard output or standard error, and it exits with the exit code of the
+command. A line reaches the output only when the command ends it with a newline or exits.
+
+The redaction covers the values as the file holds them. A command that encodes, splits or
+reverses a value, or writes it to a file, gets past it. So the read guards let a run of any
+program pass with no question on a plain project file, and ask for a held file or a file of a
+protected environment. The rules are in `docs/hooks.md`, The env engine exemption.
 
 ## Files
 

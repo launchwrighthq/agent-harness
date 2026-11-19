@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_harness.env import command, envfile
+from agent_harness.env import command, envfile, masking
 
 MASTER = (
     "# Generated top block.\n#\n# Every other file follows it.\n\n"
@@ -63,6 +63,28 @@ def test_prints_a_connection_string_without_its_userinfo(repo: Path) -> None:
     assert run("get", "APP_URL", ".env.local") == 0
 
     assert run.out == ["APP_URL in .env.local: postgres://***:***@db.example:5432/app"]
+
+
+def test_reveals_a_public_key_and_masks_one_whose_value_looks_like_a_credential(
+    repo: Path,
+) -> None:
+    hexed = "0123456789abcdef0123456789abcdef"
+    (repo / ".env.local").write_text(
+        f"STORAGE_DRIVER=s3\nCDN_DRIVER={hexed}\nAPP_TOKEN={hexed}\n", encoding="utf-8"
+    )
+    run = Run(repo)
+
+    shown = []
+    for key in ("STORAGE_DRIVER", "CDN_DRIVER", "APP_TOKEN"):
+        assert run("get", key, ".env.local", "--reveal") == 0
+        shown.extend(run.out)
+
+    assert shown == [
+        "s3",
+        f"CDN_DRIVER in .env.local: {masking.mask(hexed)} (a public key, and its value looks "
+        "like a credential: 32 or more base64 or hex characters, so it prints masked)",
+        hexed,
+    ]
 
 
 def test_prints_a_short_number_only_for_a_key_declared_plain(repo: Path) -> None:

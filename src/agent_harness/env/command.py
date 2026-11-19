@@ -225,7 +225,16 @@ def cmd_get(ctx: Context, argv: list[str]) -> int:
     values = envfile.read(path).values()
     if key not in values:
         raise HarnessError(f"{key} is not in {ctx.show(path)}")
-    if args.flags.get("--reveal"):
+    # The guards let a reveal of a public key pass with no question, so a credential shape in
+    # its value prints masked.
+    shape = masking.credential_shape(values[key])
+    public = masking.public_key(key, ctx.settings.get("publicKeys", []))
+    if args.flags.get("--reveal") and public and shape is not None:
+        ctx.out(
+            f"{key} in {ctx.show(path)}: {masking.mask(values[key])} (a public key, and its value "
+            f"looks like a credential: {shape}, so it prints masked)"
+        )
+    elif args.flags.get("--reveal"):
         ctx.out(values[key])
     else:
         declared = ctx.declarations().find(key)

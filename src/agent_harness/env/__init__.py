@@ -47,8 +47,11 @@ config.register_defaults(
         "stores": [],
         # The environments whose push needs `--yes --confirm <env>`, and whose `run` always asks.
         "protected": [],
-        # The bare program names that `ah env run` may start without a question from the guards.
-        "runCommands": [],
+        # Key name patterns of config, not secrets: `get --reveal` of one asks nothing.
+        "publicKeys": [
+            *("*_DRIVER", "*_DRIVERS", "*_REGION", "*_BUCKET", "*_HOST", "*_PORT"),
+            *("*_MODE", "*_LEVEL", "*_ENDPOINT_URL", "NODE_ENV", "APP_ENV"),
+        ],
     },
 )
 

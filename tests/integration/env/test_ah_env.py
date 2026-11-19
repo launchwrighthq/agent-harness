@@ -317,6 +317,39 @@ def test_runs_a_command_with_the_keys_of_a_file_and_passes_its_exit_code(repo: P
     assert ah.printed_values() == []
 
 
+# Prints both values and its stdin, writes one value to stderr and exits 3.
+LOUD_CHILD = (
+    "import os, sys; "
+    "print(os.environ['MAIL_KEY'], os.environ['DATABASE_URL']); "
+    "print(sys.stdin.read()); "
+    "print('err', os.environ['MAIL_KEY'], file=sys.stderr); "
+    "sys.exit(3)"
+)
+
+
+def test_redacts_the_file_values_in_the_output_and_passes_stdin_and_the_exit_code(
+    repo: Path,
+) -> None:
+    (repo / ".env.ci").write_text(f"MAIL_KEY={MAIL_KEY}\nDATABASE_URL={DB_URL}\n")
+
+    child = [sys.executable, "-c", LOUD_CHILD]
+
+    done = subprocess.run(
+        [sys.executable, str(LAUNCHER), "env", "run", ".env.ci", "--", *child],
+        cwd=repo,
+        input="stdin pw-quebec-73 line",
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert (done.returncode, done.stdout, done.stderr) == (
+        3,
+        "*** ***\nstdin *** line\n",
+        "err ***\n",
+    )
+
+
 def test_checks_only_files_that_git_does_not_ignore_and_skips_a_vendored_path(
     repo: Path,
 ) -> None:

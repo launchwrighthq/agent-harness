@@ -55,29 +55,37 @@ A masked value prints as `empty`, or as `set, <length> chars, sha256:<8 hex>`. A
 print as they are only for a key declared `secret = false`. Two files hold the same value when
 the digests are equal.
 
-Run each engine command alone: no pipe, no `;`, no `&&`, no redirection, no double quote and no
-backslash. The `deny-env-reads` hook allows only the lone command on a guarded file. When the user
-gives you a value to set, pass it with `--value '<v>'` in single quotes. A person or a script that
-holds the value pipes it to `--stdin`, so the value stays out of `ps` and the shell history.
+When the user gives you a value to set, pass it with `--value '<v>'` in single quotes. A person or
+a script that holds the value pipes it to `--stdin`, so the value stays out of `ps` and the shell
+history.
 
 ## Run a command with an env file
 
 `ah env run <file> [--require <KEY> ...] -- <command> [args]` starts one command with the keys
-of the file in its environment. The command can print them, so the guards ask the user unless
-`[env] runCommands` lists the program, the file is a plain env file of the project, and no
-argument can run code or expand (`sh -c`, `python3 -c`, `node -e`, `$X`, `/proc`). Never use
-`run` to see a value: `env`, `printenv` and an interpreter always ask.
+of the file in its environment. The engine replaces each value of the file in the output of the
+command with `***`. The guards ask only for a held file (such as `.env.production`) or a file of
+a protected environment. Never use `run` to see a value, and never encode, split or write a value
+to a file to get past the redaction.
 
-## Run it alone
+## Lines with more than one step
 
-Run each `ah env` command alone in its own Bash call: no pipe, no `;`, no `&&` and no
-`$` in another step. A line such as `ah env status; echo "exit=$?"` makes the guards ask the
-user, because they cannot clear the whole line.
+An engine command may share a Bash line with other steps, so this line passes:
+
+```bash
+cd <dir> && ah env status 2>&1 | head; echo "exit=$?"
+```
+
+The guards read each step on its own. They skip the words of a quiet
+engine step (every subcommand but `get --reveal` and `run`) and check every other step as any
+command. Keep the subcommand literal, and give a `get` no unquoted `$`: an expansion there can
+hide `--reveal`, so the guards ask. A path such as `"$SCRATCH/x.env"` in double quotes is fine.
 
 ## The reveal rule
 
 `ah env get <KEY> <file> --reveal` prints the value itself. Use it only when the user asks to see
-that one value. Never use it to compare values (use `diff`), to check that a key is set (use
+that one value. A key that `[env] publicKeys` names (such as `*_DRIVER`, `*_REGION` or
+`*_BUCKET`) holds config: its reveal asks nothing, and the engine masks a value that looks like
+a credential. Never use it to compare values (use `diff`), to check that a key is set (use
 `get` without `--reveal`) or to copy a value (use `copy` or `move`). After a reveal, do not repeat
 the value in a commit, a file, a log or a later reply.
 
@@ -119,4 +127,4 @@ memory:
 | The code files that `where` and `check` read | `env.readers`, `env.skip`, `env.ignore` |
 | The secret store, or the named stores | `env.store`, `env.stores` |
 | The environments whose push needs `--confirm` | `env.protected` |
-| The programs that `run` may start with no question | `env.runCommands` |
+| The key name patterns whose reveal asks nothing | `env.publicKeys` |

@@ -90,6 +90,16 @@ The hooks, the rules and the git hooks are in [docs/hooks.md](docs/hooks.md).
 | `docs/` | One document per area. |
 | `tests/unit/`, `tests/integration/` | The tests. |
 
+## Changes in 0.2.6
+
+The env guards ask only when a value can reach the agent context. They read a command line step
+by step, so the words of the env command in a quote, a commit message or a heredoc body are data.
+A quiet env command passes in any line. `[env] publicKeys` lists config keys that `get --reveal`
+shows without an ask, and the engine masks a public value that has a credential shape. `ah env
+run` redacts the file values from the output of the command, so a run of an interpreter on a file
+that is not held asks no more. `[env] runCommands` is no longer read. Details:
+[docs/hooks.md](docs/hooks.md) and [docs/env.md](docs/env.md).
+
 ## Changes in 0.2.5
 
 `ah work-status` reads the transcript records of the current Claude Code. A finish notification

@@ -46,9 +46,9 @@ installed hook sits three levels below the project root. Neither the payload nor
 `python3 ../bin/ah config get <key>`, run from its own folder, and only when it needs the value.
 
 A guard prints a PreToolUse `deny` or `ask`, or prints nothing. An `allow` from a PreToolUse hook
-would bypass the permission rules, so no guard prints one. Only a `--reveal` of the env engine
-gets an `ask` (see below). Nothing shows that Codex honors an `ask`, so the Codex adapter turns it
-into a `deny` that keeps the reason of the hook.
+would bypass the permission rules, so no guard prints one. Only an env engine step that can put
+a value in the context gets an `ask` (see below). Nothing shows that Codex honors an `ask`, so
+the Codex adapter turns it into a `deny` that keeps the reason of the hook.
 
 ## Config keys
 
@@ -130,14 +130,18 @@ resolved every path that a Bash command reads, and prompted when one did not res
 
 The Bash check names no program. A list of readers (`cat`, `grep`, `sed`, ...) misses `source`,
 `< file` and `python3 -c open(...)`, so a command that holds a guarded name is refused, whatever
-it runs. The cost is that the name cannot appear in shell prose either, a commit message
-included. In Bash, every other env file is the job of `bash-read-guard`, which refuses it to a
-reader. A credential backup in the tree is a copy outside the secret store that nothing rotates.
+it runs. The cost is that the name cannot appear in shell prose either, a commit message and a
+heredoc body included. The one exemption is the words of an env engine step that the guard
+clears (see The env engine exemption). In Bash, every other env file is the job of
+`bash-read-guard`, which refuses it to a reader. A credential backup in the tree is a copy
+outside the secret store that nothing rotates.
 
 ## The env engine exemption
 
-`deny-env-reads` and `bash-read-guard` let one run of the env engine name a credential file. The
-command must start with one of these forms, a space and a subcommand:
+`deny-env-reads` and `bash-read-guard` read a Bash command as the steps that bash runs:
+`agent_harness.shell_steps` splits it, and `agent_harness.env_guard` gives the answer for each
+engine step. A step runs the env engine when its first words, after leading `VAR=value`
+assignments and a keyword such as `then` or `do`, are one of these forms:
 
 - `python3 .claude/agent-harness/bin/ah env`
 - `python3 ~/.claude/agent-harness/bin/ah env`
@@ -146,48 +150,64 @@ command must start with one of these forms, a space and a subcommand:
 - `ah env`
 - the value of `harness.envCommand`
 
-The exemption is void on any character that can start a second command outside single quotes:
-a newline, `;`, `&`, `|`, a backtick, `$`, `<` and `>`. It is also void on any double quote or
-backslash, and on an unclosed single quote. Single-quoted text passes, because bash reads it
-literally. So `ah env set API_KEY .env.production --value 'a|b'` passes, and
-`cd app && ah env get API_KEY .env.production` is refused.
+A step starts at the start of the line, and after a newline, `;`, `&&`, `||`, `|`, `(` or `{`.
+So `cd app && ah env status` runs the engine. Text in single or double quotes is data, and so is
+a heredoc body that goes to a program other than a shell. So `grep -n "ah env" docs/env.md` and
+a commit message that names `ah env get` run no engine. A heredoc body or a here-string that goes
+to `sh`, `bash`, `zsh` or another shell is read as steps, and so is each `$(...)`, backtick and
+`<(...)` substitution, also inside double quotes and in an unquoted heredoc body.
 
-The global options `--root`, `--master` and `--declarations` may come before the subcommand when
-the guard can check each value. `--root` comes once and resolves to the project root or a folder
-inside it. `--master` and `--declarations` resolve inside the project and name no credential file
-by the rules of that guard. A value that holds `$`, a backtick, a quote or a backslash voids the
-exemption. So `ah env --root apps/api status` passes, and `ah env --master .env.production status`
-and `ah env --root /other/project status` are refused.
+Some steps can hide an engine run, so they ask. A step whose command word holds a `$` or a
+backtick asks when the line holds the word `env` (`$AH env status`). A wrapper (`env`, `eval`,
+`exec`, `sudo`, `timeout`, `xargs` and the like), a package runner (`npx`, `pnpm`, `uv` and the
+like) or a shell whose arguments hold the engine words asks (`bash -c 'ah env status'`). A command that the parser cannot read, such as one with an
+unclosed quote, gets no exemption, and it asks when its words hold the engine words anywhere.
 
-`ah env run <file> -- <command>` puts the keys of a file in the environment of one command, and
-that command can print them. A lone run passes with no question only when all of these hold:
+An `ah`, `./bin/ah` or `python3 <path>/ah` followed by `env` is an engine step that is no form of
+the list. It gets the same asks, but no exemption.
 
-- the file resolves inside the project; a file outside it is refused;
-- the file is no guarded or `secretFiles` name, and no `.env.<env>` of an environment in
-  `[env] protected`;
-- the program is a bare name that `[env] runCommands` lists (default empty), and no shell,
-  interpreter or wrapper (`sh`, `bash`, `python3`, `node`, `env`, `printenv`, `xargs`,
-  `command`, `exec`, `sudo`, `timeout` and the like);
-- no word holds `$`, a backtick, a glob or `/proc`, and no word is `-c`, `-e`, `-p` or `--eval`.
+Each engine step gets one of these answers:
 
-Any other run asks the user to confirm, and the guard parses that command no further. An
-allowed command still gets the checks of any command. With `runCommands = ["pnpm"]`,
-`ah env run .env.ci -- pnpm test` passes, `ah env run .env.ci -- sh -c 'echo $X'` asks, and
-`ah env run /etc/.env.ci -- pnpm test` is refused.
+| Step | Answer |
+|---|---|
+| Any expansion in the subcommand, or an unquoted `$`, backtick, glob or brace in a global option before it | Ask: the guard cannot see which subcommand runs. |
+| A quiet subcommand: `keys`, `status`, `check`, `where`, `layout`, `diff`, `template`, `init`, `set`, `unset`, `copy`, `move`, `rename`, `merge`, `slice`, `push`, `pull`, `help` | Pass, whatever its later arguments expand to. |
+| `get` with no `--reveal` | Pass. It prints the masked value. |
+| `get ... --reveal` of a key that `[env] publicKeys` names, every word literal | Pass, for any file, `.env.production` included. |
+| `get ... --reveal` of any other key | Ask, with the key name. |
+| `get` with an unquoted expansion, or a double-quoted one with no literal `/` beside it | Ask: the word can turn into `--reveal`. `"$SCRATCH/x.env"` cannot. |
+| `run` on a file outside the project | Deny. |
+| `run` on a held file (a guarded or `secretFiles` name) or the `.env.<env>` of an environment in `[env] protected` | Ask, with the file name. |
+| `run` after a `cd` that the guard cannot follow, inside a substitution, or on a file that an expansion names | Ask. |
+| `run` on any other file | Pass, whatever program it starts. The engine redacts the output (docs/env.md). |
 
-Every subcommand passes, writes included. The engine masks every value unless `--reveal` is
-given, and the `secrets` rule allows `--reveal` only when the user asked to see that value. So a
-run with `--reveal` gets an `ask`, and Claude Code asks the user to confirm it. Under Codex, the
+The credential name scan of both hooks skips the words of each step that passes or asks about a
+reveal: the engine reads a file that its arguments name, and it is no reader. For `run`, the scan
+skips the words up to `--` and reads the command after it as any command. The scan reads every
+other step, every redirection and every heredoc body in full. A step skips nothing when the guard
+cannot check its global options, when it is no form of the list, and when it sits in a
+substitution or a shell body. Each other step of the line
+gets the checks of any command.
+
+The global options `--root`, `--master` and `--declarations` may come before the subcommand. The
+guard checks each value: `--root` comes once and resolves to the project root or a folder inside
+it, and `--master` and `--declarations` resolve inside the project and name no credential file by
+the rules of that guard. A value that holds `$`, a backtick, a quote or a backslash fails. A step
+with a value that fails still gets its answer, but the scan reads its words. So
+`ah env --root /other/project status` passes, and `ah env --master .env.production status` is
+refused.
+
+`[env] publicKeys` lists key name patterns of config: `*_DRIVER`, `*_DRIVERS`, `*_REGION`,
+`*_BUCKET`, `*_HOST`, `*_PORT`, `*_MODE`, `*_LEVEL`, `*_ENDPOINT_URL`, `NODE_ENV` and
+`APP_ENV` by default. A `*` matches any text, and case counts. The engine is the safety net. When
+it reveals a public key whose value looks like a credential (a URL with a password, a PEM block,
+or a whole value of 32 or more base64 or hex characters), it prints the value masked and says
+why.
+
+A reveal of a key that is not public gets an `ask`, and Claude Code asks the user to confirm it.
+The `secrets` rule allows that reveal only when the user asked to see the value. Under Codex, the
 adapter turns the `ask` into a `deny`. Its reason says that the user runs the reveal themselves,
-or confirms it in Claude Code.
-
-The test of a reveal fails closed. An engine run that is not alone in its line, with a `$`, a
-backtick, a glob or a brace anywhere outside single quotes, also asks: the guard cannot see
-which words that character makes. When each engine run of such a line is a subcommand that
-never prints a value (`keys`, `status`, `check`, `where`, `layout`, `diff`, `template`, `init`,
-`set`, `unset`, `copy`, `move`, `rename`, `merge`, `slice`), the reason says so. It says that
-the env command does not run alone, and to run it alone in its own Bash call.
-`ah env status; echo "exit=$?"` gets that ask, and `ah env status` alone passes.
+or confirms it in Claude Code. A deny of the scan wins over an ask.
 
 A credential backup (`.env.production.bak`, `.local/secrets/`) is refused even to the
 engine.
