@@ -90,6 +90,24 @@ The hooks, the rules and the git hooks are in [docs/hooks.md](docs/hooks.md).
 | `docs/` | One document per area. |
 | `tests/unit/`, `tests/integration/` | The tests. |
 
+## Changes in 0.2.10
+
+`workspace-guard` lets git run in every repository of the operator in `~/Projects`: the default
+of `harness.workspace.repos` is the pattern `~/Projects/*`. An entry with `*`, `?` or `[` matches
+the main checkout of a repository, but never a vendored clone or a submodule inside another
+checkout. In a listed repository git may change the main checkout too. A `cd` or `-C` path may
+start with `~/`.
+
+`workspace-guard` also refuses git that a comment, a `case` pattern or a quoted heredoc delimiter
+hides, a fetch or pull into a local ref, a push or remote that names this repository,
+`git reflog expire` and `delete`, and `ext::` URLs. `bash-read-guard` refuses a file name built
+from a variable in a folder that holds a guarded file.
+
+The project files of the harness stay in `.claude/`: the default of `harness.adapterDir` is
+`.claude/adapters`, and `harness.manifests` defaults to `.claude/githooks/harness.toml` when that
+file exists. Move a `harness/` folder there and drop the two keys. Details:
+[docs/hooks.md](docs/hooks.md) and [docs/install.md](docs/install.md).
+
 ## Changes in 0.2.9
 
 The env engine reads three more key types: `float`, `decimal` and `path`. Before, `ah env get`
