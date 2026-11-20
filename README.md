@@ -90,10 +90,26 @@ The hooks, the rules and the git hooks are in [docs/hooks.md](docs/hooks.md).
 | `docs/` | One document per area. |
 | `tests/unit/`, `tests/integration/` | The tests. |
 
+## Changes in 0.2.11
+
+An entry of `harness.workspace.repos` is relative to the main checkout of the project, such as
+`../client` or `../*`. Every worktree reads it from the main checkout, so every worktree gets the
+same answer. The new default is `../*`: every sibling repository of the project, at any depth. A
+repository inside another checkout below the fixed part still does not match. An absolute or
+`~/` entry still works. `ah install` and `ah check` print a warning line for it, because it names
+a folder of one machine. Details: [docs/hooks.md](docs/hooks.md) and
+[docs/install.md](docs/install.md).
+
+The `push-to-checkout` git hook lands on a base checkout whose index already holds the pushed
+commit. Before, it read that staged content as the work of a peer and refused every landing. Now
+a file is the work of a peer only when it differs from HEAD and from the pushed commit. An index
+entry staged to the pushed commit over a file that still holds HEAD goes back to HEAD first, so
+the landing writes the file too. Details: [docs/hooks.md](docs/hooks.md).
+
 ## Changes in 0.2.10
 
-`workspace-guard` lets git run in every repository of the operator in `~/Projects`: the default
-of `harness.workspace.repos` is the pattern `~/Projects/*`. An entry with `*`, `?` or `[` matches
+`workspace-guard` lets git run in every repository that a pattern of `harness.workspace.repos`
+matches. 0.2.11 changes the default of the key. An entry with `*`, `?` or `[` matches
 the main checkout of a repository, but never a vendored clone or a submodule inside another
 checkout. In a listed repository git may change the main checkout too. A `cd` or `-C` path may
 start with `~/`.
@@ -123,8 +139,8 @@ asked. Details: [docs/hooks.md](docs/hooks.md).
 `ah worktree add` records the agent session that made a worktree, and `ah worktree claim <name>`
 records it for a worktree that has no owner. `workspace-guard` lets that session change its own
 worktree from any checkout. A peer worktree and the main checkout of the project stay refused. In
-a repository of `harness.workspace.repos` the main checkout is open too. The default,
-`~/Projects/*`, lists every repository of the operator in `~/Projects`. A hook of a worktree install runs the main checkout's copy when
+a repository of `harness.workspace.repos` the main checkout is open too. A hook of a
+worktree install runs the main checkout's copy when
 that install is newer, so an old branch never keeps old guards. `ah env` may write into the
 folders of `[env] writeRoots`, by default the agent scratch folders. Details:
 [docs/hooks.md](docs/hooks.md) and [docs/env.md](docs/env.md).

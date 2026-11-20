@@ -239,6 +239,15 @@ an entry that no installed manifest declares:
 
 These lines are information. They do not change the exit code.
 
+`ah install` and `ah check` also print one warning line for each absolute or `~/` entry of
+`harness.workspace.repos`. Such an entry names a folder of one machine. Write the entry relative
+to the main checkout instead, such as `../client` or `../*`. The warning does not change the exit
+code.
+
+```
+warning: .agents/harness.toml harness.workspace.repos: ~/repos/* is a path of this machine; write it relative to the main checkout, such as ../*
+```
+
 A changed `disable` or `enable` in `.agents/harness.toml` makes the registries differ until the
 next install. The check takes the project skills from the links of the lockfile, so a project
 skill added after the install changes nothing. The next install links it and lists it in
