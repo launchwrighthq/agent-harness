@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import fnmatch
 import functools
+import itertools
 import json
 import os
 import re
@@ -306,11 +307,13 @@ CONFIG_ALLOW = tuple(
 )
 # Other repositories of the operator where git may run, such as a client library beside the
 # project. A repository can hold configuration that runs a program, so only listed ones pass.
+# An entry with `*`, `?` or `[` is a pattern for the main checkout (`glob_repo`).
 TRUSTED_REPOS = tuple(
-    Path(os.path.expanduser(p)).resolve()
+    os.path.expanduser(p)
     for p in (WORKSPACE.get("repos") if isinstance(WORKSPACE.get("repos"), list) else [])
     if isinstance(p, str) and p
 )
+GLOB = re.compile(r"[*?\[]")
 
 
 def git(cwd: Path, *args: str) -> str:
@@ -362,6 +365,15 @@ class Token:
 def literal(word: Token) -> bool:
     """True for a word bash passes on as written: no expansion, glob, brace list or leading `~`."""
     return not word.dynamic and not EXPANDS.search(word.bare) and not word.bare.startswith("~")
+
+
+def home_path(word: Token) -> bool:
+    """True for an unquoted `~` or `~/...` with no other expansion: bash puts the home folder in."""
+    return (
+        not word.dynamic
+        and not EXPANDS.search(word.bare)
+        and (word.bare == "~" or word.bare.startswith("~/"))
+    )
 
 
 def computed(word: Token) -> bool:
@@ -797,8 +809,8 @@ def git_step(words: list[Token]) -> tuple[list[str], list[str]]:
         if not literal(words[i]):
             raise shape(f"the computed value of `{words[i].text}`")
         i += 1
-    args = [word.text for word in words[i + 1 :]]
-    if bad := next((w for w in words[i + 1 :] if not literal(w)), None):
+    args = [os.path.expanduser(w.text) if home_path(w) else w.text for w in words[i + 1 :]]
+    if bad := next((w for w in words[i + 1 :] if not literal(w) and not home_path(w)), None):
         raise shape(f"the computed git argument `{bad.text}`")
     moves: list[str] = []
     while args and args[0].startswith("-"):
@@ -870,12 +882,12 @@ def read_step(step: list[Token]) -> str | tuple[list[str], list[str]] | None:
         if (
             len(stages) > 1
             or len(words) != 2
-            or not literal(words[1])
+            or not (literal(words[1]) or home_path(words[1]))
             or words[1].text in ("", "-")
             or words[1].text.startswith("-")
         ):
             raise shape(f"`{text_of(step)}`, which is not `cd` with one literal path")
-        return words[1].text
+        return os.path.expanduser(words[1].text) if home_path(words[1]) else words[1].text
     if head == 0 and name in READERS:
         if refusal := filter_refusal(words, READERS) or pipe_refusal(stages):
             raise shape(refusal)
@@ -908,7 +920,12 @@ def common_dir(directory: Path) -> Path:
 def trusted_repo(directory: Path) -> Path | None:
     """The repository of `harness.workspace.repos` that `directory` is a folder of, or None.
     git at `directory` must use that repository, so a nested repository in it is no member."""
-    for repo in TRUSTED_REPOS:
+    for entry in TRUSTED_REPOS:
+        if GLOB.search(entry):
+            if (found := glob_repo(directory, entry)) is not None:
+                return found
+            continue
+        repo = Path(entry).resolve()
         if not directory.is_relative_to(repo):
             continue
         try:
@@ -917,6 +934,27 @@ def trusted_repo(directory: Path) -> Path | None:
             return None
         return repo if same else None
     return None
+
+
+def glob_repo(directory: Path, pattern: str) -> Path | None:
+    """The main checkout of the repository at `directory` when `pattern` matches it, or None.
+
+    `*` matches across `/`, so `~/Projects/*` takes a repository at any depth. A repository that
+    sits inside another checkout below the fixed part of the pattern (a vendored clone, a
+    submodule) does not match.
+    """
+    parts = Path(pattern).parts
+    fixed = len(list(itertools.takewhile(lambda part: not GLOB.search(part), parts)))
+    base = Path(*parts[:fixed]).resolve()
+    try:
+        main = common_dir(directory).parent
+    except (subprocess.SubprocessError, OSError):
+        return None
+    if not fnmatch.fnmatchcase(str(main), str(base.joinpath(*parts[fixed:]))):
+        return None
+    if any((p / ".git").exists() for p in main.parents if p.is_relative_to(base)):
+        return None
+    return main
 
 
 def shared_checkout(root: Path) -> Path:
@@ -1110,6 +1148,8 @@ def reason(
         return f"Never move a branch ref alone. Run `{LAND}` from your worktree."
     if sub == "push" and any(x in rest for x in (".", str(shared))):
         return f"Run `{LAND}` to update the local base branch; do not push into a checkout by hand."
+    if common != common_dir(own):
+        return None  # A repository of `harness.workspace.repos`: its own rules govern it.
     if (target != own and not owned(target, shared, session)) or (
         WORKTREES_ONLY and target == shared
     ):

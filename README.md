@@ -104,8 +104,9 @@ asked. Details: [docs/hooks.md](docs/hooks.md).
 
 `ah worktree add` records the agent session that made a worktree, and `ah worktree claim <name>`
 records it for a worktree that has no owner. `workspace-guard` lets that session change its own
-worktree from any checkout, also in a repository of `harness.workspace.repos`. A peer worktree and
-a main checkout stay refused. A hook of a worktree install runs the main checkout's copy when
+worktree from any checkout. A peer worktree and the main checkout of the project stay refused. In
+a repository of `harness.workspace.repos` the main checkout is open too. The default,
+`~/Projects/*`, lists every repository of the operator in `~/Projects`. A hook of a worktree install runs the main checkout's copy when
 that install is newer, so an old branch never keeps old guards. `ah env` may write into the
 folders of `[env] writeRoots`, by default the agent scratch folders. Details:
 [docs/hooks.md](docs/hooks.md) and [docs/env.md](docs/env.md).

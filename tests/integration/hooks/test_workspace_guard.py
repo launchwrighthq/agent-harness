@@ -161,7 +161,7 @@ COMPUTED = [
     "[g]it stash",
     "{git,x} stash",
     "git add *.ts",
-    "git log ~/x",
+    "git log ~user/x",
     "GIT_AUTHOR_NAME=$USER git log",
     "git commit -F - <<EOF\n$(id)\nEOF",
     "git commit -F - <<EOF\n`id`\nEOF",
@@ -208,7 +208,7 @@ CD_SHAPES = [
     'cd "$D" && git log',
     "cd && git log",
     "cd - && git log",
-    "cd ~/x && git log",
+    "cd ~user/x && git log",
     "cd -P sub && git log",
     "cd sub other && git log",
     "pushd sub && git log",
@@ -611,6 +611,71 @@ def test_lets_git_run_in_a_repository_that_the_config_lists(tmp_path: Path, outs
     ]
 
     assert got == ["silent", "silent", "silent", "deny", "deny"]
+
+
+def test_lets_a_mutation_run_in_the_main_checkout_of_a_listed_repository(
+    tmp_path: Path, outside: Path
+) -> None:
+    root = hook_project.make_project(
+        tmp_path / "project", f'[harness.workspace]\nrepos = ["{outside}"]\n'
+    )
+
+    got = hook_project.verdicts(
+        root,
+        HOOK,
+        [
+            f"git -C {outside} commit -m x a.txt",
+            f"cd {outside} && git switch -c fix/x && git merge --ff-only - && git branch -d fix/x",
+            f"git -C {outside} config core.hooksPath x",
+        ],
+    )
+
+    assert got == ["silent", "silent", "deny"]
+
+
+def test_takes_a_glob_entry_as_a_pattern_for_the_main_checkout(tmp_path: Path) -> None:
+    repos = tmp_path / "repos"
+    deep = hook_project.git_init(repos / "group" / "deep")
+    vendored = hook_project.git_init(deep / "vendor" / "lib")
+    elsewhere = hook_project.git_init(tmp_path / "elsewhere")
+    root = hook_project.make_project(
+        tmp_path / "project", f'[harness.workspace]\nrepos = ["{repos}/*"]\n'
+    )
+
+    got = hook_project.verdicts(
+        root,
+        HOOK,
+        [
+            f"git -C {deep} commit -m x a.txt",
+            f"git -C {vendored} commit -m x a.txt",
+            f"git -C {elsewhere} commit -m x a.txt",
+        ],
+    )
+
+    assert got == ["silent", "deny", "deny"]
+
+
+def test_trusts_each_repository_under_projects_in_home_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    other = hook_project.git_init(tmp_path / "Projects" / "other")
+    root = hook_project.make_project(tmp_path / "Projects" / "project")
+
+    got = hook_project.verdicts(
+        root,
+        HOOK,
+        [
+            "cd ~/Projects/other && git commit -m x a.txt",
+            "git -C ~/Projects/other commit -m x a.txt",
+            "cd ~ && git status",
+            f"git -C {other} log -1",
+            "git -C ~/elsewhere status",
+            "git -C ~user/x status",
+        ],
+    )
+
+    assert got == ["silent", "silent", "deny", "silent", "deny", "deny"]
 
 
 def test_lets_a_worktree_command_name_only_the_callers_own_worktree(

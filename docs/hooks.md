@@ -73,7 +73,7 @@ guards with the defaults.
 | `land.overlapExclude` | `lw-land` | Default `[]`. Paths, relative to the repository root, that the check for a carried gate does not count. A base move that touches only these paths and paths the branch did not change carries a green gate over. |
 | `workspace.worktreesOnly` | `workspace-guard` | Also refuse a git mutation in the main checkout. |
 | `workspace.gitConfigAllow` | `workspace-guard` | The keys `git -c` may set in an agent command. |
-| `workspace.repos` | `workspace-guard` | Other repositories where git may run, as absolute paths or `~/` paths, for example a client library beside the project. git runs in the main checkout of the project and every worktree of it without this key. |
+| `workspace.repos` | `workspace-guard` | Default `["~/Projects/*"]`. Other repositories where git may run, as absolute paths, `~/` paths or patterns. A pattern has `*`, `?` or `[` and matches the main checkout of a repository; `*` matches across `/`. A pattern does not match a repository that sits inside another checkout below its fixed part, such as a vendored clone. In a listed repository git may change the main checkout and every worktree, and that repository's own rules govern it. `[]` keeps git in the main checkout of the project and its worktrees. |
 | `guardedFiles` | `deny-env-reads`, `bash-read-guard` | Names no tool call may carry. An entry is a pattern or `{ pattern, hint }`. |
 | `secretFiles` | `bash-read-guard` | More credential names. An entry is a pattern or `{ pattern, hint }`. |
 | `envCommand` | `deny-env-reads`, `bash-read-guard` | One more env engine command form, for example `lw env`. A deny names it. |
@@ -244,9 +244,10 @@ the command runs in. It keeps the branch: the `lw-branch-audit` skill decides ab
 `add` records the session that made the worktree in `lw-owner` of its private Git folder, from
 `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`. `claim <name>` records the session for a worktree
 that has no owner, such as one that plain `git worktree add` made, and refuses one that another
-session owns. `workspace-guard` lets a session change a worktree that it owns from any checkout,
-in this repository or in one of `harness.workspace.repos`. Every other worktree and every main
-checkout stays refused. A git change in the scratchpad or another unlisted folder stays refused.
+session owns. `workspace-guard` lets a session change a worktree that it owns from any checkout.
+In this repository every other worktree and the main checkout stay refused. In a repository of
+`harness.workspace.repos` the main checkout and every worktree are open. A git change in the
+scratchpad or another unlisted folder stays refused.
 
 ## Git configuration in an agent command
 
@@ -285,9 +286,10 @@ Git reads configuration from more places, so the guard also refuses:
 
 A command that involves git may only be steps joined by `&&`, `;` or a newline:
 
-- `cd <literal path>`, with no option, no `-`, no `~` and no variable.
+- `cd <literal path>`, with no option, no `-` and no variable. The path may start with `~` or
+  `~/`, never `~user`.
 - One `git` command with literal arguments. Allowlisted variables may stand in front of it, and
-  `-C <literal path>` is allowed. It may take a heredoc whose body bash does not expand
+  `-C <literal path>` is allowed. An argument may start with `~` or `~/`. It may take a heredoc whose body bash does not expand
   (`git commit -F - <<'EOF'`), `2>&1` and output to `/dev/null`.
 - That git command piped into one `head`, `tail`, `grep`, `rg`, `wc`, `sort`, `uniq`, `cat`,
   `less`, `jq`, `sed -n` (with a `N,Mp` or `/re/p` script) or `awk` (with a literal program that
