@@ -746,6 +746,34 @@ def test_expands_a_glob_in_a_literal_folder_and_refuses_only_a_real_credential(
     assert list(zip(allowed + refused, got, strict=True)) == expected
 
 
+def test_reads_a_variable_file_name_in_a_literal_folder_as_a_glob(
+    tree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tree))
+    allowed = [
+        f"cat {tree}/skills/lw-land/$F",
+        f"cat {tree}/envs/$F.md",
+        f"cat {tree}/missing/$F",
+        "cat $HOME/skills/lw-land/${F}",
+        'cat "$OUT/$F"',
+        "cat $F",
+    ]
+    refused = [
+        f"cat {tree}/keys/$F",
+        f'cat "{tree}/envs/${{F}}"',
+        f"cat {tree}/linked/$F",
+        "cat ./$F",
+        "cat ~/keys/$F",
+        "cat $HOME/envs/$F",
+        f"cd {tree} && cat skills/$F",
+    ]
+
+    got = hook_project.verdicts(tree, HOOK, allowed + refused)
+
+    expected = [(c, "silent") for c in allowed] + [(c, "deny") for c in refused]
+    assert list(zip(allowed + refused, got, strict=True)) == expected
+
+
 def test_trusts_a_listed_folder_only_in_a_command_of_plain_readers(tree: Path) -> None:
     folder = f"{tree}/skills/lw-land"
     allowed = [
@@ -784,8 +812,7 @@ def test_trusts_a_listed_folder_only_in_a_command_of_plain_readers(tree: Path) -
 NAME_LISTINGS_ALLOWED = [
     "ls -la /srv/example/runtime /srv/example/runtime/*; ls /srv/example/runtime/*/* | head -30",
     "ls -d /srv/example/*app* 2>/dev/null; ls /srv/example | head -80 | tr '\\n' ' '",
-    "docker ps 2>&1 | head; find ~ -maxdepth 4 -name state.json -path '*cache*' 2>/dev/null"
-    " | head",
+    "docker ps 2>&1 | head; find ~ -maxdepth 4 -name state.json -path '*cache*' 2>/dev/null | head",
     "find /srv/example/data -maxdepth 2 -iname '*item*'; ls /srv/example/data | head -50",
     "ls app/src app/tests | head -80; find app/tests -path '*ref*' | head -40",
     "ls -la /srv/example/.env 2>&1; python3 /srv/example/tool.py",

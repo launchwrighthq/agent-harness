@@ -463,6 +463,15 @@ step before it in the same command can create a file that the glob matches when 
 `cat /srv/empty/*` stays refused, and `wc -l /srv/skills/lw-land/*` passes when the folder
 holds only `SKILL.md` and `land.sh`.
 
+A variable in the last part of a path reads as `*`, so `cat ~/.ssh/$F` can read a key. When the
+folder part of the word is literal (`~` and `$HOME` count as literal), the guard lists that folder.
+It refuses the word when a file there that the base name can match is a credential file, and when
+the folder exists but cannot be listed. A relative folder uses the directory of the command, and
+a `cd`, `pushd` or `popd` in the command refuses it. So `cat ~/notes/$F.md` passes, and
+`cat ./$F` is refused in a folder that holds `.env`. A folder that does not exist passes. A word
+with a computed folder (`"$OUT/$F"`) and a variable with no folder (`cat $F`) pass too, because the
+guard cannot know the folder.
+
 git matches a quoted pathspec itself. An exclude pathspec (`':!x'`, `':^x'`, `':(exclude)x'`)
 drops names, so the glob scan skips it. A long magic list counts as an exclude only when one
 entry is exactly `exclude`: `':(top,exclude)x'` drops names, `':(top,exclude-x)x'` picks them.

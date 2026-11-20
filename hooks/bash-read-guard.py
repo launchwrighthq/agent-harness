@@ -1651,6 +1651,7 @@ def names_a_secret(
     # The trust test reads the raw command: a pattern word that `globbed` blanks can still hold a
     # substitution that runs before the glob expands.
     clean = {} if dotglob or not listing_trusted(raw) else clean_globs(globbed, cwd, names)
+    moves = any(basename(word) in ("cd", "pushd", "popd") for word in command_words(raw))
     command = " ".join(word for word, _ in found)
     # Split on the shell operators too, so `*.pem;` and `$(cat *.pem)` give the glob alone. The
     # blank-split words stay too, so a bracket that holds an operator (`id_[r;]sa`) is read whole.
@@ -1673,11 +1674,45 @@ def names_a_secret(
         probe = re.sub(r"\$\{([^}]*)\}", r"\1", probe)
         probe = re.sub(r"\$[A-Za-z_][A-Za-z0-9_]*", "", probe)
         if not re.search(r"[*?\[]", probe if "${" in piece else basename(probe)):
+            if variable_reads_secret(piece, cwd, moves, names):
+                return piece
             continue
         if glob_reads_secret(piece, names, dotglob) and not clean.get(piece, False):
             return piece
     # `find` matches a name that starts with `.` to any pattern.
     return next((pick for pick in picks if glob_reads_secret(pick, names, True)), None)
+
+
+def variable_reads_secret(piece: str, cwd: str, moves: bool, names: Names) -> bool:
+    """True when a variable in the last part of the path `piece` can name a credential file.
+
+    The variable reads as `*`. The guard lists a literal folder part (`~` and `$HOME` count as
+    literal) and counts the word when it holds a credential file that the base name can match,
+    or when it exists and cannot be listed. A computed folder is unknown, as in `cat $F`.
+    """
+    folder, slash, base = piece.rpartition("/")
+    if not slash or not TEXT_EXPANSION.search(base):
+        return False
+    folder = re.sub(r"^\$(HOME|\{HOME\})(?=/|$)", "~", folder)
+    if re.search(r"[$`*?\[{}]", folder):
+        return False
+    root = os.path.expanduser(folder) if folder else "/"
+    if not os.path.isabs(root):
+        if moves:
+            return True
+        root = os.path.join(cwd, root)
+    if not os.path.lexists(root):
+        return False
+    try:
+        glob = glob_to_regex(TEXT_EXPANSION.sub("*", NUMBER_PARAM.sub("0", base)))
+        entries = os.listdir(root)
+    except (OSError, re.error):
+        return True
+    paths = [os.path.join(root, entry) for entry in entries if glob.fullmatch(entry)]
+    return any(
+        is_credential(path, names, True) or is_credential(os.path.realpath(path), names, True)
+        for path in paths
+    )
 
 
 def is_credential(fragment: str, names: Names, keys: bool) -> bool:
