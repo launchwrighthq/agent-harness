@@ -28,6 +28,17 @@ def test_returns_the_spec_defaults_without_a_config_file(tmp_path: Path) -> None
     assert loaded.get("harness.workspace.worktreesOnly") is False
 
 
+def test_keeps_the_project_files_of_the_harness_in_claude_by_default(tmp_path: Path) -> None:
+    assert config.load(tmp_path).get("harness.adapterDir") == ".claude/adapters"
+    assert config.load(tmp_path).get("harness.manifests") == []
+
+    manifest = tmp_path / ".claude" / "githooks" / "harness.toml"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text("", encoding="utf-8")
+
+    assert config.load(tmp_path).get("harness.manifests") == [".claude/githooks/harness.toml"]
+
+
 def test_defaults_the_base_branch_to_main_without_an_origin_head(tmp_path: Path) -> None:
     (tmp_path / ".git").mkdir()
 

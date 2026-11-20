@@ -121,7 +121,7 @@ def test_puts_the_project_entry_after_the_harness_entry_and_keeps_the_text() -> 
 def test_lists_each_rule_and_skill_in_the_agents_block() -> None:
     plan = Plan(rules=[PlannedRule("style", "pkg", "Style", ("docs/**",), ".claude/rules/lw/s.md")])
 
-    block = agents_block(plan, ["lw-demo"], "harness/adapters")
+    block = agents_block(plan, ["lw-demo"], ".claude/adapters")
 
     assert block.startswith(BLOCK_START)
     assert "| Style | `docs/**` | `.claude/rules/lw/s.md` |" in block

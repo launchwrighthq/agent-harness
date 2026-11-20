@@ -816,7 +816,7 @@ def test_keeps_a_project_skill_that_was_there_before_the_install(
 
 
 def write_rule_adapter(repo: Path, rule_id: str, text: str) -> Path:
-    path = repo / "harness/adapters/rules" / f"{rule_id}.md"
+    path = repo / ".claude/adapters/rules" / f"{rule_id}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     return path
@@ -858,8 +858,8 @@ def test_reports_an_edited_rule_adapter_until_the_next_install(
     removed = ah("check")
 
     assert stale.returncode == 1
-    assert stale.stdout.splitlines() == ["harness/adapters/rules/plain.md stale"]
-    assert removed.stdout.splitlines() == ["harness/adapters/rules/plain.md stale"]
+    assert stale.stdout.splitlines() == [".claude/adapters/rules/plain.md stale"]
+    assert removed.stdout.splitlines() == [".claude/adapters/rules/plain.md stale"]
 
 
 def test_refuses_a_rule_adapter_with_an_unknown_front_matter_key(
@@ -870,7 +870,7 @@ def test_refuses_a_rule_adapter_with_an_unknown_front_matter_key(
     done = ah("install", "--project", FROM, str(package))
 
     assert done.returncode == 1
-    assert "harness/adapters/rules/plain.md: unknown front matter line 'mode: replace'" in (
+    assert ".claude/adapters/rules/plain.md: unknown front matter line 'mode: replace'" in (
         done.stderr
     )
 

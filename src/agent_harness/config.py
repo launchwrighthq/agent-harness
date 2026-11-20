@@ -115,6 +115,14 @@ def default_base_branch(root: Path) -> str:
     return origin_head_branch(root) or "main"
 
 
+PROJECT_MANIFEST = ".claude/githooks/harness.toml"
+
+
+def default_manifests(root: Path) -> list[str]:
+    """The project manifest of its git hooks when the file exists, else none."""
+    return [PROJECT_MANIFEST] if (root / PROJECT_MANIFEST).is_file() else []
+
+
 SECTION_DEFAULTS: dict[str, dict[str, Any]] = {
     "harness": {
         "baseBranch": default_base_branch,
@@ -131,8 +139,8 @@ SECTION_DEFAULTS: dict[str, dict[str, Any]] = {
         "disable": [],
         "enable": [],
         # Extra manifests of the project, relative to the root. `ah install` adds `--manifest`.
-        "manifests": [],
-        "adapterDir": "harness/adapters",
+        "manifests": default_manifests,
+        "adapterDir": ".claude/adapters",
         "workspace": {
             "worktreesOnly": False,
             "gitConfigAllow": DEFAULT_GIT_CONFIG_ALLOW,

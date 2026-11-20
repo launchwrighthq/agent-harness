@@ -69,7 +69,7 @@ line for each one it replaces. Keep a project git hook in one of two ways:
 ## Rule adapters
 
 A project changes an installed rule with a rule adapter: `<adapterDir>/rules/<rule id>.md`, by
-default `harness/adapters/rules/<rule id>.md`. Without front matter, the install appends the
+default `.claude/adapters/rules/<rule id>.md`. Without front matter, the install appends the
 adapter text to the rule under a `## Project notes` heading. With `replace: true` in its front
 matter, the adapter text replaces the body of the rule. The `paths:` front matter of the rule
 stays in both cases. Front matter takes no other key.
@@ -204,6 +204,10 @@ the key.
 manifests = ["tools/agents/harness.toml"]
 ```
 
+Without the key, `harness.manifests` is `.claude/githooks/harness.toml` when that file exists. Put
+the git hooks of the project and their manifest in `.claude/githooks/`, so no project file of the
+harness sits outside `.claude/` and `.agents/`.
+
 The check reads the manifests that the lockfile names. After a change of `harness.manifests`, run
 `ah install`.
 
@@ -337,8 +341,8 @@ The installer reads these keys of `[harness]` in `.agents/harness.toml`:
 |---|---|---|
 | `disable` | `[]` | Ids of hooks, rules, skills, git hooks and tools to leave out. A project skill can be named too. An unknown id fails. |
 | `enable` | `[]` | Ids of items that are off by default. |
-| `manifests` | `[]` | Extra manifests of the project, relative to the root. `ah install` adds each `--manifest` to them. |
-| `adapterDir` | `harness/adapters` | The folder of free-text notes per skill that the `AGENTS.md` block names, and of the rule adapters in `rules/`. |
+| `manifests` | `[".claude/githooks/harness.toml"]` when that file exists, else `[]` | Extra manifests of the project, relative to the root. `ah install` adds each `--manifest` to them. |
+| `adapterDir` | `.claude/adapters` | The folder of free-text notes per skill that the `AGENTS.md` block names, and of the rule adapters in `rules/`. |
 | `lint.words`, `lint.allow` | `[]` | More banned words for `ah lint`, and banned words that this project allows. |
 
 A line that holds `lw-lint-ok` is not linted, for a line that must quote a banned form.

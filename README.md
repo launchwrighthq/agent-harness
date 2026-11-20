@@ -64,7 +64,7 @@ Run each command as `python3 .claude/agent-harness/bin/ah <command>` in a projec
 |---|---|---|
 | `ah install` | Installs the harness in a project or globally. | [docs/install.md](docs/install.md) |
 | `ah check [--global]` | Compares the installed files and registries with the lockfile and the manifests. Exits 1 and names each file that differs. | [docs/install.md](docs/install.md) |
-| `ah rules` | Prints each installed rule and each project rule of `.claude/rules/` with its line count and character count, a subtotal per group, then the total. A rule adapter in `harness/adapters/rules/<rule id>.md` adds project notes to a rule or replaces its body. | [docs/install.md](docs/install.md) |
+| `ah rules` | Prints each installed rule and each project rule of `.claude/rules/` with its line count and character count, a subtotal per group, then the total. A rule adapter in `.claude/adapters/rules/<rule id>.md` adds project notes to a rule or replaces its body. | [docs/install.md](docs/install.md) |
 | `ah selftest` | Runs the fixture of every installed hook for Claude Code and Codex, then the portability checks. | [docs/install.md](docs/install.md) |
 | `ah lint <path ...>` | Finds banned words, banned fillers and em dashes in Markdown and code comments. | [docs/install.md](docs/install.md) |
 | `ah comments [path ...]` | Checks the comment budget: the longest comment block and the comment share of each source file. Exits 1 on a finding. | [docs/hooks.md](docs/hooks.md) |
