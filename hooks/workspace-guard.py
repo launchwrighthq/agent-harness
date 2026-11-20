@@ -336,7 +336,8 @@ CONFIG_ALLOW = tuple(
 )
 # Other repositories of the operator where git may run, such as a client library beside the
 # project. A repository can hold configuration that runs a program, so only listed ones pass.
-# An entry with `*`, `?` or `[` is a pattern for the main checkout (`glob_repo`).
+# An entry with `*`, `?` or `[` is a pattern for the main checkout (`glob_repo`). A relative
+# entry starts at the main checkout of the project (`trusted_repo`).
 TRUSTED_REPOS = tuple(
     os.path.expanduser(p)
     for p in (WORKSPACE.get("repos") if isinstance(WORKSPACE.get("repos"), list) else [])
@@ -972,10 +973,12 @@ def common_dir(directory: Path) -> Path:
     return Path(git(directory, "rev-parse", "--path-format=absolute", "--git-common-dir")).resolve()
 
 
-def trusted_repo(directory: Path) -> Path | None:
+def trusted_repo(directory: Path, root: Path) -> Path | None:
     """The repository of `harness.workspace.repos` that `directory` is a folder of, or None.
-    git at `directory` must use that repository, so a nested repository in it is no member."""
-    for entry in TRUSTED_REPOS:
+    git at `directory` must use that repository, so a nested repository in it is no member. A
+    relative entry starts at the main checkout of `root`, the same from each of its worktrees."""
+    main = shared_checkout(root)
+    for entry in (os.path.join(main, e) for e in TRUSTED_REPOS):
         if GLOB.search(entry):
             if (found := glob_repo(directory, entry)) is not None:
                 return found
@@ -994,7 +997,7 @@ def trusted_repo(directory: Path) -> Path | None:
 def glob_repo(directory: Path, pattern: str) -> Path | None:
     """The main checkout of the repository at `directory` when `pattern` matches it, or None.
 
-    `*` matches across `/`, so `~/Projects/*` takes a repository at any depth. A repository that
+    `*` matches across `/`, so `../*` takes a sibling repository at any depth. A repository that
     sits inside another checkout below the fixed part of the pattern (a vendored clone, a
     submodule) does not match.
     """
@@ -1024,7 +1027,7 @@ def require_shared(directory: Path, root: Path) -> None:
     The directory must sit in the shared checkout (the main checkout and its worktrees), and its
     common Git directory must be the one of `root`, so a nested repository is refused too.
     """
-    if trusted_repo(directory) is not None:
+    if trusted_repo(directory, root) is not None:
         return
     common = common_dir(root)
     shared = common.parent
@@ -1396,7 +1399,7 @@ def check_command(command: str, cwd: Path, session: str | None = None) -> str | 
         return None
     root = project_root()
     shared = shared_checkout(root)
-    if not cwd.is_relative_to(shared) and trusted_repo(cwd) is None:
+    if not cwd.is_relative_to(shared) and trusted_repo(cwd, root) is None:
         return (
             f"git would run from {cwd}, outside this project ({shared}) and its worktrees. Run "
             "git only there, or in a repository that `harness.workspace.repos` lists."

@@ -144,8 +144,8 @@ SECTION_DEFAULTS: dict[str, dict[str, Any]] = {
         "workspace": {
             "worktreesOnly": False,
             "gitConfigAllow": DEFAULT_GIT_CONFIG_ALLOW,
-            # A pattern: each repository of the operator in ~/Projects, at any depth.
-            "repos": ["~/Projects/*"],
+            # Relative to the main checkout: each sibling repository, at any depth.
+            "repos": ["../*"],
         },
         "directives": DEFAULT_DIRECTIVES,
         # `dispatch`: commands that pick their runner, for example "ci test".

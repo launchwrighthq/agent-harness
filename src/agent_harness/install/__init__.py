@@ -84,7 +84,12 @@ def main(argv: list[str]) -> int:
 def check(argv: list[str]) -> int:
     from agent_harness import config
     from agent_harness.install.home import check_global, claude_home
-    from agent_harness.install.project import check_project, duplicate_lines, project_hooks
+    from agent_harness.install.project import (
+        check_project,
+        duplicate_lines,
+        machine_paths,
+        project_hooks,
+    )
 
     parser = argparse.ArgumentParser(
         prog="ah check",
@@ -98,8 +103,9 @@ def check(argv: list[str]) -> int:
         root = config.find_root()
         cfg = config.load(root)
         diffs, again, prefix = check_project(root, cfg), "ah install --project", ""
-        # Information only: a project hook or a likely duplicate changes no exit code.
-        for line in [*project_hooks(root), *duplicate_lines(root, cfg)]:
+        # Information only: a project hook, a likely duplicate or a machine path changes no
+        # exit code.
+        for line in [*project_hooks(root), *duplicate_lines(root, cfg), *machine_paths(cfg)]:
             print(line)
     for path, kind in diffs:
         print(f"{prefix}{path} {kind}")

@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "support"))
 import hook_project
 
 HOOK = "workspace-guard.py"
+NO_REPOS = "[harness.workspace]\nrepos = []\n"
 
 SIMPLE_SHAPES = [
     "git status",
@@ -440,8 +441,9 @@ def project(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def outside(tmp_path: Path) -> Path:
-    return hook_project.git_init(tmp_path / "outside")
+def outside(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A repository that no default entry of `harness.workspace.repos` matches."""
+    return hook_project.git_init(tmp_path_factory.mktemp("outside"))
 
 
 def check(project: Path, group: dict[str, tuple[list[str], str]], name: str) -> None:
@@ -721,27 +723,98 @@ def test_takes_a_glob_entry_as_a_pattern_for_the_main_checkout(tmp_path: Path) -
     assert got == ["silent", "deny", "deny"]
 
 
-def test_trusts_each_repository_under_projects_in_home_by_default(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("HOME", str(tmp_path))
-    other = hook_project.git_init(tmp_path / "Projects" / "other")
-    root = hook_project.make_project(tmp_path / "Projects" / "project")
+def test_takes_a_relative_entry_from_the_main_checkout(tmp_path: Path) -> None:
+    work = tmp_path / "work"
+    client = hook_project.git_init(work / "client")
+    other = hook_project.git_init(work / "other")
+    root = hook_project.make_project(
+        work / "project", '[harness.workspace]\nrepos = ["../client"]\n'
+    )
 
     got = hook_project.verdicts(
         root,
         HOOK,
         [
-            "cd ~/Projects/other && git commit -m x a.txt",
-            "git -C ~/Projects/other commit -m x a.txt",
-            "cd ~ && git status",
-            f"git -C {other} log -1",
-            "git -C ~/elsewhere status",
+            f"git -C {client} commit -m x a.txt",
+            "git -C ../client commit -m x a.txt",
+            f"git -C {other} commit -m x a.txt",
+        ],
+    )
+
+    assert got == ["silent", "silent", "deny"]
+
+
+def test_reads_a_relative_pattern_from_the_main_checkout_in_each_worktree(tmp_path: Path) -> None:
+    work = tmp_path / "work"
+    deep = hook_project.git_init(work / "clients" / "group" / "deep")
+    vendored = hook_project.git_init(deep / "vendor" / "lib")
+    sibling = hook_project.git_init(work / "sibling")
+    config = '[harness.workspace]\nrepos = ["../clients/*"]\n'
+    root = hook_project.make_project(work / "project", config)
+    identity = ["-c", "user.name=test", "-c", "user.email=test@example.invalid"]
+    own = root / ".claude" / "worktrees" / "own"
+    for args in (
+        [*identity, "commit", "--allow-empty", "-q", "-m", "init"],
+        ["worktree", "add", "-q", "-b", "own", str(own)],
+    ):
+        subprocess.run(["git", "-C", str(root), *args], check=True)
+    hook_project.install_hooks(own, config)
+    commands = [
+        f"git -C {deep} commit -m x a.txt",
+        f"git -C {vendored} commit -m x a.txt",
+        f"git -C {sibling} commit -m x a.txt",
+    ]
+
+    got = [
+        hook_project.verdicts(root, HOOK, commands, root),
+        hook_project.verdicts(own, HOOK, commands, own),
+    ]
+
+    assert got == [["silent", "deny", "deny"]] * 2
+
+
+def test_trusts_each_sibling_repository_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(hook_project.git_init(tmp_path / "home")))
+    work = tmp_path / "work"
+    sibling = hook_project.git_init(work / "group" / "sibling")
+    vendored = hook_project.git_init(sibling / "vendor" / "lib")
+    root = hook_project.make_project(work / "project")
+
+    got = hook_project.verdicts(
+        root,
+        HOOK,
+        [
+            f"cd {sibling} && git commit -m x a.txt",
+            "git -C ../group/sibling commit -m x a.txt",
+            f"git -C {vendored} commit -m x a.txt",
+            "git -C ~ status",
             "git -C ~user/x status",
         ],
     )
 
-    assert got == ["silent", "silent", "deny", "silent", "deny", "deny"]
+    assert got == ["silent", "silent", "deny", "deny", "deny"]
+
+
+def test_still_takes_a_home_entry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    other = hook_project.git_init(tmp_path / "repos" / "other")
+    root = hook_project.make_project(
+        tmp_path / "project", '[harness.workspace]\nrepos = ["~/repos/*"]\n'
+    )
+
+    got = hook_project.verdicts(
+        root,
+        HOOK,
+        [
+            "cd ~/repos/other && git commit -m x a.txt",
+            f"git -C {other} log -1",
+            "git -C ~/elsewhere status",
+        ],
+    )
+
+    assert got == ["silent", "silent", "deny"]
 
 
 def test_lets_a_worktree_command_name_only_the_callers_own_worktree(
@@ -837,7 +910,7 @@ def test_lets_a_session_change_a_worktree_that_it_owns_from_another_checkout(
         ).stdout.strip()
     )
     (marker / "lw-owner").write_text("session-a\n", encoding="utf-8")
-    other = hook_project.make_project(tmp_path / "other")
+    other = hook_project.make_project(tmp_path / "other", NO_REPOS)
     commits = [
         f"git -C {own} commit --allow-empty -m x",
         f"git -C {peer} commit --allow-empty -m x",

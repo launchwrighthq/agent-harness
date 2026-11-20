@@ -393,7 +393,7 @@ def install_project(
     if write_text(root, LOCK_FILE, lock.to_text(), lambda _line: None):
         changes += 1
     # Information only: the project removes an old copy itself (docs/install.md).
-    for line in likely_duplicates(root, plan):
+    for line in [*likely_duplicates(root, plan), *machine_paths(cfg)]:
         out(line)
     out(
         f"ah install: {len(plan.hooks)} hooks, {len(plan.rules)} rules, {len(plan.skills)} skills,"
@@ -507,6 +507,17 @@ def likely_duplicates(root: Path, plan: Plan) -> list[str]:
         if name not in planned and f"lw-{name}" in planned:
             lines.append(f"{SKILL_DIR}/{name}: a likely duplicate of the harness skill lw-{name}")
     return lines
+
+
+def machine_paths(cfg: Config) -> list[str]:
+    """A warning per absolute or `~/` entry of `harness.workspace.repos`: it names one machine."""
+    repos = cfg.get("harness.workspace.repos")
+    return [
+        f"warning: {CONFIG_FILE.as_posix()} harness.workspace.repos: {entry} is a path of this"
+        " machine; write it relative to the main checkout, such as ../*"
+        for entry in (repos if isinstance(repos, list) else [])
+        if isinstance(entry, str) and (entry.startswith("~") or Path(entry).is_absolute())
+    ]
 
 
 def duplicate_lines(root: Path, cfg: Config) -> list[str]:

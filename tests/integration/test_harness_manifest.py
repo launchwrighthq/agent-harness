@@ -116,7 +116,8 @@ def label(fixture: dict[str, Any]) -> str:
 @pytest.mark.parametrize("hook_id", WITH_FIXTURES)
 def test_answers_every_fixture_of_the_hook_as_expected(hook_id: str, tmp_path: Path) -> None:
     hook = HOOKS[hook_id]
-    project = hook_project.make_project(tmp_path / "project")
+    # One level down, so the decoy checkouts are no siblings that `harness.workspace.repos` trusts.
+    project = hook_project.make_project(tmp_path / "work" / "project")
     script = str(Path(hook["script"]).relative_to("hooks"))
     failures: list[str] = []
     for n, fixture in enumerate(hook["fixture"]):

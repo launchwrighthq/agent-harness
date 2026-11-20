@@ -746,6 +746,30 @@ def test_names_a_likely_duplicate_hook_and_skill_and_keeps_the_exit_code(
     assert skill_line in checked.stdout.splitlines()
 
 
+def test_warns_of_a_machine_path_in_the_workspace_repos_and_keeps_the_exit_code(
+    repo: Path, package: Path, ah: Ah, tmp_path: Path
+) -> None:
+    (repo / ".agents").mkdir()
+    (repo / ".agents/harness.toml").write_text(
+        f'[harness.workspace]\nrepos = ["../*", "~/repos/*", "{tmp_path}/client"]\n'
+    )
+    expected = [
+        f"warning: .agents/harness.toml harness.workspace.repos: {entry} is a path of this"
+        " machine; write it relative to the main checkout, such as ../*"
+        for entry in ("~/repos/*", f"{tmp_path}/client")
+    ]
+
+    installed = ah("install", "--project", FROM, str(package))
+    checked = ah("check")
+
+    assert installed.returncode == 0, installed.stderr
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+    for done in (installed, checked):
+        assert [
+            line for line in done.stdout.splitlines() if line.startswith("warning:")
+        ] == expected
+
+
 def write_project_manifest(repo: Path) -> Path:
     folder = repo / "tools" / "agents"
     (folder / "hooks").mkdir(parents=True)
@@ -772,9 +796,12 @@ def test_installs_the_project_manifests_that_the_config_names(
 
     assert installed.returncode == 0, installed.stderr
     assert (repo / ".claude/agent-harness/manifests/agents/hooks/own_guard.py").is_file()
-    assert "own_guard.py" in read_json(repo / ".claude/settings.json")["hooks"]["PreToolUse"][-1][
-        "hooks"
-    ][0]["command"]
+    assert (
+        "own_guard.py"
+        in read_json(repo / ".claude/settings.json")["hooks"]["PreToolUse"][-1]["hooks"][0][
+            "command"
+        ]
+    )
     assert again.returncode == 0, again.stderr
     assert again.stdout.splitlines()[-1].endswith("nothing changed")
     assert snapshot(repo) == first
