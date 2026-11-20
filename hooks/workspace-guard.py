@@ -64,6 +64,26 @@ REFUSED_FLAGS = {
     "show": ("--output", "--ext-diff"),
     "whatchanged": ("--output", "--ext-diff"),
 }
+# The `git fetch` and `git pull` flags that bring more refspecs, and those that take the next
+# word as their value.
+REFSPEC_FLAGS = ("--stdin", "--refmap")
+FETCH_VALUES = (
+    "--depth",
+    "--deepen",
+    "--shallow-since",
+    "--shallow-exclude",
+    "--jobs",
+    "--negotiation-tip",
+    "--server-option",
+    "--filter",
+    "--recurse-submodules-default",
+    "--submodule-prefix",
+    "--strategy",
+    "--strategy-option",
+)
+# The subcommands that take a repository URL. The `ext::` transport runs a program.
+URL_TAKERS = {"remote", "fetch", "pull", "push", "clone", "ls-remote", "archive", "submodule"}
+PROGRAM_TRANSPORT = re.compile(r"(^|=)ext::", re.IGNORECASE)
 # The `git worktree` commands that change one worktree. Each may name only the caller's own.
 WORKTREE_CHANGES = {"remove", "move", "lock", "unlock", "repair"}
 # The name of a new worktree folder.
@@ -263,8 +283,17 @@ OPERATORS = (
 JOINERS = {"&&", ";", "\n"}
 # Operators that end a simple command. Every other operator is a redirection.
 SEPARATORS = JOINERS | {"||", ";;", ";&", "&", "|", "|&", "(", ")"}
-# A heredoc delimiter: quoted, backslashed or plain.
-DELIMITER = re.compile(r"""[ \t]*(?:'([^'\n]*)'|"([^"\n]*)"|(\\?)([A-Za-z0-9_.\-]+))""")
+# A heredoc delimiter: one word of quoted, backslashed and plain parts, such as `'E'OF`.
+DELIMITER = re.compile(
+    r"""[ \t]*((?:'[^'\n]*'|"[^"\n]*"|\\[A-Za-z0-9_.\-]|[A-Za-z0-9_.\-])+)(?=[\s;&|()<>]|$)"""
+)
+DELIMITER_PART = re.compile(r"""'([^']*)'|"([^"]*)"|\\(.)""")
+# In a `(` substitution, a `#` after one of these starts a comment.
+WORD_START = " \t\n;&|()<>"
+# The words that open and close a `case`, whose patterns end in an unmatched `)`.
+CASE_WORD = re.compile(r"(case|esac)(?=[\s;&|()<>]|$)")
+# The keywords after which a word names a command.
+KEYWORD_BEFORE = {"then", "do", "else", "elif", "if", "while", "until", "{", "!", "time"}
 # `$` starts an expansion only before one of these.
 EXPANSION_START = re.compile(r"[A-Za-z0-9_{(@*#?$!-]")
 
@@ -382,8 +411,13 @@ def computed(word: Token) -> bool:
 
 
 def closing(text: str, start: int, open_: str, close: str) -> int:
-    """The index of the `close` that matches `text[start]`, skipping quotes and escapes."""
+    """The index of the `close` that matches `text[start]`, skipping quotes and escapes.
+
+    In a `(` substitution a `#` that starts a word opens a comment, and the `)` after a `case`
+    pattern closes nothing, as in bash: `$(echo # )` runs on to the next line.
+    """
     depth = 0
+    cases: list[int] = []
     i = start
     while i < len(text):
         char = text[i]
@@ -396,14 +430,34 @@ def closing(text: str, start: int, open_: str, close: str) -> int:
                 end += 2 if char == '"' and text[end] == "\\" else 1
             i = end + 1
             continue
+        if open_ == "(" and i > start and text[i - 1] in WORD_START:
+            if char == "#":
+                newline = text.find("\n", i)
+                i = len(text) if newline < 0 else newline
+                continue
+            if (keyword := CASE_WORD.match(text, i)) and command_position(text[start + 1 : i]):
+                if keyword.group(1) == "case":
+                    cases.append(depth)
+                elif cases:
+                    cases.pop()
+                i = keyword.end()
+                continue
         if char == open_:
             depth += 1
+        elif char == close and cases and depth == cases[-1]:
+            pass
         elif char == close:
             depth -= 1
             if depth == 0:
                 return i
         i += 1
     raise ParseError(f"an unclosed `{open_}`")
+
+
+def command_position(before: str) -> bool:
+    """True when a word after the text `before` names a command: `case` there opens a case."""
+    before = before.rstrip(" \t")
+    return not before or before[-1] in "(;&|\n" or before.split()[-1] in KEYWORD_BEFORE
 
 
 def parse(command: str) -> tuple[list[Token], list[str]]:
@@ -546,9 +600,10 @@ def parse(command: str) -> tuple[list[Token], list[str]]:
                 found = DELIMITER.match(command, i)
                 if not found:
                     raise ParseError("a heredoc delimiter it cannot read")
-                plain = found.group(4) is not None and found.group(3) == ""
-                delimiter = next(
-                    g for g in (found.group(1), found.group(2), found.group(4)) if g is not None
+                raw = found.group(1)
+                plain = not re.search(r"""['"\\]""", raw)
+                delimiter = DELIMITER_PART.sub(
+                    lambda part: next(g for g in part.groups() if g is not None), raw
                 )
                 token = Token(op=prefix + op, text=delimiter)
                 tokens.append(token)
@@ -1086,9 +1141,45 @@ def flag_refusal(args: list[str]) -> str | None:
                 "a program or write a file. workspace-guard checks every argument, also after "
                 "`--`, so a path with this name is refused too."
             )
+    if sub in URL_TAKERS and (url := next((a for a in rest if PROGRAM_TRANSPORT.search(a)), None)):
+        return f"Do not pass `{url}` to `git {sub}` in an agent command: `ext::` runs a program."
     if sub == "clone":
         return clone_refusal(rest)
     return None
+
+
+def refspec_moves(sub: str, rest: list[str]) -> bool:
+    """True when `git fetch` or `git pull` writes a local ref other than a remote-tracking one.
+
+    A refspec `src:dst` writes `dst` as `update-ref` does, and `--stdin` and `--refmap` bring
+    more refspecs. The first operand is the repository, which may be `host:path`.
+    """
+    if sub not in ("fetch", "pull"):
+        return False
+    operands: list[str] = []
+    words = iter(rest)
+    for arg in words:
+        if long_flag(arg, REFSPEC_FLAGS):
+            return True
+        if (long_flag(arg, FETCH_VALUES) and "=" not in arg) or arg in ("-j", "-o", "-s", "-X"):
+            next(words, None)
+        elif not arg.startswith("-"):
+            operands.append(arg)
+    targets = [spec.split(":", 1)[1] for spec in operands[1:] if ":" in spec]
+    return any(target and not target.startswith("refs/remotes/") for target in targets)
+
+
+def names_repository(word: str, cwd: Path, common: Path) -> bool:
+    """True when `word` is a path or `file://` URL of a folder of the repository whose common
+    Git directory is `common`. A push there, or through a remote with that URL, moves a ref."""
+    path = word.removeprefix("file://")
+    if word.startswith("-") or (path not in (".", "..") and "/" not in path):
+        return False
+    folder = (cwd / path).resolve()
+    try:
+        return folder.is_dir() and common_dir(folder) == common
+    except (subprocess.SubprocessError, OSError):
+        return False
 
 
 def owned(target: Path, shared: Path, session: str | None) -> bool:
@@ -1108,6 +1199,10 @@ def reason(
     args: list[str], cwd: Path, own: Path, after_other: bool, session: str | None = None
 ) -> str | None:
     sub, *rest = args
+    if refspec_moves(sub, rest):
+        return f"Never move a branch ref alone. Run `{LAND}` from your worktree."
+    if sub == "reflog" and rest[:1] in (["expire"], ["delete"]):
+        return "Never expire or delete reflog entries: they are how lost work is found again."
     if read_only(args) or sub == "fetch":
         return None
     if sub == "stash":
@@ -1146,8 +1241,13 @@ def reason(
         return "Do not change shared Git configuration from an agent command."
     if sub == "update-ref" or (sub == "branch" and any(x in rest for x in ("-f", "-M", "--force"))):
         return f"Never move a branch ref alone. Run `{LAND}` from your worktree."
-    if sub == "push" and any(x in rest for x in (".", str(shared))):
+    if sub == "push" and any(names_repository(x, cwd, common) for x in rest):
         return f"Run `{LAND}` to update the local base branch; do not push into a checkout by hand."
+    if sub == "remote" and any(names_repository(x, cwd, common) for x in rest):
+        return (
+            "Do not add a remote that names this repository: a push to it moves a branch ref "
+            f"alone. Run `{LAND}` to update the local base branch."
+        )
     if common != common_dir(own):
         return None  # A repository of `harness.workspace.repos`: its own rules govern it.
     if (target != own and not owned(target, shared, session)) or (
@@ -1284,7 +1384,9 @@ def check_command(command: str, cwd: Path, session: str | None = None) -> str | 
     try:
         tokens, subs = parse(command)
     except ParseError as error:
-        if "git" not in unquote(command):
+        # Bash runs each line before the one it cannot parse, and `$X stash` there can be git.
+        computes = "\n" in command.rstrip("\n") and re.search(r"[$`]", command)
+        if "git" not in unquote(command) and not computes:
             return None
         return (
             f"workspace-guard cannot parse this command ({error}), so it cannot check its Git use. "

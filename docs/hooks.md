@@ -8,7 +8,7 @@ the config keys it reads, the manifest format and the limits of the guards.
 
 | Hook | Events | What it does |
 |---|---|---|
-| `workspace-guard` | PreToolUse (Bash) | Refuses a git mutation of another session's checkout, `git stash`, whole-tree staging, a ref-only move and every git command that is not a simple shape. |
+| `workspace-guard` | PreToolUse (Bash) | Refuses a git mutation of another session's checkout, `git stash`, whole-tree staging, a ref-only move, a reflog expiry, an `ext::` URL and every git command that is not a simple shape. |
 | `deny-foreign-branch-moves` | PreToolUse (Bash) | Refuses a ref-only move of a branch that another worktree has checked out. |
 | `worktree-path-guard` | PreToolUse (Bash) | Refuses `git worktree add` at a path other than `.claude/worktrees/<name>`. `ah worktree add <name>` makes a worktree there, so every guard lets it pass. |
 | `deny-env-reads` | PreToolUse (Bash and the file tools) | Refuses any tool call that names a guarded credential file, and refuses every env file but a `.example` to the file tools. |
@@ -300,6 +300,36 @@ Every other form is refused with one message that names these shapes: a runner (
 `timeout`, `sudo`, `eval`, `bash -c`, ...), a compound command, a subshell, a function, a
 substitution, a variable, a glob, `||`, a background `&` and redirection to a file.
 
+The guard reads a command as bash reads it. In a `$( )` or `<( )` substitution, a `#` that starts
+a word opens a comment to the end of the line, and the `)` after a `case` pattern closes nothing.
+A heredoc delimiter is one word of quoted and plain parts: `<<'E'OF` ends at the line `EOF`, and
+its body is quoted. A command that the guard cannot parse is refused when it holds `git`. A
+command of more than one line is refused also when it holds a `$` or a backtick, because bash runs
+each line before the line that it cannot parse.
+
+## Ref moves, history and transports
+
+`workspace-guard` refuses each git command that moves a branch ref without the checkout that
+holds the branch:
+
+- `git update-ref`, and `git branch` with `-f`, `-M` or `--force`.
+- `git fetch` and `git pull` with a refspec whose destination is not a remote-tracking ref
+  (`refs/remotes/...`), such as `git fetch . a:main` or `git fetch origin :main`. `--stdin` and
+  `--refmap` bring more refspecs, so the guard refuses them too. The first operand is the
+  repository, and the guard skips the value of each option that takes one (`--depth 1`).
+- `git push` to a path or a `file://` URL of this repository, such as `.`, `./`, the main
+  checkout or its `.git` folder.
+- `git remote add` and `git remote set-url` with such a path, because a later push to that
+  remote moves a ref.
+
+`git reflog expire` and `git reflog delete` are refused in every repository. A reflog is how lost
+work is found again.
+
+`git remote`, `fetch`, `pull`, `push`, `clone`, `ls-remote`, `archive` and `submodule` may not
+take an `ext::` URL, in any case: that transport runs a program. Any other remote change stays
+allowed in a checkout where git may change state. A remote with a local path runs no program that
+`git fetch <path>` does not run already.
+
 `git worktree remove`, `move`, `lock`, `unlock` and `repair` may name only the worktree of the
 effective directory, and that worktree must be the session's own. Each path must be the exact
 path of that worktree, absolute or from the effective directory, with no `..` and no link in any
@@ -455,7 +485,8 @@ a pipe into `grep` or `head` reads the names as lines, not as files.
 
 The guards stop accidents by cooperating agents. They are not a sandbox. Each one reads the
 command text before it runs, so a script file written earlier, or a program that reads a
-credential file itself, still gets through. In `bash-read-guard`, a sed `e` command or `s///e`
+credential file itself, still gets through. So does a shell that reads its script from a file or
+from stdin, such as `bash script.sh`, `bash < file`, `printf '...' | bash` or `. /dev/stdin`. In `bash-read-guard`, a sed `e` command or `s///e`
 flag, or any interpreter, can build a file name at run time that the guard cannot see; the guard
 is an accident guard, not a sandbox. Keep real secrets out of the agent's reach with file
 permissions, separate users or a container.

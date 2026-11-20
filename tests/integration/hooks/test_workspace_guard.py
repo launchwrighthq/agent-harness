@@ -343,6 +343,52 @@ CLONE_FLAGS_ALLOWED = [
     "git clone --config=color.ui=always origin dir",
     "git clone -qc user.email=x origin dir",
 ]
+TRANSPORTS = [
+    "git remote add x 'ext::sh -c x'",
+    "git remote set-url origin EXT::sh",
+    "git fetch 'ext::sh -c x' main",
+    "git clone ext::sh dir",
+    "git ls-remote ext::sh",
+    "git archive --remote=ext::sh HEAD",
+]
+# Bash reads a comment, a `case` pattern and a mixed heredoc delimiter in a substitution, and runs
+# each line before one it cannot parse.
+HIDDEN = [
+    'echo "$(echo x # )\ngit stash)"',
+    'echo "$(case x in a) echo ;; esac; git stash)"',
+    'echo "$(if true; then case x in (a) echo;; b) :;; esac; fi; git stash)"',
+    "cat <<'E'OF\nEOF\ngit stash\nE",
+    "cat <<E\\OF\nEOF\ngit stash\nE",
+    "X=gi\nX=${X}t\n$X stash\necho 'x",
+]
+HIDDEN_ALLOWED = [
+    'echo "$(echo x # )\necho y)"',
+    'echo "$(echo case a)"',
+    "cat <<'E'OF\nhello\nEOF",
+    "git commit -F - <<'E'OF\nfix: x\nEOF",
+    "echo $HOME 'x",
+]
+REF_MOVES = [
+    "git fetch . a:main",
+    "git fetch origin +main:refs/heads/main",
+    "git fetch origin :main",
+    "git fetch --refmap=refs/heads/a:refs/heads/main . a",
+    "git fetch --refm=x . a",
+    "git fetch --stdin . <<<a:main",
+    "git pull . a:main",
+    "git push ./ a:main",
+    "git remote add self .",
+    "git reflog expire --all",
+    "git reflog delete HEAD@{1}",
+]
+REF_MOVES_ALLOWED = [
+    "git fetch origin main:refs/remotes/origin/main",
+    "git fetch --depth 1 git@github.com:o/r.git main",
+    "git fetch -j 2 origin main",
+    "git reflog",
+    "git reflog show -5",
+    "git remote add mirror ../elsewhere",
+]
 PROGRAM_FLAGS_ALLOWED = [
     "git fetch origin",
     "git fetch --prune origin",
@@ -377,6 +423,11 @@ MORE_CASES = {
     "PROGRAM_FLAGS_ALLOWED": (PROGRAM_FLAGS_ALLOWED, "silent"),
     "CLONE_FLAGS": (CLONE_FLAGS, "deny"),
     "CLONE_FLAGS_ALLOWED": (CLONE_FLAGS_ALLOWED, "silent"),
+    "TRANSPORTS": (TRANSPORTS, "deny"),
+    "HIDDEN": (HIDDEN, "deny"),
+    "HIDDEN_ALLOWED": (HIDDEN_ALLOWED, "silent"),
+    "REF_MOVES": (REF_MOVES, "deny"),
+    "REF_MOVES_ALLOWED": (REF_MOVES_ALLOWED, "silent"),
 }
 
 
@@ -517,6 +568,21 @@ def test_reads_only_the_listed_remote_forms_and_treats_the_rest_as_mutations(
     got = hook_project.verdicts(root, HOOK, reads + mutations)
 
     assert got == ["silent"] * len(reads) + ["deny"] * len(mutations)
+
+
+def test_refuses_a_push_or_a_remote_that_names_this_repository_by_path(project: Path) -> None:
+    refused = [
+        f"git push {project} a:main",
+        f"git push {project}/ a:main",
+        f"git push file://{project} a:main",
+        f"git push {project}/.git a:main",
+        f"git remote add self {project}/sub",
+        f"git remote set-url origin file://{project}",
+    ]
+
+    got = hook_project.verdicts(project, HOOK, refused)
+
+    assert list(zip(refused, got, strict=True)) == [(c, "deny") for c in refused]
 
 
 def test_allows_a_remote_mutation_in_its_own_checkout(project: Path) -> None:
