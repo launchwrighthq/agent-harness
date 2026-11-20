@@ -13,6 +13,10 @@ set -uo pipefail
 new=$1
 cd "${GIT_WORK_TREE:-$(git rev-parse --show-toplevel)}" || exit 1
 
+# The lines of the sorted list $1 that are in the sorted list $2 (both), or not in it (only).
+both() { comm -12 <(printf '%s\n' "$1") <(printf '%s\n' "$2") | sed '/^$/d'; }
+only() { comm -23 <(printf '%s\n' "$1") <(printf '%s\n' "$2") | sed '/^$/d'; }
+
 refuse() {
   echo "land: REFUSED. Nothing in this checkout was changed." >&2
   echo "land: $1" >&2
@@ -24,18 +28,29 @@ refuse() {
 git update-index -q --refresh >/dev/null 2>&1 || echo "land: the index refresh reported changes; checking paths one by one" >&2
 
 # A peer's staging OUTSIDE the range survives `read-tree` untouched (measured), so it is not a
-# reason to refuse. Inside the range it shows up as a difference from HEAD below.
+# reason to refuse. Inside the range, a path is peer work only when it differs from HEAD AND from
+# $new. A path that already holds $new's content is the landing's own: a base whose index git or
+# an earlier landing staged to $new must land, not refuse forever.
 range=$(git diff --name-only HEAD "$new" --)
+stale=""
 if [[ -n $range ]]; then
   # The index and the working tree are asked separately. `git diff HEAD` reads the WORKING
   # TREE, so a path staged and then restored to HEAD's contents is invisible to it, and the
   # landing would write over an index entry its owner meant to keep.
   # shellcheck disable=SC2086
-  dirty=$({
-    git diff --name-only HEAD -- $range
-    git diff --cached --name-only HEAD -- $range
-  } | sort -u)
+  work_head=$(git diff --name-only HEAD -- $range | sort -u)
+  # shellcheck disable=SC2086
+  work_new=$(git diff --name-only "$new" -- $range | sort -u)
+  # shellcheck disable=SC2086
+  index_head=$(git diff --cached --name-only HEAD -- $range | sort -u)
+  # shellcheck disable=SC2086
+  index_new=$(git diff --cached --name-only "$new" -- $range | sort -u)
+  dirty=$(printf '%s\n' "$(both "$work_head" "$work_new")" "$(both "$index_head" "$index_new")" |
+    sed '/^$/d' | sort -u)
   [[ -z $dirty ]] || refuse "these files the landing writes are uncommitted here:" "$dirty"
+  # A path staged to $new whose working tree still holds HEAD: `read-tree` keeps that index
+  # entry and writes no file, so the checkout would show the reverse of the landing.
+  stale=$(only "$(only "$index_head" "$index_new")" "$work_head")
 fi
 
 # `read-tree` writes over an ignored file, an ignored folder and an ignored file where a folder
@@ -64,6 +79,10 @@ done <<<"$(git -c core.quotePath=false diff --name-only --no-renames --diff-filt
 [[ -z $in_the_way ]] ||
   refuse "these untracked or ignored paths are in the way of files the landing adds:" "$in_the_way"
 
+# The stale entries go back to HEAD, so `read-tree` writes the index and the file alike.
+# shellcheck disable=SC2086
+[[ -z $stale ]] || git reset -q HEAD -- $stale ||
+  refuse "git could not reset the index entries that already held the landing:" "$stale"
 git read-tree -u -m HEAD "$new" ||
   refuse "git could not write the working tree; an untracked file is in the way of an added path." ""
 exit 0

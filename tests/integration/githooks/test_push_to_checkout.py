@@ -1,4 +1,4 @@
-"""push-to-checkout refuses a landing that would write over an untracked or ignored path."""
+"""push-to-checkout refuses a landing that would write over a peer's path, and only then."""
 
 import os
 import subprocess
@@ -94,3 +94,51 @@ def test_lands_a_file_into_a_folder_that_holds_an_ignored_file(tmp_path: Path) -
     assert done.returncode == 0, done.stderr
     assert (repo / "secret" / "readme.md").read_text(encoding="utf-8") == "branch\n"
     assert (repo / "secret" / "key").read_text(encoding="utf-8") == "peer\n"
+
+
+def make_change(tmp_path: Path) -> tuple[Path, Path, str]:
+    """A checkout on `trunk` with `notes.txt`, a worktree that changes it, and the new commit."""
+    repo, tree = make_landing(tmp_path, "added.txt")
+    write(repo, "notes.txt", "base\n")
+    git(repo, "add", "notes.txt")
+    git(repo, "commit", "--quiet", "-m", "notes")
+    git(tree, "rebase", "--quiet", "trunk")
+    write(tree, "notes.txt", "branch\n")
+    git(tree, "commit", "--quiet", "-am", "change")
+    return repo, tree, git(tree, "rev-parse", "HEAD").stdout.strip()
+
+
+@pytest.mark.parametrize(
+    "stage",
+    [
+        ["checkout", "feat", "--", "notes.txt"],
+        ["read-tree", "feat"],
+    ],
+    ids=["index-and-working-tree", "index-only"],
+)
+def test_lands_on_a_base_that_already_holds_the_landing(tmp_path: Path, stage: list[str]) -> None:
+    repo, tree, new = make_change(tmp_path)
+    git(repo, *stage)
+
+    done = git(tree, "push", ".", "HEAD:refs/heads/trunk", check=False)
+
+    assert done.returncode == 0, done.stderr
+    assert git(repo, "rev-parse", "trunk").stdout.strip() == new
+    assert (repo / "notes.txt").read_text(encoding="utf-8") == "branch\n"
+    assert git(repo, "status", "--porcelain").stdout == ""
+
+
+@pytest.mark.parametrize("staged", [False, True], ids=["working-tree", "index"])
+def test_refuses_a_peer_change_that_differs_from_both_sides(tmp_path: Path, staged: bool) -> None:
+    repo, tree, _ = make_change(tmp_path)
+    write(repo, "notes.txt", "peer\n")
+    if staged:
+        git(repo, "add", "notes.txt")
+    before = git(repo, "rev-parse", "trunk").stdout
+
+    done = git(tree, "push", ".", "HEAD:refs/heads/trunk", check=False)
+
+    assert done.returncode == 1, done.stderr
+    assert "land:   notes.txt\n" in done.stderr
+    assert (repo / "notes.txt").read_text(encoding="utf-8") == "peer\n"
+    assert git(repo, "rev-parse", "trunk").stdout == before
