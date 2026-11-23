@@ -1,9 +1,9 @@
 """Where the specs of a repository live, read from the `[specs]` section of the config.
 
-`dirs` lists the spec folders, for example `docs/specs` and `docs/superpowers/plans`. A folder
-whose last path part is `plans` holds plans. Every other folder holds specifications. `kinds`
-gives a folder another kind (`spec`, `plan` or `qa`), badge word and status vocabulary. The kind
-decides the badge on a rendered page, and the vocabulary the statuses the renderer accepts.
+`dirs` lists the spec folders, by default `docs/specs` only. A project can add `docs/plans`.
+A folder whose last path part is `plans` holds plans. Every other folder holds specifications.
+`kinds` gives a folder another kind (`spec`, `plan` or `qa`), badge word and status vocabulary.
+The kind decides the badge on a rendered page, and the vocabulary the statuses it accepts.
 A `kinds` folder under a spec folder is a folder of its own, and the longest folder wins.
 
 Each folder can hold an `archive` folder for settled documents, and an `out` folder (`dist`)

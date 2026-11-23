@@ -14,7 +14,7 @@ The `[specs]` section of `.agents/harness.toml` holds the spec facts. Every key 
 
 | Key | Default | Meaning |
 |---|---|---|
-| `dirs` | `["docs/specs", "docs/superpowers/plans"]` | The spec folders. A folder whose last part is `plans` holds plans, and its pages carry the PLAN badge. Every other folder holds specifications. |
+| `dirs` | `["docs/specs"]` | The spec folders. One folder by default. A folder whose last part is `plans` holds plans, and its pages carry the PLAN badge. Every other folder holds specifications. A project that keeps plans apart adds that folder, for example `["docs/specs", "docs/plans"]`. |
 | `archive` | `archive` | The folder name, inside each spec folder, for settled documents. |
 | `out` | `dist` | The folder name, inside each spec folder, for rendered pages. Keep it out of git. |
 | `missingAssets` | `refuse` | What `spec render` does with an image under `assets/` that has no file. `refuse` refuses the render. `placeholder` writes the page with a box in place of the image and prints a warning. Another value is a config error. See [Missing images](#missing-images). |

@@ -170,10 +170,29 @@ SECTION_DEFAULTS: dict[str, dict[str, Any]] = {
         "localRuns": {"hint": "the remote gate", "dispatch": []},
         "scratchCap": {"memoryMax": "8G", "cpuMax": "400%"},
         "envDrift": {"envs": ["production"], "stores": []},
-        "lint": {"words": [], "allow": []},
+        "lint": {
+            "words": [],
+            "allow": [],
+            # Spec references in code comments (`ah lint --changed`, `ah lint --refs`): one regex
+            # per name. An empty value turns that pattern off.
+            "commentPatterns": {
+                "spec-id": r"\b[ADGLMNPQRU]\d{1,3}(?:-[ADGLMNPQRU]\d{1,3})?\b",
+                "spec-section": r"(?i)\bspec(?:\s+section)?\s+\d+(?:\.\d+)+\b",
+                "date": r"\b20\d\d-[01]\d-[0-3]\d\b",
+                "ported-from": r"(?i)\bported from\b",
+            },
+            "commentExclude": [
+                "docs/**",
+                ".claude/**",
+                ".agents/**",
+                ".codex/**",
+                "**/node_modules/**",
+                "**/dist/**",
+            ],
+        },
     },
     "specs": {
-        "dirs": ["docs/specs", "docs/superpowers/plans"],
+        "dirs": ["docs/specs"],
         "archive": "archive",
         "out": "dist",
         # `refuse` or `placeholder`: what `ah spec render` does with an image that has no file.

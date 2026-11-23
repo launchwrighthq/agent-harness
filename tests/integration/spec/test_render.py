@@ -136,6 +136,8 @@ def test_renders_every_spec_of_every_spec_folder_with_all(tmp_path: Path) -> Non
     write(tmp_path, "docs/specs/archive/b.md", HEAD + "Text.\n")
     write(tmp_path, "docs/superpowers/plans/c.md", HEAD + "Text.\n")
     write(tmp_path, "docs/specs/dist/old.md", "not a source\n")
+    two_folders = '[specs]\ndirs = ["docs/specs", "docs/superpowers/plans"]\n'
+    write(tmp_path, ".agents/harness.toml", two_folders)
 
     done = run_ah(tmp_path, "spec", "render", "--all")
 

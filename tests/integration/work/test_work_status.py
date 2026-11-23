@@ -761,8 +761,12 @@ def named(fx: Projects) -> Projects:
     archived = proj / SPECS / "archive" / "2026-09-01-old-design.md"
     archived.write_text(SPEC_OLD, encoding="utf-8")
     (proj / PLANS / "2026-09-06-plan.md").write_text(SPEC_DRAFT, encoding="utf-8")
+    (proj / ".agents").mkdir()
+    (proj / ".agents" / "harness.toml").write_text(
+        f'[specs]\ndirs = ["{SPECS}", "{PLANS}"]\n', encoding="utf-8"
+    )
     git("init", "-q", "-b", "main", cwd=proj)
-    git("add", "docs", cwd=proj)
+    git("add", "docs", ".agents", cwd=proj)
     git("commit", "-q", "-m", "specs", cwd=proj)
     return fx
 

@@ -6,10 +6,9 @@
 
 The command judges nothing. `digest` lists the requirement rows, the operator's later chat
 messages and the branches that name the spec, for a fresh auditor to check against the base
-branch (`harness.baseBranch` unless `--base` names another). `record` saves that auditor's
-verdict in the spec store, and `table` prints it in the one shape the operator and the
-`goal-spec` Stop hook read. A QA report has no requirement rows: a named one is refused, and
-`--open` and `--session` leave it out.
+branch (`harness.baseBranch` unless `--base` names another). `record` saves the verdict in the
+spec store, and `table` prints it in the shape that the `goal-spec` Stop hook reads. A QA
+report has no requirement rows: a named one is refused, and `--open` and `--session` skip it.
 """
 
 from __future__ import annotations

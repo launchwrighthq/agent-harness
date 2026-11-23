@@ -120,6 +120,9 @@ The last numbered section is `## N. Done means`, with one table:
   row. A reviewer who holds a shape holds it exactly, and that costs review passes.
 - The level is one rung of `.claude/rules/lw/operator-report.md`: `built`, `merged`, `pushed`,
   `deployed` or `proven`.
+- A row never asks the code to name it. Do not write "a code comment names this row". A gap
+  that the spec keeps open gets one marker line, `lw-gap <ID>: <removal condition>`, and the row
+  names that condition. `ah lint --changed` reports every other spec reference in a comment.
 
 `/lw-spec-audit` reads this table and checks each row against the base branch. `/lw-goal-spec`
 holds the turn until that audit has no open row. A requirement that lives only in the chat

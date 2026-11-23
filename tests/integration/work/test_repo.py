@@ -37,7 +37,9 @@ def repo(tmp_path: Path) -> Path:
     write(root / "docs/specs/archive/2026-01-03-old-design.md", "# O\n\nStatus: draft\n")
     write(root / "docs/superpowers/plans/2026-01-04-plan.md", "# P\n\nStatus: draft\n")
     write(root / ".gitignore", ".claude/\n")
-    git(root, "add", "docs", ".gitignore")
+    two_folders = '[specs]\ndirs = ["docs/specs", "docs/superpowers/plans"]\n'
+    write(root / ".agents/harness.toml", two_folders)
+    git(root, "add", "docs", ".gitignore", ".agents")
     git(root, "commit", "-q", "-m", "specs")
     tree = root / ".claude" / "worktrees" / "feat"
     git(root, "worktree", "add", "-q", "-b", "feat", str(tree))

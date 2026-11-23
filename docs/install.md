@@ -13,7 +13,9 @@ a fact in `.agents/harness.toml`, never in an installed file.
 | `ah check [--global]` | Exits 1 and prints `<path> <kind>` for each part that differs. Also exits 1 when the always-loaded rules are over `harness.rules.maxChars`. Exits 0 when every part matches. |
 | `ah rules` | Prints each installed rule and each project rule of `.claude/rules/` with its line count and character count, a subtotal per group, the total, then the size of the always-loaded rules. |
 | `ah selftest` | Runs every fixture of every enabled hook of the installed manifests, for Claude Code and through the Codex adapter. |
-| `ah lint <path ...>` | Prints `file:line:col rule message` for each banned word, banned filler or em dash in Markdown and in code comments. Exits 1 on a finding. |
+| `ah lint <path ...>` | Prints `file:line:col rule message` for each banned word, banned filler or em dash in Markdown, in code comments and in Python docstrings. Exits 1 on a finding. |
+| `ah lint --changed` | Runs every lint rule, the spec references of `lint.commentPatterns` included, on the lines that are new or changed since the base branch. The files are the tracked files that differ from the commit where HEAD left the base branch, and the untracked files. Exits 1 on a finding. |
+| `ah lint --refs <path ...>` | Prints each spec reference in the comments and docstrings of the named files and folders, on every line. A sweep before a cleanup. Exits 1 on a finding. |
 
 Run the launcher with `python3`: `python3 agent-harness/bin/ah install` from a source tree, or
 `python3 .claude/agent-harness/bin/ah check` in an installed project. `--from` installs from
@@ -460,6 +462,11 @@ The installer reads these keys of `[harness]` in `.agents/harness.toml`:
 | `rules.paths` | `{}` | Per rule id, the globs of the `paths:` block of the installed rule, in place of the paths of the manifest. |
 | `githooks.global` | `"run"` | `"run"` or `"skip"`. The install writes it to the git config key `harness.globalHooks`, which the git hook dispatcher reads. |
 | `plainEnvFiles` | `[]` | Env files that an agent may read, each as one exact file name. An entry with `*` or `?`, and an entry that a pattern of `guardedFiles` or `secretFiles` matches, fails the install and the check. A list that is not empty adds one line to the installed `secrets` rule. |
-| `lint.words`, `lint.allow` | `[]` | More banned words for `ah lint`, and banned words that this project allows. |
+| `lint.words`, `lint.allow` | `[]` | More banned words for `ah lint`, and words that this project allows. An allowed word is also never a spec reference, for example `allow = ["R2", "D1"]` for the storage products of those names. |
+| `lint.commentPatterns` | `spec-id`, `spec-section`, `date`, `ported-from` | One regular expression per name. `ah lint --changed` and `ah lint --refs` report each match in a code comment or a Python docstring as `spec-ref`. `spec-id` matches a row, decision or phase ID such as `N31`, `R40`, `(A9)` or `P2-D4`. `spec-section` matches `spec 4.2`. `date` matches `2026-11-23`. `ported-from` matches "ported from". A project sets one name to change its pattern, or to `""` to turn it off. |
+| `lint.commentExclude` | `docs/**`, `.claude/**`, `.agents/**`, `.codex/**`, `**/node_modules/**`, `**/dist/**` | The paths that the spec reference check leaves out. It never reads Markdown, `.toml` or `.yaml` files. |
 
-A line that holds `lw-lint-ok` is not linted, for a line that must quote a banned form.
+A line that holds `lw-lint-ok` is not linted, for a line that must quote a banned form. A comment
+of the form `lw-gap N3: <when to remove it>` is no spec reference: it marks a gap that a spec
+keeps open, and the spec row names the condition that removes it. A Python file that does not
+parse gives one `parse-error` finding, because lint cannot read its docstrings.

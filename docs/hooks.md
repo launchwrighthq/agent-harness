@@ -250,7 +250,7 @@ that is staged or committed. The floor is 30% because a move rewrites the import
 
 | Key | Default | Applies to |
 |---|---|---|
-| `comments.maxBlock` | `12` | The longest comment block of a new file. |
+| `comments.maxBlock` | `12` | The longest comment block of a new file, and the longest Python module docstring of any file. |
 | `comments.longBlock` | `25` | The longest comment block of every file. |
 | `comments.maxShare` | `0.35` | The share of comment lines in a new file with `shareFloor` code lines or more. |
 | `comments.shareFloor` | `60` | Below this many code lines, the share is not measured. |

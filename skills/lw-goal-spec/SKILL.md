@@ -81,7 +81,9 @@ workflow.
    the `Workflow` tool with a script. This skill is the user's opt-in to the workflow. Keep the
    workflow size guideline of the session. In Codex, start one subagent per task.
 3. Each agent brief names the worktree path, the requirement IDs it covers and the IDs it
-   leaves out.
+   leaves out. The IDs are for the agent, not for the code: a brief never asks for an ID, a
+   spec section or a date in a code comment. A gap that the spec keeps open gets one
+   `lw-gap <ID>: <removal condition>` line. Run `ah lint --changed` before each commit.
 4. Agents own disjoint files, test files included. Agents commit nothing. The orchestrator
    commits by path.
 5. The gate command is the gate. Nothing is done before it is green.

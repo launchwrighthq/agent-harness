@@ -85,7 +85,7 @@ def test_renders_the_missing_page_of_a_landed_spec_and_ends_the_turn(root: Path)
 
 
 def test_holds_a_link_that_no_checkout_holds(root: Path) -> None:
-    done = stop(root, f"file://{root}/docs/superpowers/plans/dist/2026-01-01-ghost.html")
+    done = stop(root, f"file://{root}/docs/specs/dist/2026-01-01-ghost.html")
 
     assert done.returncode == 2
     assert "No checkout of this project holds that page or its source" in done.stderr

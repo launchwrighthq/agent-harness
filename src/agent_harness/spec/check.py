@@ -1,6 +1,4 @@
-"""Check the layout of the spec folders: the rules each project used to run as its own tests.
-
-    ah spec check
+"""`ah spec check`: the layout of the spec folders, the rules each project ran as its own tests.
 
 `[specs] checks` picks the checks, and any finding exits 1. `archive`: a settled document in an
 active folder, or an unsettled one in the archive. A document of `[specs] keep` is a living
@@ -8,10 +6,8 @@ reference and stays in its active folder when it is settled. A `qa` folder has n
 `archive` leaves it out. `superseded`: a `superseded-by` path that does not resolve.
 `pointers`: a spec path in a file of `[specs] pointerFiles` that does not exist.
 `assets`: a file in `<folder>/assets/` whose name no document of the folder holds and no board
-of the folder links.
-
-A pointer inside an archive is history, and a path with a placeholder is a pattern, so neither
-counts. A pointer to a rendered page resolves when its source exists.
+of the folder links. A pointer inside an archive is history, and a path with a placeholder is a
+pattern, so neither counts. A pointer to a rendered page resolves when its source exists.
 """
 
 from __future__ import annotations

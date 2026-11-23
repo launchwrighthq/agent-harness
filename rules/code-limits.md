@@ -16,7 +16,7 @@
 
 Code is the source of truth for what the code does. A comment holds only what the code cannot
 say: an invariant, a unit, an owner, a rejected option that looks better, or a fact from outside
-the file such as a supplier behavior, a measured number or a spec row.
+the file such as a supplier behavior or a measured number.
 
 The caps come from the config. `ah config get harness.comments` prints them, and the defaults
 are below.
@@ -26,10 +26,16 @@ are below.
   document. Put it in the docs and leave one line that names it.
 - **A new file with 60 code lines or more keeps its comment share at 0.35 of all lines at
   most** (`shareFloor`, `maxShare`).
+- **A Python module docstring has 12 lines at most** (`maxBlock`), in a new file and an old one.
 - **Never restate the code below.** When the comment and the signature say the same thing,
   delete the comment.
-- **A comment that names a file, a symbol or a spec is a claim.** Keep it true when the target
-  moves.
+- **A comment that names a file or a symbol is a claim.** Keep it true when the target moves.
+- **No spec references in code.** A comment or a docstring names no spec row, decision, phase,
+  spec section or date, and never says "ported from". The spec points at the code. A pointer
+  back goes stale when the spec changes.
+- **A gap that a spec keeps open gets one marker line:** `lw-gap N3: <when to remove it>`.
+  The spec row holds the detail. `ah lint --changed` reports every other spec reference on the
+  lines you add.
 - **No history in a source file.** "This used to be X" and a landing date belong in the commit
   message or the docs.
 

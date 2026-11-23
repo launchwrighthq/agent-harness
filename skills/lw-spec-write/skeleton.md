@@ -69,6 +69,10 @@ Architecture documents, environment examples and operator help that change.
 Name the checks: the gate command of the repository (`ah config get harness.gateCommand`) for
 application changes, and `ah spec render <path>` for this document.
 
+The spec names the code. The code never names the spec: no row ID, spec section or date in a code
+comment. A gap that this spec keeps open gets one marker line in the code,
+`lw-gap <ID>: <removal condition>`, and its row names that condition.
+
 ### 3.4 Live qualification
 
 - **L1. Case name.** The bounded run, its account, and the evidence it records. A live case is not

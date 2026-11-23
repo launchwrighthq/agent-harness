@@ -2,16 +2,13 @@
 
 Each fixture runs twice: as Claude Code runs the hook (the interpreter and the installed script)
 and through the Codex adapter. The answer must have the shape that the client reads. The Codex
-adapter turns an ask into a deny, so an `ask` fixture expects a deny through it.
-
-The portability checks follow: each skill resolves through its `.agents/skills` link, and the
-guards whose answer depends on the checkout run from a worktree subfolder of a scratch repository.
-
-A fixture of `ENV_GUARDS` that expects a deny and names a plain env file of the project
+adapter turns an ask into a deny, so an `ask` fixture expects a deny through it. A fixture of
+`ENV_GUARDS` that expects a deny and names a plain env file of the project
 (`harness.plainEnvFiles`) does not run: the project opened that name. It prints one SKIP line.
 
-The case `global-hooks` follows: the installed git hook dispatcher runs each global git hook once
-with `harness.globalHooks` at `run` and never at `skip`.
+The portability checks follow: each skill resolves through its `.agents/skills` link, the guards
+whose answer depends on the checkout run from a worktree subfolder of a scratch repository, and
+the case `global-hooks` runs each global git hook once at `run` and never at `skip`.
 """
 
 from __future__ import annotations

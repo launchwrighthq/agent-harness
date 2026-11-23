@@ -50,6 +50,10 @@ def test_writes_the_golden_page_of_each_fixture(
     (tmp_path / source).parent.mkdir(parents=True)
     (tmp_path / source).write_bytes((FIXTURES / f"{case}.md").read_bytes())
     write_assets(tmp_path, case)
+    (tmp_path / ".agents").mkdir()
+    (tmp_path / ".agents/harness.toml").write_text(
+        '[specs]\ndirs = ["docs/specs", "docs/superpowers/plans"]\n', encoding="utf-8"
+    )
 
     done = run_ah(tmp_path, "spec", "render", source)
 

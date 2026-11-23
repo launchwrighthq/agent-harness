@@ -62,7 +62,7 @@ STARTER_CONFIG = """\
 # manifests = []                      # extra manifests of the project, relative to the root
 
 [specs]
-# dirs = ["docs/specs", "docs/superpowers/plans"]
+# dirs = ["docs/specs"]               # add a folder named plans for implementation plans
 # A QA report folder (docs/spec.md): add "docs/qa" to dirs, then:
 # [specs.kinds."docs/qa"]
 # kind = "qa"

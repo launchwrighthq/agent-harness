@@ -47,8 +47,6 @@ def test_counts_each_folder_by_status_and_lists_the_findings(tmp_path: Path) -> 
     assert done.stdout == (
         "docs/specs: 3 documents: draft 1, in-progress 1, none 1\n"
         "docs/specs/archive: 3 documents: implemented 2, superseded-by 1\n"
-        "docs/superpowers/plans: 0 documents\n"
-        "docs/superpowers/plans/archive: 0 documents\n"
         "\n"
         "In an active folder and its archive: docs/specs/a.md, docs/specs/archive/a.md\n"
         "Settled with no evidence: docs/specs/archive/d.md (implemented)\n"

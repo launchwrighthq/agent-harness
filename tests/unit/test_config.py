@@ -22,7 +22,7 @@ def test_returns_the_spec_defaults_without_a_config_file(tmp_path: Path) -> None
     loaded = config.load(tmp_path)
 
     assert loaded.file is None
-    assert loaded.get("specs.dirs") == ["docs/specs", "docs/superpowers/plans"]
+    assert loaded.get("specs.dirs") == ["docs/specs"]
     assert loaded.get("specs.archive") == "archive"
     assert loaded.get("specs.out") == "dist"
     assert loaded.get("harness.workspace.worktreesOnly") is False

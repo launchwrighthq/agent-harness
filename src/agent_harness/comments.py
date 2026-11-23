@@ -76,6 +76,28 @@ class Measure:
     # The longest comment line in characters, indent left out, and its 1-based line number.
     widest: int = 0
     widest_at: int = 0
+    # The lines of the Python module docstring, 0 for none.
+    module_doc: int = 0
+
+
+def module_docstring_lines(source: str) -> int:
+    """The line count of the string that opens a Python file after comments and blank lines.
+
+    A line scan, like `measure_text`: a string prefix such as `r` is not read.
+    """
+    lines = source.split("\n")
+    for n, line in enumerate(lines):
+        text = line.strip()
+        if not text or text.startswith("#"):
+            continue
+        quote = text[:3] if text[:3] in ('"""', "'''") else None
+        if quote is None:
+            return 0
+        if quote in text[3:]:
+            return 1
+        ends = [m for m in range(n + 1, len(lines)) if quote in lines[m]]
+        return (ends[0] if ends else len(lines) - 1) - n + 1
+    return 0
 
 
 def budget_of(cfg: config.Config) -> dict[str, Any]:
@@ -172,7 +194,8 @@ def measure_text(source: str, path: str = "x.mts") -> Measure:
                 code += 1
     total = comment + code
     share = 0 if total == 0 else comment / total
-    return Measure(comment, code, share, longest, widest, widest_at)
+    doc = module_docstring_lines(source) if path.endswith(".py") else 0
+    return Measure(comment, code, share, longest, widest, widest_at, doc)
 
 
 def measure_file(file: Path, path: str) -> Measure:
@@ -198,6 +221,9 @@ def findings(path: str, measured: Measure, is_new: bool, budget: Mapping[str, An
     cap = block_cap(is_new, budget)
     if measured.longest > cap:
         out.append(f"{path} has a {measured.longest}-line comment block, cap {cap}")
+    if measured.module_doc > budget["maxBlock"]:
+        doc, most = measured.module_doc, budget["maxBlock"]
+        out.append(f"{path} has a {doc}-line module docstring, cap {most}")
     if is_new and measured.code >= budget["shareFloor"] and measured.share > budget["maxShare"]:
         share, most = percent(measured.share), percent(budget["maxShare"])
         out.append(f"{path} is {share}% comments, cap {most}%")
@@ -300,6 +326,36 @@ def _findings_of(
     return out
 
 
+def fork_point(root: Path, base_branch: str) -> str:
+    """The commit where HEAD left `base_branch`, or HEAD when the branch does not exist."""
+    fork = _git(root, ["merge-base", base_branch, "HEAD"])
+    return fork.stdout.strip() if fork.returncode == 0 else "HEAD"
+
+
+HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+
+
+def added_lines(root: Path, since: str, path: str) -> set[int] | None:
+    """The line numbers of `path` that are new or changed since the commit `since`.
+
+    None means every line: git does not track the file.
+    """
+    if _git(root, ["ls-files", "--error-unmatch", "--", path]).returncode != 0:
+        return None
+    args = ["diff", "--relative", "-U0", "--no-color", "--no-ext-diff", since, "--", path]
+    done = _git(root, args)
+    if done.returncode != 0:
+        raise HarnessError(f"git diff failed in {root} for {path}: {done.stderr.strip()}")
+    out: set[int] = set()
+    for line in done.stdout.split("\n"):
+        hunk = HUNK.match(line)
+        if hunk is not None:
+            start = int(hunk.group(1))
+            count = 1 if hunk.group(2) is None else int(hunk.group(2))
+            out.update(range(start, start + count))
+    return out
+
+
 def changed_files(root: Path, base_branch: str) -> list[str]:
     """The files of the working tree that changed since the base, relative to `root`.
 
@@ -307,8 +363,7 @@ def changed_files(root: Path, base_branch: str) -> list[str]:
     each untracked file that git does not ignore. Without the branch, the commit is HEAD. A
     deleted file is left out.
     """
-    fork = _git(root, ["merge-base", base_branch, "HEAD"])
-    since = fork.stdout.strip() if fork.returncode == 0 else "HEAD"
+    since = fork_point(root, base_branch)
     tracked = _git(root, ["diff", "--relative", "--name-only", "--diff-filter=d", "-z", since])
     untracked = _git(root, ["ls-files", "--others", "--exclude-standard", "-z"])
     for done, name in ((tracked, "diff"), (untracked, "ls-files")):

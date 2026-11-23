@@ -62,6 +62,7 @@ def test_reports_a_settled_spec_outside_the_archive_and_an_unsettled_one_inside(
             "docs/specs/a.md": doc("implemented - `a.py` runs it."),
             "docs/superpowers/plans/archive/b.md": doc("draft"),
         },
+        config='[specs]\ndirs = ["docs/specs", "docs/superpowers/plans"]\n',
     )
 
     done = check(root)

@@ -66,7 +66,7 @@ Run each command as `python3 .claude/agent-harness/bin/ah <command>` in a projec
 | `ah check [--global]` | Compares the installed files and registries with the lockfile and the manifests. Exits 1 and names each file that differs. Prints the size of the always-loaded rules, and exits 1 when it is over `harness.rules.maxChars`. | [docs/install.md](docs/install.md) |
 | `ah rules` | Prints each installed rule and each project rule of `.claude/rules/` with its line count and character count, a subtotal per group, the total, then the size of the rules that load in every session. `[harness.rules.paths]` scopes a rule to globs. A rule adapter in `.claude/adapters/rules/<rule id>.md` adds project notes to a rule or replaces its body. | [docs/install.md](docs/install.md) |
 | `ah selftest` | Runs the fixture of every installed hook for Claude Code and Codex, then the portability checks. | [docs/install.md](docs/install.md) |
-| `ah lint <path ...>` | Finds banned words, banned fillers and em dashes in Markdown and code comments. | [docs/install.md](docs/install.md) |
+| `ah lint <path ...>` | Finds banned words, banned fillers and em dashes in Markdown, code comments and Python docstrings. `--changed` adds the spec references in comments, on the lines new since the base branch. `--refs <path>` lists the spec references of every line. | [docs/install.md](docs/install.md) |
 | `ah comments [path ...]` | Checks the comment budget: the longest comment block and the comment share of each source file. Exits 1 on a finding. | [docs/hooks.md](docs/hooks.md) |
 | `ah config get <key>` | Prints one config value. | this file |
 | `ah spec render\|audit\|codex\|goal\|restate\|repoint` | Renders a spec page and runs the audit store, the Codex review, the goal and the reconcile steps. | [docs/spec.md](docs/spec.md) |
@@ -89,6 +89,23 @@ The hooks, the rules and the git hooks are in [docs/hooks.md](docs/hooks.md).
 | `hooks/`, `skills/`, `rules/`, `githooks/`, `codex/` | The installed content and the Codex hook adapter. |
 | `docs/` | One document per area. |
 | `tests/unit/`, `tests/integration/` | The tests. |
+
+## Changes in 0.4.0
+
+Code comments stop pointing at specs. The spec points at the code.
+
+| Change | Keys | Details |
+|---|---|---|
+| `ah lint --changed` reports each spec reference in a comment or a Python docstring on the lines new since the base branch: row and decision IDs, spec sections, dates and "ported from". `ah lint --refs <path>` sweeps every line. A comment `lw-gap <ID>: <removal condition>` passes. | `lint.commentPatterns`, `lint.commentExclude` | [docs/install.md](docs/install.md) |
+| `ah lint` reads Python docstrings, through `ast`, and Python comments through `tokenize`. | none | [docs/install.md](docs/install.md) |
+| The comment budget caps a Python module docstring at `maxBlock` (12) lines, in a new file and an old one. | `comments.maxBlock` | [docs/hooks.md](docs/hooks.md) |
+| The rule `code-limits` no longer allows a spec row in a comment. The skills `lw-spec-write` and `lw-goal-spec` never ask for an ID in a code comment. | none | [rules/code-limits.md](rules/code-limits.md) |
+
+Two defaults differ from 0.3.3. Set the keys to keep the old behavior:
+
+- `specs.dirs` is `["docs/specs"]`. A project with plans in `docs/superpowers/plans` adds that folder.
+- `ah comments` and the `comment-budget` hook report a module docstring over 12 lines in an old file.
+  Shorten it, or raise `comments.maxBlock` for that path in `comments.overrides`.
 
 ## Changes in 0.3.3
 

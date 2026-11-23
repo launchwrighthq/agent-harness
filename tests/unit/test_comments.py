@@ -18,7 +18,22 @@ def test_counts_a_jsdoc_block_line_comments_and_code_in_ts() -> None:
 def test_counts_hash_comments_and_a_docstring_in_python_and_not_a_shebang() -> None:
     source = '#!/usr/bin/env python3\n"""Doc\nmore\n"""\n# note\nx = 1\n'
 
-    assert comments.measure_text(source, "a.py") == comments.Measure(4, 2, 4 / 6, 4, 6, 2)
+    assert comments.measure_text(source, "a.py") == comments.Measure(4, 2, 4 / 6, 4, 6, 2, 3)
+
+
+def test_caps_the_module_docstring_of_an_old_python_file_at_max_block() -> None:
+    long_doc = '"""' + "\n".join(f"line {i}" for i in range(13)) + '\n"""\n'
+    source = "# coding note\n" + long_doc + "".join(f"x{i} = {i}\n" for i in range(20))
+    short = '"""One line."""\n' + "".join(f"x{i} = {i}\n" for i in range(20))
+
+    measured = comments.measure_text(source, "a.py")
+
+    assert measured.module_doc == 14
+    assert comments.findings("a.py", measured, False, BUDGET) == [
+        "a.py has a 14-line module docstring, cap 12"
+    ]
+    assert comments.measure_text(short, "a.py").module_doc == 1
+    assert comments.measure_text(long_doc, "a.sh").module_doc == 0
 
 
 def test_counts_hash_and_slash_lines_and_a_block_in_terraform() -> None:

@@ -8,8 +8,7 @@ Each target names a read method in `read`:
 - `command`: a command that prints one JSON object per line.
 
 Every method only reads. A node that does not answer gives a problem line with the reason.
-`timeout` gives the seconds that one read of the target may take.
-docs/deploy.md lists every key.
+`timeout` gives the seconds that one read of the target may take. docs/deploy.md lists every key.
 """
 
 from __future__ import annotations

@@ -1,7 +1,7 @@
 # Spec format
 
-The spec folders are `specs.dirs` of `.agents/harness.toml`, by default `docs/specs/` for
-specifications and `docs/superpowers/plans/` for implementation plans. Read them with
+The spec folders are `specs.dirs` of `.agents/harness.toml`, by default `docs/specs/` only. A
+folder whose last part is `plans` holds implementation plans. Read them with
 `python3 .claude/agent-harness/bin/ah config get specs.dirs`. Keep an existing document where it is
 when you revise it. A new file name starts `YYYY-MM-DD-`. Each document is Markdown with a
 descriptive H1, a `Date:` line and a `Status:` line.

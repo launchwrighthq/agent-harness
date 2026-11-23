@@ -78,3 +78,30 @@ def test_prints_each_finding_and_exits_one(
     ]
     assert lint.main([]) == 2
     assert "usage: ah lint" in capsys.readouterr().err
+
+
+def test_reads_python_docstrings_and_comments_and_not_strings() -> None:
+    py = "\n".join(
+        [
+            '"""A robust module."""',
+            "",
+            "def f():",
+            '    """Leverage nothing.',
+            "",
+            '    more text"""',
+            '    s = """robust but code"""',
+            "    return s  # utilize it",
+            "",
+            "class C:",
+            "    x = 1",
+            '    y = "# robust"',
+        ]
+    )
+
+    assert [f.line for f in lint_text("a.py", py)] == [1, 4, 8]
+
+
+def test_reports_a_python_file_that_does_not_parse_and_still_reads_its_hash_comments() -> None:
+    findings = lint_text("a.py", "def f(:\n    pass  # utilize\n")
+
+    assert [(f.line, f.rule) for f in findings] == [(1, "parse-error"), (2, "banned-word")]
