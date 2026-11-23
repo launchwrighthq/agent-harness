@@ -16,6 +16,10 @@ config.register_defaults(
         # TOML files of [keys.<NAME>] and [environments.<env>] tables, merged in order.
         "declarations": [],
         "layout": True,
+        # Live files that always take their own `<file>.example` as master.
+        "paired": [".env.ci"],
+        # Values that count as no value for a declared secret, in any case.
+        "placeholders": ["changeme", "xxx"],
         # More folders that hold env files with a master of their own, `<dir>/.env.example`.
         "dirs": [],
         # The files and folders that `ah env where` searches for a key name.

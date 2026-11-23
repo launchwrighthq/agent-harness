@@ -94,9 +94,9 @@ def test_reads_the_workstation_record_as_the_last_deploy(project: Path) -> None:
     (env,) = json.loads(done.stdout)["environments"]
     latest = env["latest"]
     assert (latest["run"], latest["commit"], latest["verdict"]) == ("workstation", SHA, "deployed")
-    assert latest["version"] == "10610"
+    assert latest["version"] == "512"
     serving = {row["surface"]: row["run"] for row in env["servingFromCi"]}
-    assert serving == dict.fromkeys(("origin", "box nodes", "workers"), "workstation")
+    assert serving == dict.fromkeys(("app", "box nodes", "workers"), "workstation")
 
 
 def test_reads_each_kamal_role_of_each_node_of_the_fleet_file(project: Path) -> None:
@@ -108,12 +108,10 @@ def test_reads_each_kamal_role_of_each_node_of_the_fleet_file(project: Path) -> 
     assert rows == [
         ("box-1", "web", "e1f2a3b4"),
         ("box-1", "worker", "e1f2a3b4"),
-        ("box-1", "renderer", "0a1b2c3d"),
-        ("box-1", "social", "0a1b2c3d"),
+        ("box-1", "search", "0a1b2c3d"),
         ("box-2", "web", "e1f2a3b4"),
         ("box-2", "worker", "e1f2a3b4"),
-        ("box-2", "renderer", "0a1b2c3d"),
     ]
-    assert boxes["problems"] == ["box-2 runs no social container"]
+    assert boxes["problems"] == ["box-2 runs no search container"]
     calls = (project.parent / "calls.log").read_text().splitlines()
-    assert [c for c in calls if c.startswith("ssh ")] == ["ssh root@box-1", "ssh root@box-2"]
+    assert [c for c in calls if c.startswith("ssh ")] == ["ssh deploy@box-1", "ssh deploy@box-2"]

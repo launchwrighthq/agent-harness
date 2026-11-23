@@ -87,7 +87,7 @@ def read_records(
 ) -> list[Record]:
     """Every record in `folders`, newest first. A file that does not parse is an error.
 
-    `digest_key` and `version_key` are dotted keys of a record, for example `digests.origin`.
+    `digest_key` and `version_key` are dotted keys of a record, for example `digests.app`.
     An empty `version_key` reads no version.
     """
     records: list[Record] = []

@@ -97,21 +97,21 @@ def test_reads_deployed_only_from_the_serving_jobs_that_phases_deployed_names() 
     pm = phase_map(
         {
             "phases": {
-                "moves": {"apply": "origin", "clients": "workers"},
-                "serving": {"apply": "origin", "clients": "workers"},
+                "moves": {"apply": "app", "workers": "workers"},
+                "serving": {"apply": "app", "workers": "workers"},
                 "deployed": ["apply"],
             }
         }
     )
 
-    workers_only = verdict(run(), [job("apply", "skipped"), job("clients")], pm)
-    both = verdict(run(), [job("apply"), job("clients")], pm)
+    workers_only = verdict(run(), [job("apply", "skipped"), job("workers")], pm)
+    both = verdict(run(), [job("apply"), job("workers")], pm)
 
     assert (workers_only, both) == ("served workers only", "deployed")
 
 
 def test_rejects_a_deployed_job_that_is_not_a_serving_job() -> None:
-    phases = {"moves": {"apply": "origin"}, "serving": {"apply": "origin"}, "deployed": ["boxes"]}
+    phases = {"moves": {"apply": "app"}, "serving": {"apply": "app"}, "deployed": ["boxes"]}
 
     with pytest.raises(HarnessError, match=r"deploy\.phases\.deployed names boxes"):
         phase_map({"phases": phases})

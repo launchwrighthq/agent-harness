@@ -249,11 +249,27 @@ def test_refuses_a_key_that_the_master_does_not_name(tmp_path: Path) -> None:
     assert not (repo / "vault").exists()
 
 
-@pytest.mark.parametrize("value", ["", "tobemodified", "CHANGEME", "xxx"])
+@pytest.mark.parametrize("value", ["", "ChangeMe", "CHANGEME", "xxx"])
 def test_refuses_a_declared_secret_that_is_empty_or_a_placeholder(
     tmp_path: Path, value: str
 ) -> None:
     repo = declared_repo(tmp_path, f"# App\nAPP_TOKEN={value}\n\n# Mail\nMAIL_KEY={MAIL}\n")
+
+    code, out = declared_run(repo, "push", "production", "--yes")
+
+    assert (code, out) == (
+        1,
+        [
+            "ah env: .env.production holds declared secrets that are empty or a placeholder: "
+            "APP_TOKEN. Set a real value first. Nothing was sent."
+        ],
+    )
+
+
+def test_reads_the_placeholders_from_the_config(tmp_path: Path) -> None:
+    repo = declared_repo(tmp_path, f"# App\nAPP_TOKEN=TBD\n\n# Mail\nMAIL_KEY={MAIL}\n")
+    config = repo / ".agents" / "harness.toml"
+    config.write_text('[env]\nplaceholders = ["tbd"]\n\n' + ONE_STORE, encoding="utf-8")
 
     code, out = declared_run(repo, "push", "production", "--yes")
 

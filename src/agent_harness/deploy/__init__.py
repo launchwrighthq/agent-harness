@@ -28,7 +28,7 @@ config.register_defaults(
         "version": "git-count",
         "versionCommand": [],
         "records": "",
-        # The dotted key of the digest in a record, for example "digests.origin".
+        # The dotted key of the digest in a record, for example "digests.app".
         "recordDigest": "digest",
         # The dotted key of a version in a record, for example "buildNumber". Empty reads none.
         "recordVersion": "",

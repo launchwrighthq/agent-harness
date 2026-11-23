@@ -408,9 +408,9 @@ def write_job_record(root: Path, **fields: Any) -> None:
 
 def test_reads_the_record_digest_from_a_nested_key(tmp_path: Path) -> None:
     write_config(
-        tmp_path, FIVE_PHASE_CONFIG.replace("[deploy]", '[deploy]\nrecordDigest = "digests.origin"')
+        tmp_path, FIVE_PHASE_CONFIG.replace("[deploy]", '[deploy]\nrecordDigest = "digests.app"')
     )
-    write_job_record(tmp_path, digests={"origin": DIGEST, "media": None})
+    write_job_record(tmp_path, digests={"app": DIGEST, "search": None})
 
     doc = json.loads(run_report(tmp_path, "--json"))
 

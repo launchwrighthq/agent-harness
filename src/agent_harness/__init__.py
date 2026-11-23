@@ -1,6 +1,6 @@
 """agent-harness: agent skills, hooks, rules and an installer for any git repository."""
 
-__version__ = "0.3.2"
+__version__ = "0.3.3"
 
 
 class HarnessError(Exception):

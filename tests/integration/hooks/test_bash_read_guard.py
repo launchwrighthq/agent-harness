@@ -254,7 +254,7 @@ ENGINE_DATA_LINES = [
 ]
 # A public key holds config. Its reveal asks nothing in any file.
 ENGINE_PUBLIC_REVEAL = [
-    "lw env get STORAGE_DRIVER .env.local --reveal",
+    "lw env get QUEUE_DRIVER .env.local --reveal",
     "python3 .claude/agent-harness/bin/ah env --root apps get CACHE_REGION config/app.env --reveal",
 ]
 # A reveal hidden by a quote, an escape or an expansion still asks, and so does one in a command
@@ -1112,7 +1112,7 @@ def test_reads_a_glob_word_that_program_punctuation_follows(project: Path) -> No
     assert list(zip(commands, got, strict=True)) == [(c, "deny") for c in commands]
 
 
-# Each command was refused in a real session and reads no credential file. A quoted regex or jq
+# Each command reads no credential file, and an earlier guard refused it. A quoted regex or jq
 # filter, an `--include=` value, a bracket expression and a parameter expansion name no file.
 SESSION_COMMANDS_ALLOWED = [
     "jq '.[].name' file.json",

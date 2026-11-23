@@ -180,7 +180,7 @@ def test_finds_no_credential_shape_in_a_config_value(value: str) -> None:
 
 
 def test_matches_a_whole_key_name_against_the_public_key_patterns() -> None:
-    keys = ["STORAGE_DRIVER", "NODE_ENV", "DRIVER", "NODE_ENV_X", "storage_driver"]
+    keys = ["QUEUE_DRIVER", "NODE_ENV", "DRIVER", "NODE_ENV_X", "queue_driver"]
 
     got = [masking.public_key(key, ["*_DRIVER", "NODE_ENV"]) for key in keys]
 

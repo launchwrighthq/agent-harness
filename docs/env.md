@@ -18,6 +18,8 @@ The `[env]` section of `.agents/harness.toml` holds the env facts. Every key has
 | `files` | `[]` | The live env files that `status`, `rename`, `layout` and `template` cover. Empty: every live `.env*` file beside the master. |
 | `declarations` | `[]` | TOML files of key declarations, merged in order. See Declarations. |
 | `layout` | `true` | `false`: a new key goes at the end of a file, and no master order applies. |
+| `paired` | `[".env.ci"]` | The live files that always take their own `<file>.example` as master, also when the root master holds a key of theirs. |
+| `placeholders` | `["changeme", "xxx"]` | The values that `push` reads as no value for a declared secret, in any case. |
 | `dirs` | `[]` | More folders of env files, each with its own master `<dir>/.env.example`. `layout` with no DIR checks them, and `check` accepts env files in them. |
 | `scan` | `.github/workflows`, `infra`, `deploy`, `terraform` and the compose files | The files and folders that `where` searches for a key name. |
 | `readers` | `*.py`, `*.js`, `*.jsx`, `*.mjs`, `*.cjs`, `*.ts`, `*.tsx`, `*.mts`, `*.cts`, `*.vue`, `*.svelte` | The globs of the code files whose env reads `where` and `check` find. See Code readers. |
@@ -136,7 +138,8 @@ template differs from the declarations. A gate runs it.
 [--confirm <env>] [--create-environment]`
 
 - It refuses, and sends nothing, when the file holds a key that its master does not name, or a
-  declared secret that is empty or a placeholder (`tobemodified`, `changeme`, `xxx`).
+  declared secret that is empty or a placeholder (`env.placeholders`, by default `changeme` and
+  `xxx`, in any case).
 - With declarations, it sends only the secret keys: a key declared `secret = false` stays home
   unless `--all`. `--apps a,b` (or the store setting `apps`) sends only the keys of those apps. A
   whole-file store keeps each key outside the scope as it is.
@@ -195,7 +198,7 @@ The layout rules:
 | L7 | No comment on a key line. |
 
 `.env.<n>.example` is the master of `.env.<n>` when the root master holds none of its keys, and
-always for `.env.ci`, `.env.seed` and `.env.exp`. Without a master file, the declarations give
+always for each file of `env.paired` (by default `.env.ci`). Without a master file, the declarations give
 the blocks and the order.
 
 ## Stores

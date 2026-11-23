@@ -4,21 +4,47 @@
   "branch": "main",
   "startedAt": "2026-11-14T10:00:00Z",
   "finishedAt": "2026-11-14T10:09:30Z",
-  "buildNumber": "10610",
+  "buildNumber": "512",
   "jobs": {
-    "changes": { "result": "success", "seconds": 4 },
-    "verify": { "result": "success", "seconds": 210 },
-    "build-and-push": { "result": "success", "seconds": 240 },
-    "build-and-push-renderer": { "result": "skipped", "seconds": null },
-    "migrate": { "result": "success", "seconds": 12 },
-    "apply": { "result": "success", "seconds": 35 },
-    "boxes": { "result": "success", "seconds": 61 },
-    "clients": { "result": "success", "seconds": 48 },
-    "tag-build": { "result": "success", "seconds": 2 }
+    "changes": {
+      "result": "success",
+      "seconds": 4
+    },
+    "verify": {
+      "result": "success",
+      "seconds": 210
+    },
+    "build": {
+      "result": "success",
+      "seconds": 240
+    },
+    "build-search": {
+      "result": "skipped",
+      "seconds": null
+    },
+    "migrate": {
+      "result": "success",
+      "seconds": 12
+    },
+    "apply": {
+      "result": "success",
+      "seconds": 35
+    },
+    "boxes": {
+      "result": "success",
+      "seconds": 61
+    },
+    "workers": {
+      "result": "success",
+      "seconds": 48
+    },
+    "tag": {
+      "result": "success",
+      "seconds": 2
+    }
   },
   "digests": {
-    "origin": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-    "renderer": null
-  },
-  "vpImages": null
+    "app": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "search": null
+  }
 }

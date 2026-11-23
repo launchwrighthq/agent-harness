@@ -112,16 +112,21 @@ class Context:
             self._reads = readers.scan(self.root, globs, skip)
         return self._reads
 
+    @property
+    def paired(self) -> frozenset[str]:
+        """The live files that always take their own `.example` as master (`env.paired`)."""
+        return frozenset(str(name) for name in self.settings.get("paired", layout.ALWAYS_PAIRED))
+
     def own_template(self, path: Path) -> Path | None:
         """The pair template `<file>.example` when it, not the root master, is the master of
-        `path`: always for a name of `layout.ALWAYS_PAIRED`, else when it shares no key with
-        the root master."""
+        `path`: always for a name of `env.paired`, else when it shares no key with the root
+        master."""
         master = self.master
         # A template is the root's own, also for a live file of the main checkout.
         pair = master.parent / (path.name + ".example")
         if not pair.is_file() or pair == master:
             return None
-        if path.name in layout.ALWAYS_PAIRED or not master.is_file():
+        if path.name in self.paired or not master.is_file():
             return pair
         pair_keys = set(layout.shape_of_plain(pair.read_text(encoding="utf-8")).key_names())
         root_keys = set(layout.shape_of_master(master.read_text(encoding="utf-8")).key_names())

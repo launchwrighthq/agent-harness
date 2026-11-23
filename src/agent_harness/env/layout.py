@@ -18,8 +18,8 @@ KEY_LINE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
 RULE_CHARS = re.compile(r"[─═=]|-{2,}")
 INLINE_COMMENT = re.compile(r"\s#")
 # These live files take their own `.example` as master even when the root master holds a key of
-# theirs.
-ALWAYS_PAIRED = {".env.ci", ".env.seed", ".env.exp"}
+# theirs. `env.paired` of the config replaces the set.
+ALWAYS_PAIRED = frozenset({".env.ci"})
 # A backup, a temp file of a write and the marker of a push sit beside a live file. None is an
 # env file.
 NOT_ENV_SUFFIXES = (".bak", ".pushed", ".tmp")
@@ -234,11 +234,17 @@ def key_names(check: FileCheck) -> set[str]:
     return {key for block in check.blocks for key, _ in block.keys}
 
 
-def is_pair_master(name: str, checks: Mapping[str, FileCheck], root_keys: set[str]) -> bool:
-    """`.env.<n>.example` whose keys the root master does not hold, or the example of `.env.ci`."""
+def is_pair_master(
+    name: str,
+    checks: Mapping[str, FileCheck],
+    root_keys: set[str],
+    paired: Iterable[str] = ALWAYS_PAIRED,
+) -> bool:
+    """`.env.<n>.example` whose keys the root master does not hold, or the example of a file of
+    `paired`."""
     if name not in checks or name == MASTER or not is_template(name):
         return False
-    return name.removesuffix(".example") in ALWAYS_PAIRED or not key_names(checks[name]) & root_keys
+    return name.removesuffix(".example") in set(paired) or not key_names(checks[name]) & root_keys
 
 
 def env_names(directory: Path) -> list[str]:
@@ -247,7 +253,9 @@ def env_names(directory: Path) -> list[str]:
     )
 
 
-def check_texts(texts: Mapping[str, str], paths: Mapping[str, str]) -> list[Finding]:
+def check_texts(
+    texts: Mapping[str, str], paths: Mapping[str, str], paired: Iterable[str] = ALWAYS_PAIRED
+) -> list[Finding]:
     """The findings of the env files of one folder, by file name. `paths` names each in output."""
     checks = {
         name: FileCheck(paths[name], texts[name], master=name == MASTER) for name in sorted(texts)
@@ -256,9 +264,9 @@ def check_texts(texts: Mapping[str, str], paths: Mapping[str, str]) -> list[Find
     root_keys = key_names(master) if master else set()
     for name, check in checks.items():
         example = f"{name}.example"
-        if name == MASTER or is_pair_master(name, checks, root_keys):
+        if name == MASTER or is_pair_master(name, checks, root_keys, paired):
             continue  # a pair master is checked for L1 to L3 and L7 only
-        if is_pair_master(example, checks, root_keys):
+        if is_pair_master(example, checks, root_keys, paired):
             check_order(check, checks[example])
         elif master is not None:
             check_order(check, master)

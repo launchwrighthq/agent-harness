@@ -70,18 +70,18 @@ def test_reveals_a_public_key_and_masks_one_whose_value_looks_like_a_credential(
 ) -> None:
     hexed = "0123456789abcdef0123456789abcdef"
     (repo / ".env.local").write_text(
-        f"STORAGE_DRIVER=s3\nCDN_DRIVER={hexed}\nAPP_TOKEN={hexed}\n", encoding="utf-8"
+        f"QUEUE_DRIVER=s3\nMAIL_DRIVER={hexed}\nAPP_TOKEN={hexed}\n", encoding="utf-8"
     )
     run = Run(repo)
 
     shown = []
-    for key in ("STORAGE_DRIVER", "CDN_DRIVER", "APP_TOKEN"):
+    for key in ("QUEUE_DRIVER", "MAIL_DRIVER", "APP_TOKEN"):
         assert run("get", key, ".env.local", "--reveal") == 0
         shown.extend(run.out)
 
     assert shown == [
         "s3",
-        f"CDN_DRIVER in .env.local: {masking.mask(hexed)} (a public key, and its value looks "
+        f"MAIL_DRIVER in .env.local: {masking.mask(hexed)} (a public key, and its value looks "
         "like a credential: 32 or more base64 or hex characters, so it prints masked)",
         hexed,
     ]
@@ -169,18 +169,36 @@ def test_reports_the_status_of_each_file_against_the_master(repo: Path) -> None:
 def test_reports_a_file_with_its_own_master_against_that_master(repo: Path) -> None:
     (repo / ".env.ci.example").write_text("", encoding="utf-8")
     (repo / ".env.ci").write_text("", encoding="utf-8")
-    (repo / ".env.seed.example").write_text("# Seed\nSEED_KEY=\n", encoding="utf-8")
-    (repo / ".env.seed").write_text("# Seed\nSEED_KEY=s1\n", encoding="utf-8")
+    (repo / ".env.tools.example").write_text("# Tools\nTOOLS_KEY=\n", encoding="utf-8")
+    (repo / ".env.tools").write_text("# Tools\nTOOLS_KEY=t1\n", encoding="utf-8")
     run = Run(repo)
 
-    assert run("status", ".env.ci", ".env.seed") == 0
+    assert run("status", ".env.ci", ".env.tools") == 0
 
     assert run.out == [
         ".env.example: 3 keys (the master)",
         ".env.ci: 0 keys, 0 empty, 0 missing against .env.ci.example, "
         "0 not in .env.ci.example",
-        ".env.seed: 1 keys, 0 empty, 0 missing against .env.seed.example, "
-        "0 not in .env.seed.example",
+        ".env.tools: 1 keys, 0 empty, 0 missing against .env.tools.example, "
+        "0 not in .env.tools.example",
+    ]
+
+
+def test_pairs_a_file_of_env_paired_that_shares_a_key_with_the_master(repo: Path) -> None:
+    (repo / ".agents").mkdir()
+    (repo / ".agents" / "harness.toml").write_text(
+        '[env]\npaired = [".env.ci", ".env.tools"]\n', encoding="utf-8"
+    )
+    (repo / ".env.tools.example").write_text("# App\nAPP_URL=\n", encoding="utf-8")
+    (repo / ".env.tools").write_text("# App\nAPP_URL=u1\n", encoding="utf-8")
+    run = Run(repo)
+
+    assert run("status", ".env.tools") == 0
+
+    assert run.out == [
+        ".env.example: 3 keys (the master)",
+        ".env.tools: 1 keys, 0 empty, 0 missing against .env.tools.example, "
+        "0 not in .env.tools.example",
     ]
 
 

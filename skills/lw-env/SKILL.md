@@ -105,7 +105,7 @@ the value in a commit, a file, a log or a later reply.
   user agreed to that push. A protected environment also needs `--confirm <env>`; the refusal
   names the exact command. Never add those flags on your own.
 - A push refuses a key that the master does not name and a declared secret that is empty or a
-  placeholder (`tobemodified`, `changeme`, `xxx`). Fix the file; do not work around it.
+  placeholder (`env.placeholders`, by default `changeme` and `xxx`). Fix the file; do not work around it.
 - With declarations, a push sends only the secret keys. `--all` sends the plain keys too.
 - With several stores in `[[env.stores]]`, name one with `--store <name>`.
 - A push to the `github` store stops when its GitHub Environment does not exist. Tell the user to

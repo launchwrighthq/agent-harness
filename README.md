@@ -90,6 +90,20 @@ The hooks, the rules and the git hooks are in [docs/hooks.md](docs/hooks.md).
 | `docs/` | One document per area. |
 | `tests/unit/`, `tests/integration/` | The tests. |
 
+## Changes in 0.3.3
+
+Two env lists move into the config. The examples and fixtures use an invented app.
+
+| Change | Keys | Details |
+|---|---|---|
+| The files that always take their own `.example` as master | `env.paired`, default `[".env.ci"]` | [docs/env.md](docs/env.md) |
+| The values that `ah env push` reads as no value for a declared secret | `env.placeholders`, default `["changeme", "xxx"]` | [docs/env.md](docs/env.md) |
+
+Two defaults differ from 0.3.2. Set the keys to keep the old behavior:
+
+- `.env.seed` and `.env.exp` no longer pair by default. Add them to `env.paired`.
+- `tobemodified` is no longer a placeholder by default. Add it to `env.placeholders`.
+
 ## Changes in 0.3.2
 
 `local-run-guard` refuses only a runner whose folder is in its own project. No key changes.
@@ -279,7 +293,7 @@ its own.
 |---|---|---|
 | G1 | A spec folder of kind `qa` holds QA reports with the statuses `untested` and `tested`. A QA report renders with its own badge and never moves to an archive. | [docs/spec.md](docs/spec.md) |
 | G2 | `ah deploy-status` reads a workstation deploy with Kamal nodes from the existing `[deploy]` keys. The deploy document has a worked example. | [docs/deploy.md](docs/deploy.md) |
-| G3 | The read guard refuses a file listing whose names reach a reader: through a substitution, a pipe into `xargs`, `parallel` or a `while read` loop, or a `find -exec` action. Tests pin the harmless patterns from real sessions that the guard passes: `jq` paths, parameter expansions, `--include` globs and bracket classes. | [docs/hooks.md](docs/hooks.md) |
+| G3 | The read guard refuses a file listing whose names reach a reader: through a substitution, a pipe into `xargs`, `parallel` or a `while read` loop, or a `find -exec` action. Tests pin the harmless patterns that the guard passes: `jq` paths, parameter expansions, `--include` globs and bracket classes. | [docs/hooks.md](docs/hooks.md) |
 | G4 | 0.1.2 keeps the project hook entries of `.claude/settings.json` and `.codex/hooks.json` after the harness entries, and runs git hooks through a dispatcher. 0.2.0 adds no second mechanism. The install builds both hook files before its first write, and a project git hook comes from a `[[githook]]` of a manifest that `harness.manifests` names. | [docs/install.md](docs/install.md) |
 | G5 | The comment budget keeps the caps of the old path for a renamed file, measures Terraform files, and takes per-pattern caps in `comments.overrides` and a line length cap in `comments.maxLineLength`. | [docs/hooks.md](docs/hooks.md) |
 | G6 | The new rule `core-principles` holds truth over optimism and asking before an uncertain change. `code-limits` adds error handling. | [docs/hooks.md](docs/hooks.md) |

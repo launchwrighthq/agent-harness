@@ -74,12 +74,12 @@ REVEAL = [
 # A key that `[env] publicKeys` names holds config, not a secret.
 PUBLIC_REVEAL = [
     "ah env get S3_BUCKET .env.production --reveal",
-    "ah env get STORAGE_DRIVER .env.production --reveal",
-    "ah env get CDN_DRIVER .env.production --reveal",
+    "ah env get QUEUE_DRIVER .env.production --reveal",
+    "ah env get MAIL_DRIVER .env.production --reveal",
     "ah env get S3_REGION .env.production --reveal",
-    "ah env get S3_ENDPOINT_URL .env.production --reveal",
+    "ah env get API_ENDPOINT_URL .env.production --reveal",
     "lw env --root apps/api get CACHE_REGION config/app.env --reveal",
-    "cd /srv/app && lw env get STORAGE_DRIVER .env.production --reveal",
+    "cd /srv/app && lw env get QUEUE_DRIVER .env.production --reveal",
 ]
 # A glob, a brace or a tilde in a later argument of a quiet step changes no printed value.
 QUIET_EXPANSIONS = [

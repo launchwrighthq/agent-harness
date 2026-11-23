@@ -67,7 +67,7 @@ Section `[deploy]` of `.agents/harness.toml`. Every key has a default.
 | `version` | `git-count` | The version column: `git-count` (`git rev-list --count <sha>`), `digest` (the digest of a record) or `command`. |
 | `versionCommand` | `[]` | With `version = "command"`, the command that prints the version. It gets the commit as its last argument. A lookup that fails reads `-`, and one line under the table counts the failures and names the first. |
 | `records` | `""` | A folder of workstation deploy records, JSON or JSON lines. It is read in this checkout and in the main checkout. An absolute path names one folder. |
-| `recordDigest` | `digest` | The dotted key of the digest in a record, for example `digests.origin`. |
+| `recordDigest` | `digest` | The dotted key of the digest in a record, for example `digests.app`. |
 | `recordVersion` | `""` | The dotted key of a version in a record, for example `buildNumber`. It fills in the version of a record whose commit gives none, for example a commit that this checkout does not hold. Empty reads none. |
 | `targets.<name>` | none | One serving target. See below. |
 | `logPhases.<job>` | none | Banner patterns that split the log of a one-job phase into phases under `--steps`, as a list or as a table. See below. |
@@ -202,9 +202,9 @@ example `.claude/state/deploys/2026-11-14T10-00-00Z-production-e1f2a3b4.json`:
   "branch": "main",
   "startedAt": "2026-11-14T10:00:00Z",
   "finishedAt": "2026-11-14T10:09:30Z",
-  "buildNumber": "10610",
-  "jobs": { "build-and-push": { "result": "success", "seconds": 240 } },
-  "digests": { "origin": "sha256:<digest>", "renderer": null }
+  "buildNumber": "512",
+  "jobs": { "build": { "result": "success", "seconds": 240 } },
+  "digests": { "app": "sha256:<digest>", "search": null }
 }
 ```
 
@@ -213,54 +213,49 @@ the verdict of the phase map. The version column counts the commit, and `recordV
 the record's build number when this checkout lacks the commit. `ssh-docker` reads `docker ps` on
 each box node, and `nodesCommand` reads the node names from the fleet file. Kamal names a
 container `<service>-<role>[-<destination>]-<version>`, so a side role with its own destination
-has a longer prefix. The roles below use the service name `app`.
+has a longer prefix. The roles below use the service name `app`, with a `search` side role.
 
 ```toml
 [deploy]
 records = ".claude/state/deploys"
-recordDigest = "digests.origin"
+recordDigest = "digests.app"
 recordVersion = "buildNumber"
 
 [deploy.ci]
 workflows = ["deploy.yml"]
 
 [deploy.environments.production]
-match = [{ branch = "env/production" }, { since = "2026-10-29T14:00:00Z" }]
+match = [{ branch = "env/production" }, { since = "2026-01-01T00:00:00Z" }]
 
 [deploy.phases]
 deployed = ["apply"]
 
 [deploy.phases.moves]
-build-and-push = "origin image"
-build-and-push-renderer = "media image"
-build-and-push-social = "social image"
+build = "app image"
+build-search = "search image"
 migrate = "schema"
-apply = "origin"
+apply = "app"
 boxes = "box nodes"
-sync-tenants = "tenant rows"
-seed-taxonomy = "taxonomy"
-push-email-templates = "email templates"
-clients = "workers"
-tag-build = "build tag"
-vp-deploy = "vp roles"
+workers = "workers"
+tag = "release tag"
 
 [deploy.phases.serving]
-apply = "origin"
+apply = "app"
 boxes = "box nodes"
-clients = "workers"
+workers = "workers"
 
 [deploy.targets.boxes]
 read = "ssh-docker"
 env = "production"
-user = "root"
+user = "deploy"
 nodesCommand = [
   "python3", "-c",
-  "import json; p = json.load(open('infra/fleet/production.json'))['pools']; print('\\n'.join(n for k in ('contabo', 'hetzner', 'droplets') for n in p.get(k, {}).get('nodes', [])))",
+  "import json; p = json.load(open('infra/fleet/production.json'))['pools']; print('\\n'.join(n for k in ('primary', 'secondary') for n in p.get(k, {}).get('nodes', [])))",
 ]
-roles = { web = "app-web-", worker = "app-worker-", renderer = "app-renderer-renderer-", social = "app-social-social-" }
+roles = { web = "app-web-", worker = "app-worker-", search = "app-search-search-" }
 ```
 
-A run where only `clients` succeeded reads `served workers only`. The `SERVING` table names the
+A run where only `workers` succeeded reads `served workers only`. The `SERVING` table names the
 run that last fed each of the three surfaces. SSH runs in batch mode, so a node whose host key
 is missing from `known_hosts` reads `did not answer`. Set `ssh` to a command that pins the host
 keys when the known hosts file lacks them. `tests/integration/deploy/test_workstation_kamal.py`

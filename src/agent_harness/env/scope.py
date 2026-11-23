@@ -18,7 +18,8 @@ from agent_harness.env.args import Args
 from agent_harness.env.context import Context
 
 # A value that a template or a person puts in place of a credential that nobody has filled.
-PLACEHOLDERS = {"tobemodified", "changeme", "xxx"}
+# The default of `env.placeholders`.
+PLACEHOLDERS = ("changeme", "xxx")
 
 
 @dataclass
@@ -68,12 +69,13 @@ def refuse_unsafe(ctx: Context, path: Path, payload: Mapping[str, str]) -> None:
     if not ctx.settings.get("declarations"):
         return
     decl = ctx.declarations()
+    placeholders = {str(p).lower() for p in ctx.settings.get("placeholders", PLACEHOLDERS)}
     unset = [
         key
         for key, value in payload.items()
         if (found := decl.find(key)) is not None
         and found.secret
-        and (value.strip() == "" or value.strip().lower() in PLACEHOLDERS)
+        and (value.strip() == "" or value.strip().lower() in placeholders)
     ]
     if unset:
         raise HarnessError(

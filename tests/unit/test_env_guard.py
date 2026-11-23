@@ -39,13 +39,13 @@ def scanned(command: str, root: Path) -> str:
 @pytest.mark.parametrize(
     "command",
     [
-        'grep -n "subcommand\\|ah env\\|spawn" $F/env.command.mts | head -60',
+        'grep -n "subcommand\\|ah env\\|spawn" $F/cli.ts | head -60',
         'sed -n 1,40p $H/x.py; grep -n "ah env\\|reveal" $H/x.py | head -20',
         "git commit -q -F - <<'EOF'\nfeat(env): ah env status --matrix\n\nRun $X on *.py.\nEOF\n"
         "git log --oneline -1",
         "python3 - <<'EOF'\nprint('ah env get A .env.local --reveal')\nEOF\ngrep -n x y.py | head",
         'echo "ah env get A .env.local --reveal"; echo rc=$?',
-        "cat > msg.txt <<'EOF'\n- callers run `ah env` (x.mts goes)\nEOF",
+        "cat > msg.txt <<'EOF'\n- callers run `ah env` (the old wrapper goes)\nEOF",
     ],
 )
 def test_finds_no_engine_run_in_quoted_text_or_in_a_data_heredoc(
@@ -169,8 +169,8 @@ def test_keeps_the_name_scan_on_a_step_it_cannot_vouch_for(command: str, tmp_pat
     "command",
     [
         "ah env get S3_BUCKET .env.production --reveal",
-        "ah env get STORAGE_DRIVER .env.production --reveal",
-        "ah env get S3_ENDPOINT_URL .env.production --reveal",
+        "ah env get QUEUE_DRIVER .env.production --reveal",
+        "ah env get API_ENDPOINT_URL .env.production --reveal",
         "lw env --root apps get CACHE_REGION config/app.env --reveal",
         "cd /srv/app && ah env get NODE_ENV .env.production --reveal",
     ],

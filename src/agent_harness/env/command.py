@@ -557,7 +557,7 @@ def _layout_findings(ctx: Context) -> tuple[dict[str, str], list[layout.Finding]
         if path.is_file():
             texts[path.name] = path.read_text(encoding="utf-8")
             shown[path.name] = ctx.show(path)
-    return texts, layout.check_texts(texts, shown)
+    return texts, layout.check_texts(texts, shown, ctx.paired)
 
 
 def _shown_master(ctx: Context, source: Path | None) -> str:
