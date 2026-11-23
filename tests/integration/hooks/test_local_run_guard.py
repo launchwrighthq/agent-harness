@@ -1,5 +1,6 @@
 """local-run-guard reads its hint and the gate command from the config."""
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -71,3 +72,55 @@ def test_passes_a_dispatch_command_and_refuses_it_with_the_local_target(tmp_path
         "npx ci test queue --target local": 2,
         "ci verify --target=local": 2,
     }
+
+
+def test_refuses_only_a_runner_whose_folder_is_in_the_project(tmp_path: Path) -> None:
+    project = hook_project.make_project(tmp_path / "project", CONFIG)
+    (project / "web").mkdir()
+    other = hook_project.git_init(tmp_path / "other")
+
+    def run(command: str, cwd: Path) -> int:
+        payload = hook_project.bash_payload(command, cwd)
+        return hook_project.run_hook(project, HOOK, "PreToolUse", payload).returncode
+
+    codes = {
+        (command, cwd.name): run(command, cwd)
+        for command, cwd in (
+            ("pytest tests", other),
+            (f"cd {other} && pytest tests", project),
+            (f"cd {project}/web && npx vitest run", other),
+            (f"cd {project} && cd ../other && npx vitest run", other),
+            (f"npm --prefix {project} test", other),
+            (f"uv --directory {project} run pytest", other),
+            (f"make -C {project} test", other),
+            (f"bash -c 'cd {project} && pytest'", other),
+            ('cd "$DIR" && pytest tests', other),
+            (f"npm --prefix {other} test", project),
+        )
+    }
+
+    assert codes == {
+        ("pytest tests", "other"): 0,
+        (f"cd {other} && pytest tests", "project"): 0,
+        (f"cd {project}/web && npx vitest run", "other"): 2,
+        (f"cd {project} && cd ../other && npx vitest run", "other"): 0,
+        (f"npm --prefix {project} test", "other"): 2,
+        (f"uv --directory {project} run pytest", "other"): 2,
+        (f"make -C {project} test", "other"): 2,
+        (f"bash -c 'cd {project} && pytest'", "other"): 2,
+        ('cd "$DIR" && pytest tests', "other"): 2,
+        (f"npm --prefix {other} test", "project"): 0,
+    }
+
+
+def test_counts_a_linked_worktree_as_its_main_checkout(tmp_path: Path) -> None:
+    project = hook_project.make_project(tmp_path / "project", CONFIG)
+    git = ["git", "-C", str(project), "-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run([*git, "commit", "--quiet", "--allow-empty", "-m", "init"], check=True)
+    linked = tmp_path / "linked"
+    subprocess.run([*git, "worktree", "add", "--quiet", "-b", "w", str(linked)], check=True)
+    payload = hook_project.bash_payload(f"cd {linked} && pytest", tmp_path)
+
+    refused = hook_project.run_hook(project, HOOK, "PreToolUse", payload)
+
+    assert refused.returncode == 2

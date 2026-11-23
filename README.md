@@ -90,6 +90,22 @@ The hooks, the rules and the git hooks are in [docs/hooks.md](docs/hooks.md).
 | `docs/` | One document per area. |
 | `tests/unit/`, `tests/integration/` | The tests. |
 
+## Changes in 0.3.2
+
+`local-run-guard` refuses only a runner whose folder is in its own project. No key changes.
+
+| Command, from a session in the project | 0.3.1 | 0.3.2 |
+|---|---|---|
+| `cd ../other-repo && pytest` | refused | passes |
+| `npm --prefix ../other-repo test` | refused | passes |
+| `uv --directory . run pytest` | passes | refused |
+| `npx --prefix . vitest` | passes | refused |
+
+A `cd` or `pushd` moves the folder for the commands after it. So does a folder option:
+`--prefix`, `--directory`, `--project`, `--dir`, `--cwd` or `-C`. A linked worktree counts as
+its main checkout. A folder that the hook cannot know, such as `cd "$DIR"`, counts as the
+project, so the hook still refuses there. Details: [docs/hooks.md](docs/hooks.md).
+
 ## Changes in 0.3.1
 
 This release has five changes. Each default keeps the behavior of 0.3.0.

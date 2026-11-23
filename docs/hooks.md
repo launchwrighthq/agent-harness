@@ -18,7 +18,7 @@ the config keys it reads, the manifest format and the limits of the guards.
 | `prompt-directives` | UserPromptSubmit | Turns prompt flags (`-u`, `-e`, `-d`) and an embedded `/lw-goal-spec` into added context. A command after a quote mark or a backtick is a quote and adds nothing. |
 | `render-spec` | PostToolUse, Stop | Renders a changed spec to its HTML page (see `docs/spec.md`). |
 | `goal-spec` | Stop | Holds a turn open until the saved spec audit shows zero open rows. |
-| `local-run-guard` | UserPromptSubmit, PreToolUse | Off by default. Keeps tests, lints and builds on a remote runner unless the user asks for a local run. |
+| `local-run-guard` | UserPromptSubmit, PreToolUse | Off by default. Keeps tests, lints and builds on a remote runner unless the user asks for a local run. It refuses only a runner whose folder is in its project: a `cd`, `pushd` or folder option (`--prefix`, `--directory`, `--project`, `--dir`, `--cwd`, `-C`) moves the folder, a linked worktree counts as its main checkout, and a folder it cannot know (`cd "$DIR"`) counts as the project. |
 | `scratch-cap` | PreToolUse (Bash) | Off by default. Runs a scratchpad probe in a cgroup with a memory and CPU cap. Needs `systemd-run` and `jq`. |
 | `comment-budget` | PreToolUse, PostToolUse (Write, Edit), Stop | Off by default. Refuses a write that makes a comment block longer than its cap, and reports the budget findings of the written file as added context. At the end of a turn, holds the turn once for the findings of the files that changed since the base. |
 
