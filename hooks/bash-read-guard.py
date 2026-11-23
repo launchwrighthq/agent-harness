@@ -1439,6 +1439,130 @@ QUIET_REDIRECTS = {"2>/dev/null", ">/dev/null", "1>/dev/null", "2>&1"}
 FIND_WRITES = {"-fprint", "-fprint0", "-fprintf", "-fls", "-delete", *FIND_ACTIONS}
 
 
+# Programs that run the text of their stdin, or that start a program or a shell that can.
+STDIN_RUNNERS = {
+    *("ssh", "docker", "podman", "kubectl", "make", "tsx", "ts-node", "psql", "mysql"),
+    *("npx", "npm", "pnpm", "yarn", "bunx", "uv", "uvx", "poetry", "pipx", "su", "runuser"),
+    *("chroot", "nsenter", "flock", "script", "expect", "at", "batch", "crontab", "pwsh"),
+    *("sftp", "ftp", "telnet", "mosh", "rsh", "nix", "nix-shell", "tmux", "screen", "gdb"),
+    *("lldb", "mail", "mailx", "dc", "m4", "gnuplot", "nvim", "read", "mapfile", "readarray"),
+    *("unshare", "firejail", "bwrap", "systemd-run", "pkexec", "sg", "fakeroot", "unbuffer"),
+    *("go", "cargo", "just", "rake", "bundle", "gradle", "mvn", "java", "jshell", "dotnet"),
+    *("irb", "julia", "R", "ghci", "tclsh", "wish", "guile", "racket", "elixir", "iex", "erl"),
+    *("osascript", "powershell", "adb", "vagrant", "ansible", "lxc", "incus", "nerdctl"),
+    *("helm", "oc", "gcloud", "aws", "az", "conda", "mamba", "pixi", "hatch", "pdm", "tox"),
+    *("nox", "mise", "asdf", "direnv", "sops", "doppler", "entr", "strace", "ltrace"),
+}
+# A step with one of these words can read its stdin as commands, as code or as file names.
+STDIN_READERS = (READERS - {"git"}).union(
+    WRAPPERS, INTERPRETERS, NAME_TAKERS, LISTERS, CONTROL_WORDS, KEYWORDS, STDIN_RUNNERS
+)
+# The git subcommands that read a message from `-F -`.
+GIT_MESSAGE_VERBS = {"commit", "tag", "merge", "notes"}
+
+
+def git_message(args: list[Word]) -> bool:
+    """True when the git arguments read a message from stdin: `commit`, `tag`, `merge` or
+    `notes` with `-F -`, `--file -` or `--file=-`, and no option that reads names from stdin."""
+    at = git_subcommand(args)
+    if at is None or args[at].text not in GIT_MESSAGE_VERBS:
+        return False
+    texts = [w.text for w in args[at + 1 :]]
+    if any("stdin" in t or "from-file" in t for t in texts):
+        return False
+    return "--file=-" in texts or any(
+        option in ("-F", "--file") and value == "-" for option, value in pairwise(texts)
+    )
+
+
+def text_step(stage: list[Word], line: str) -> str | None:
+    """`message` for a git message step, `data` for a program with no word of `STDIN_READERS`,
+    and None for a step that can run or expand its stdin. The command word is written with no
+    quote and no expansion."""
+    while stage and ASSIGNMENT.match(stage[0].text):
+        stage = stage[1:]
+    if not stage or line[stage[0].start : stage[0].end] != stage[0].text or "$" in stage[0].text:
+        return None
+    names = [basename(w.text) for w in stage]
+    if names[0] == "git":
+        return "message" if "git" not in names[1:] and git_message(stage[1:]) else None
+    return None if any(name == "git" or name in STDIN_READERS for name in names) else "data"
+
+
+def text_heredoc(line: str, opening: re.Match[str], rest: list[str]) -> bool:
+    """True when the one heredoc of `line` has a quoted delimiter and is the stdin of a text
+    step (`text_step`), whose output goes to the terminal or through a pipe into filters of
+    `LISTING_FILTERS`. A written file or another program could run the body later.
+
+    `rest` holds the lines after `line`. An unknown program can write the body to a file, so
+    after a `data` step each later command is inert (`INERT_COMMANDS`). A group or a function
+    on the line could hand the body to a shell, so the line holds no bracket.
+    """
+    quoted = opening.group(2) != "" or "\\" in opening.group(0)
+    if not quoted or line.count("<") != 2 or re.search(r"[#`(){}]", line):
+        return False
+    if line.endswith("\\") or line[opening.end() :][:1] not in ("", " ", "\t", ";", "&", "|"):
+        return False
+    commands = simple_commands(word_spans(line))
+    at = next(
+        (k for k, (_, redirects, _) in enumerate(commands) if any("<<" in r for r in redirects)),
+        None,
+    )
+    if at is None:
+        return False
+    stage, redirects, joiner = commands[at]
+    if any("<<" not in r and r not in QUIET_REDIRECTS for r in redirects):
+        return False
+    kind = text_step(stage, line)
+    if kind is None:
+        return False
+    while joiner in ("|", "|&") and at + 1 < len(commands):
+        at += 1
+        stage, _, joiner = commands[at]
+        if not stage or stage[0].text not in LISTING_FILTERS:
+            return False
+    if kind == "message":
+        return True
+    delimiter, tabs = opening.group(3), opening.group(1) == "-"
+    closes = (k for k, r in enumerate(rest) if (r.lstrip("\t") if tabs else r) == delimiter)
+    tail = rest[next(closes, len(rest)) + 1 :]
+    later = all(not words or words[0].text in INERT_COMMANDS for words, _, _ in commands[at + 1 :])
+    return later and inert_tail("\n".join(tail))
+
+
+def without_text_bodies(text: str) -> str:
+    """`text` with the body of each text heredoc (`text_heredoc`) blanked, newlines kept.
+
+    Bash expands no glob in a body with a quoted delimiter, and a program that takes the body
+    as a message or as data expands none either. The lines before the heredoc hold no quote,
+    backslash, bracket or `#`, so the line that opens it is a command line for certain, and no
+    function of an earlier line stands in for its program.
+    """
+    out: list[str] = []
+    pending: list[tuple[str, bool, bool]] = []
+    plain = True
+    lines = text.split("\n")
+    for at, line in enumerate(lines):
+        if pending:
+            delimiter, tabs, skip = pending[0]
+            closes = (line.lstrip("\t") if tabs else line) == delimiter
+            if closes:
+                pending.pop(0)
+            out.append("" if skip and not closes else line)
+            continue
+        out.append(line)
+        opens = list(HEREDOC_OPEN.finditer(line))
+        skip = plain and len(opens) == 1 and text_heredoc(line, opens[0], lines[at + 1 :])
+        pending.extend((m.group(3), m.group(1) == "-", skip) for m in opens)
+        plain = plain and not re.search(r"['\"\\#`(){}]", HEREDOC_OPEN.sub("", line))
+    return "\n".join(out)
+
+
+def without_bodies(text: str) -> str:
+    """`text` as the glob scan and the listing test read it."""
+    return without_text_bodies(without_quoted_bodies(text))
+
+
 def name_only_stages(spans: list[Word], text: str) -> list[list[Word]]:
     """The `ls` and `find` stages whose names reach only the terminal.
 
@@ -2127,7 +2251,7 @@ def listing_read(command: str, cwd: str) -> str | None:
     forms = command_forms(command)
     if all(reader_in(text) is None for text in forms):
         return None
-    hits = (listed_names(without_quoted_bodies(text), cwd) for text in forms)
+    hits = (listed_names(without_bodies(text), cwd) for text in forms)
     return next((hit for hit in hits if hit is not None), None)
 
 
@@ -2145,7 +2269,7 @@ def secret_read(command: str, cwd: str, names: Names) -> str | None:
         for text in forms
     )
     # The glob scan and the dotglob test skip a heredoc body that bash does not expand.
-    bodiless = [without_quoted_bodies(text) for text in forms]
+    bodiless = [without_bodies(text) for text in forms]
     dotglob = any(
         DOTGLOB.search(text)
         or DOTGLOB.search(remove_quotes(text))

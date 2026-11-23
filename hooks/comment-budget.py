@@ -131,13 +131,15 @@ def main() -> None:
         after = comments.measure_text(text, path)
         if after.comment + after.code < budget["minLines"]:
             return
-        cap = comments.block_cap(fresh, budget)
         # A block that the file already holds is the floor: an edit near old prose passes.
-        held = 0 if current is None else comments.measure_text(current, path).longest
-        if after.longest > max(cap, held):
+        before = comments.measure_text(current or "", path)
+        floors = comments.block_checks(before, fresh, budget)
+        checks = zip(comments.block_checks(after, fresh, budget), floors, strict=True)
+        over = [(name, lines, cap) for (name, lines, cap), f in checks if lines > max(cap, f[1])]
+        if over:
+            name, lines, cap = over[0]
             hookio.deny(
-                f"{HOOK}: {path} would get a {after.longest}-line comment block, cap {cap}. "
-                f"{comments.RULE}"
+                f"{HOOK}: {path} would get a {lines}-line {name}, cap {cap}. {comments.RULE}"
             )
         return
     if not file.exists():

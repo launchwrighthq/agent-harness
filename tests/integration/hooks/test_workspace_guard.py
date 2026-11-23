@@ -797,6 +797,36 @@ def test_trusts_each_sibling_repository_by_default(
     assert got == ["silent", "silent", "deny", "deny", "deny"]
 
 
+def test_reads_a_new_worktree_folder_of_a_listed_repository_as_that_repository(
+    tmp_path: Path,
+) -> None:
+    # A command can add the worktree and then run git in it, so the folder is not there yet.
+    work = tmp_path / "work"
+    client = hook_project.git_init(work / "client")
+    unlisted = hook_project.git_init(work / "unlisted")
+    root = hook_project.make_project(
+        work / "project", '[harness.workspace]\nrepos = ["../client"]\n'
+    )
+    new = ".claude/worktrees/fix-a"
+    allowed = [
+        f"git -C {client} worktree add -b fix-a {new} && git -C {client}/{new} status",
+        f"git -C {client}/{new} commit -m x a.txt",
+        f"cd {client} && git -C {new} log -1",
+    ]
+    refused = [
+        f"git -C {unlisted}/{new} status",
+        f"git -C {client}/scratch/fix-a status",
+        f"git -C {client}/{new}/sub status",
+        f"git -C {client}/sub/{new} status",
+        f"git -C {client}/{new} config core.hooksPath x",
+    ]
+
+    got = hook_project.verdicts(root, HOOK, allowed + refused)
+
+    expected = [(c, "silent") for c in allowed] + [(c, "deny") for c in refused]
+    assert list(zip(allowed + refused, got, strict=True)) == expected
+
+
 def test_still_takes_a_home_entry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     other = hook_project.git_init(tmp_path / "repos" / "other")

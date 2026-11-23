@@ -46,6 +46,13 @@ A second install with no change writes nothing and prints `nothing changed`. An 
 each file and link that the previous lockfile lists and the new one does not. It then removes
 each folder that it leaves empty.
 
+An agent session that runs during the install keeps the hook commands it read at its start. When
+the install removes a hook script that `.claude/settings.json` or `.codex/hooks.json` named before
+the install, such a session still calls the removed path, and each call fails. The install then
+prints one line that lists the removed scripts:
+`warning: this install removed <n> hook files: <paths>. An agent session that runs now still calls them, and each call fails. Restart every running agent session.`
+An install that removes no such script prints no such line. The install writes no stand-in file.
+
 ## Install from the installed copy
 
 The project copy in `.claude/agent-harness/` is a package root. It holds the engine, the
@@ -458,6 +465,7 @@ The installer reads these keys of `[harness]` in `.agents/harness.toml`:
 | `enable` | `[]` | Ids of items that are off by default. |
 | `manifests` | `[".claude/githooks/harness.toml"]` when that file exists, else `[]` | Extra manifests of the project, relative to the root. `ah install` adds each `--manifest` to them. |
 | `adapterDir` | `.claude/adapters` | The folder of free-text notes per skill that the `AGENTS.md` block names, and of the rule adapters in `rules/`. |
+| `agentsSkills` | `"all"` | `"all"` or `"harness"`. Which skills the `AGENTS.md` block lists. `"all"` lists the skills of the manifests and the project skills. `"harness"` lists only the skills of the manifests. The `.agents/skills/` links cover every skill with both values. Another value fails the install and the check. |
 | `rules.maxChars` | `0` | A cap in characters on the always-loaded rules. `0` is no cap. `ah check` exits 1 over the cap. |
 | `rules.paths` | `{}` | Per rule id, the globs of the `paths:` block of the installed rule, in place of the paths of the manifest. |
 | `githooks.global` | `"run"` | `"run"` or `"skip"`. The install writes it to the git config key `harness.globalHooks`, which the git hook dispatcher reads. |

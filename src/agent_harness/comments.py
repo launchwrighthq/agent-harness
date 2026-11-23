@@ -21,11 +21,18 @@ C_STYLE = re.compile(r"\.(c|m)?(j|t)sx?$")
 HASH_STYLE = re.compile(r"\.(py|sh|bash)$")
 # Terraform: `#` and `//` lines and `/* */` blocks.
 TF_STYLE = re.compile(r"\.tf$")
+# Config files with `#` lines only: a workflow or another YAML file, a Dockerfile and an env
+# template. A live env file never matches. The budget reads one only when a pattern of
+# `include` or `overrides` names it.
+CONFIG_STYLE = re.compile(
+    r"(?:\.ya?ml|\.dockerfile|(?:^|/)Dockerfile(?:\.[^/]+)?|(?:^|/)\.env(?:\.[^/]+)?\.example)$"
+)
 
 # A file that the base branch does not hold is new: its blocks stop at `maxBlock` and its
 # comment share at `maxShare` once it has `shareFloor` code lines. Every file stops at
-# `longBlock`. `maxLineLength` 0 puts no cap on a comment line. `overrides` maps a path pattern
-# to the caps that replace these for the files it matches.
+# `longBlock`. `maxLineLength` 0 puts no cap on a comment line. `headBlock` above 0 is the cap
+# of the block that opens a file, and the block caps then count the other blocks. `overrides`
+# maps a path pattern to the caps that replace these for the files it matches.
 DEFAULTS: dict[str, Any] = {
     "maxBlock": 12,
     "longBlock": 25,
@@ -33,6 +40,7 @@ DEFAULTS: dict[str, Any] = {
     "shareFloor": 60,
     "minLines": 20,
     "maxLineLength": 0,
+    "headBlock": 0,
     "include": [
         "**/*.ts",
         "**/*.mts",
@@ -57,7 +65,10 @@ DEFAULTS: dict[str, Any] = {
     ],
     "overrides": {},
 }
-CAPS = ("maxBlock", "longBlock", "maxShare", "shareFloor", "minLines", "maxLineLength")
+CAPS = (
+    *("maxBlock", "longBlock", "maxShare", "shareFloor", "minLines", "maxLineLength"),
+    "headBlock",
+)
 
 config.register_defaults("harness", {"comments": DEFAULTS})
 
@@ -76,6 +87,9 @@ class Measure:
     # The longest comment line in characters, indent left out, and its 1-based line number.
     widest: int = 0
     widest_at: int = 0
+    # The block that opens the file, after blank lines and a shebang, and the longest other block.
+    head: int = 0
+    inner: int = 0
     # The lines of the Python module docstring, 0 for none.
     module_doc: int = 0
 
@@ -126,11 +140,13 @@ def glob_pattern(glob: str) -> re.Pattern[str]:
 def in_scope(path: str, budget: Mapping[str, Any]) -> bool:
     """True when the budget reads the project-relative `path`."""
     p = path.replace("\\", "/")
-    if not any(style.search(p) for style in (C_STYLE, HASH_STYLE, TF_STYLE)):
+    config_style = CONFIG_STYLE.search(p) is not None
+    if not config_style and not any(s.search(p) for s in (C_STYLE, HASH_STYLE, TF_STYLE)):
         return False
     if any(glob_pattern(g).match(p) for g in budget["exclude"]):
         return False
-    return any(glob_pattern(g).match(p) for g in budget["include"])
+    named = [*budget["include"], *(budget["overrides"] if config_style else ())]
+    return any(glob_pattern(g).match(p) for g in named)
 
 
 def caps_for(path: str, budget: Mapping[str, Any]) -> dict[str, Any]:
@@ -156,18 +172,23 @@ def measure_text(source: str, path: str = "x.mts") -> Measure:
 
     It scans lines and does not parse: `//`, `/* ... */` and a JSDoc block in JS and TS; `#`
     lines and a docstring that opens a line in Python and shell; `#`, `//` and `/* */` in
-    Terraform. A shebang is code.
+    Terraform; `#` lines in a file of `CONFIG_STYLE`. A shebang is code.
     """
     hash_style = HASH_STYLE.search(path) is not None
     tf_style = TF_STYLE.search(path) is not None
+    config_style = CONFIG_STYLE.search(path) is not None
     closer: str | None = None
-    comment = code = run = longest = widest = widest_at = 0
+    comment = code = run = longest = widest = widest_at = head = inner = 0
+    opening = True
     for n, line in enumerate(source.split("\n")):
         text = line.strip()
+        shebang = n == 0 and text.startswith("#!")
         if closer is not None:
             is_comment = True
             if closer in text:
                 closer = None
+        elif config_style:
+            is_comment = text.startswith("#") and not shebang
         elif hash_style:
             quote = '"""' if text.startswith('"""') else "'''" if text.startswith("'''") else None
             if quote is not None:
@@ -175,7 +196,7 @@ def measure_text(source: str, path: str = "x.mts") -> Measure:
                 if quote not in text[3:]:
                     closer = quote
             else:
-                is_comment = text.startswith("#") and not (n == 0 and text.startswith("#!"))
+                is_comment = text.startswith("#") and not shebang
         elif text.startswith("/*"):
             is_comment = True
             if "*/" not in text:
@@ -186,16 +207,22 @@ def measure_text(source: str, path: str = "x.mts") -> Measure:
             comment += 1
             run += 1
             longest = max(longest, run)
+            if opening:
+                head = run
+            else:
+                inner = max(inner, run)
             if len(text) > widest:
                 widest, widest_at = len(text), n + 1
         else:
+            # The opening block ends at the line after it, and at the first code line.
+            opening = opening and run == 0 and (not text or shebang)
             run = 0
             if text:
                 code += 1
     total = comment + code
     share = 0 if total == 0 else comment / total
     doc = module_docstring_lines(source) if path.endswith(".py") else 0
-    return Measure(comment, code, share, longest, widest, widest_at, doc)
+    return Measure(comment, code, share, longest, widest, widest_at, head, inner, doc)
 
 
 def measure_file(file: Path, path: str) -> Measure:
@@ -208,6 +235,24 @@ def block_cap(is_new: bool, budget: Mapping[str, Any]) -> int:
     return int(budget["maxBlock"] if is_new else budget["longBlock"])
 
 
+def block_checks(
+    measured: Measure, is_new: bool, budget: Mapping[str, Any]
+) -> list[tuple[str, int, int]]:
+    """Each block length that has a cap, as `(name, lines, cap)`.
+
+    Without `headBlock`, that is the longest block. With it, the block that opens the file has
+    the cap `headBlock`, and the longest other block has the block cap.
+    """
+    cap = block_cap(is_new, budget)
+    head_cap = int(budget.get("headBlock", 0))
+    if head_cap <= 0:
+        return [("comment block", measured.longest, cap)]
+    return [
+        ("opening comment block", measured.head, head_cap),
+        ("comment block", measured.inner, cap),
+    ]
+
+
 def percent(share: float) -> int:
     """`share` in whole percent, a half rounded up."""
     return math.floor(share * 100 + 0.5)
@@ -218,9 +263,9 @@ def findings(path: str, measured: Measure, is_new: bool, budget: Mapping[str, An
     if measured.comment + measured.code < budget["minLines"]:
         return []
     out: list[str] = []
-    cap = block_cap(is_new, budget)
-    if measured.longest > cap:
-        out.append(f"{path} has a {measured.longest}-line comment block, cap {cap}")
+    for name, lines, cap in block_checks(measured, is_new, budget):
+        if lines > cap:
+            out.append(f"{path} has a {lines}-line {name}, cap {cap}")
     if measured.module_doc > budget["maxBlock"]:
         doc, most = measured.module_doc, budget["maxBlock"]
         out.append(f"{path} has a {doc}-line module docstring, cap {most}")
@@ -266,10 +311,12 @@ def renamed(root: Path, base: str, budget: Mapping[str, Any]) -> set[str]:
 
     A moved file carries its prose with it, so it keeps the caps of an old file. Git sees a
     rename that is staged or committed. The similarity floor is 30%, not the git default of 50%:
-    a move rewrites the import lines, and in a short file that is half the text.
+    a move rewrites the import lines, and in a short file that is half the text. The search
+    covers the `include` patterns and the `overrides` patterns.
     """
     args = ["diff", "--relative", "--find-renames=30%", "--diff-filter=R", "--name-status", "-z"]
-    done = _git(root, [*args, base, "--", *(f":(glob){g}" for g in budget["include"])])
+    named = [*budget["include"], *budget["overrides"]]
+    done = _git(root, [*args, base, "--", *(f":(glob){g}" for g in named)])
     if done.returncode != 0:
         return set()
     # One rename is three fields: the status, the old path and the new path.

@@ -746,3 +746,120 @@ def test_keeps_the_exit_code_of_the_landing_when_the_explain_command_fails(
     assert done.returncode == 2, done.stdout + done.stderr
     assert "explained\n" in done.stderr
     assert "land: explain: the command failed (exit 7). The gate verdict stays.\n" in done.stderr
+
+
+REMOVE_WORKTREE = "land.removeWorktree = true\n"
+
+
+def has_branch(repo: Path, name: str) -> bool:
+    return git(repo, "rev-parse", "--verify", "--quiet", f"refs/heads/{name}", check=False) != ""
+
+
+def test_removes_the_clean_worktree_and_the_landed_branch_as_its_last_step(
+    tmp_path: Path,
+) -> None:
+    repo, tree = make_repo(tmp_path, "true", extra=REMOVE_WORKTREE)
+    landed = git(tree, "rev-parse", "HEAD")
+
+    done = land(tree)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert git(repo, "rev-parse", "trunk") == landed
+    assert not tree.exists()
+    assert not has_branch(repo, "feat")
+    assert done.stdout.endswith(
+        f"land: worktree: removed {tree} and deleted the branch feat\nland: continue in {repo}\n"
+    )
+
+
+def test_keeps_the_worktree_and_the_branch_without_the_remove_worktree_key(
+    tmp_path: Path,
+) -> None:
+    repo, tree = make_repo(tmp_path, "true")
+
+    done = land(tree)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert tree.is_dir()
+    assert has_branch(repo, "feat")
+    assert "land: worktree:" not in done.stdout
+
+
+def test_keeps_a_worktree_that_holds_an_untracked_file_and_says_why(tmp_path: Path) -> None:
+    repo, tree = make_repo(tmp_path, "true", extra=REMOVE_WORKTREE)
+    (tree / "notes.txt").write_text("not committed\n", encoding="utf-8")
+
+    done = land(tree)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert (tree / "notes.txt").is_file()
+    assert has_branch(repo, "feat")
+    assert done.stdout.endswith(
+        f"land: worktree: {tree} stays, because it holds 1 changed or untracked files\n"
+    )
+
+
+def test_keeps_a_worktree_that_holds_an_ignored_file_no_tool_rebuilds(tmp_path: Path) -> None:
+    repo, tree = make_repo(tmp_path, "true", extra=REMOVE_WORKTREE)
+    (tree / "dist").mkdir()
+    (tree / "dist" / "run.bin").write_text("measured\n", encoding="utf-8")
+
+    done = land(tree)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert (tree / "dist" / "run.bin").is_file()
+    assert has_branch(repo, "feat")
+    assert done.stdout.endswith(
+        f"land: worktree: {tree} stays, because it holds ignored files that no tool rebuilds,"
+        " such as dist/\n"
+    )
+
+
+def test_removes_a_worktree_whose_ignored_files_are_rebuildable_or_spec_pages(
+    tmp_path: Path,
+) -> None:
+    repo, tree = make_repo(tmp_path, "true", extra=REMOVE_WORKTREE)
+    (repo / ".git" / "info").mkdir(exist_ok=True)
+    (repo / ".git" / "info" / "exclude").write_text("node_modules/\n", encoding="utf-8")
+    (tree / "node_modules" / "pkg").mkdir(parents=True)
+    (tree / "node_modules" / "pkg" / "index.js").write_text("x\n", encoding="utf-8")
+    (tree / "docs" / "specs" / "dist").mkdir()
+    (tree / "docs" / "specs" / "dist" / "2026-01-01-a.html").write_text("page\n", encoding="utf-8")
+
+    done = land(tree)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert not tree.exists()
+    assert not has_branch(repo, "feat")
+    assert f"land: continue in {repo}\n" in done.stdout
+
+
+def test_never_removes_the_main_checkout_when_the_landing_runs_from_it(tmp_path: Path) -> None:
+    repo, _ = make_repo(tmp_path, "true", extra=REMOVE_WORKTREE)
+    git(repo, "switch", "--quiet", "-c", "side")
+    commit(repo, "side.txt", "side\n")
+    base = repo / ".claude" / "worktrees" / "base"
+    git(repo, "worktree", "add", "--quiet", str(base), "trunk")
+
+    done = land(repo)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert git(repo, "rev-parse", "trunk") == git(repo, "rev-parse", "side")
+    assert (base / "side.txt").is_file()
+    assert has_branch(repo, "side")
+    assert done.stdout.endswith(
+        f"land: worktree: {repo} is the main checkout, so it stays, and so does the branch side\n"
+    )
+
+
+def test_refuses_a_remove_worktree_value_that_is_no_boolean_before_the_merge(
+    tmp_path: Path,
+) -> None:
+    repo, tree = make_repo(tmp_path, "true", extra='land.removeWorktree = "always"\n')
+
+    done = land(tree)
+
+    assert done.returncode == 5, done.stdout + done.stderr
+    assert "land: harness.land.removeWorktree is always. Set it to true or false.\n" in done.stderr
+    assert git(repo, "rev-parse", "trunk") != git(tree, "rev-parse", "HEAD")
+    assert tree.is_dir()

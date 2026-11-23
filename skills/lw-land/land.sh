@@ -14,6 +14,8 @@
 #
 # Exit codes: 0 landed, 2 the gate is red, 3 a merge conflict, 4 the push did not land,
 # 5 this checkout cannot land (detached, on the base branch, uncommitted work, no setup).
+# With `harness.land.removeWorktree`, a landing ends with the removal of its clean worktree and of
+# the landed branch, and prints the base checkout to continue in.
 #
 # It needs the `push-to-checkout` git hook in `core.hooksPath` and
 # `receive.denyCurrentBranch = updateInstead`, so the push writes the ref, the index and the
@@ -67,6 +69,9 @@ probe_command=$(setting harness.land.probeCommand) || die "cannot read harness.l
 after_merge=$(setting harness.land.afterMerge) || die "cannot read harness.land.afterMerge with $ah" 5
 explain_command=$(setting harness.land.explainCommand) || die "cannot read harness.land.explainCommand with $ah" 5
 default_gate=$(setting harness.land.defaultGate) || die "cannot read harness.land.defaultGate with $ah" 5
+remove_worktree=$(setting harness.land.removeWorktree) || die "cannot read harness.land.removeWorktree with $ah" 5
+[[ $remove_worktree == true || $remove_worktree == false ]] ||
+  die "harness.land.removeWorktree is $remove_worktree. Set it to true or false." 5
 gate_names=$(setting harness.land.gates | python3 -c 'import json, sys
 gates = json.load(sys.stdin)
 if not isinstance(gates, dict) or not all(isinstance(c, str) for c in gates.values()):
@@ -352,6 +357,63 @@ start_unborn_base() {
   say "$base had no commit. It starts at the root commit $(git rev-parse --short "$initial"), which matches its checkout."
 }
 
+# The ignored entries of this worktree that no tool rebuilds: none of their folder names is in
+# `branches.rebuildable`, and they are no spec page folder. `git worktree remove` deletes them.
+unrebuildable() {
+  local names out
+  names=$(setting branches.rebuildable) && out=$(setting specs.out) || return 1
+  git ls-files -z --others --ignored --exclude-standard --directory |
+    REBUILDABLE=$names SPEC_DIRS=$spec_dirs SPEC_OUT=$out python3 -c 'import json, os, sys
+names = set(json.loads(os.environ["REBUILDABLE"]))
+out = os.environ["SPEC_OUT"]
+pages = tuple(d + "/" + out + "/" for d in os.environ["SPEC_DIRS"].split("\n") if d)
+for entry in sys.stdin.read().split("\0"):
+    if entry and not names & set(entry.rstrip("/").split("/")) and not entry.startswith(pages):
+        print(entry)'
+}
+
+# `harness.land.removeWorktree`: a landed branch needs no worktree. It runs last, because it
+# removes the folder that this script runs in. The main checkout and a worktree that holds a
+# changed, untracked or unrebuildable file stay, with one line that says why.
+remove_landed_worktree() {
+  local dirty held
+  [[ $remove_worktree == true ]] || return 0
+  if [[ $(git rev-parse --path-format=absolute --git-dir) == "$common" ]]; then
+    say "worktree: $root is the main checkout, so it stays, and so does the branch $branch"
+    return 0
+  fi
+  if ! dirty=$(git status --porcelain=v1 --untracked-files=all); then
+    say "worktree: $root stays, because git status failed there"
+    return 0
+  fi
+  if [[ -n $dirty ]]; then
+    say "worktree: $root stays, because it holds $(grep -c '' <<<"$dirty") changed or untracked files"
+    return 0
+  fi
+  if ! held=$(unrebuildable); then
+    say "worktree: $root stays, because its ignored files could not be listed"
+    return 0
+  fi
+  if [[ -n $held ]]; then
+    say "worktree: $root stays, because it holds ignored files that no tool rebuilds, such as $(head -1 <<<"$held")"
+    return 0
+  fi
+  if ! cd "$checkout"; then
+    say "worktree: $root stays, because $checkout could not be entered"
+    return 0
+  fi
+  if ! git worktree remove "$root" >"$report" 2>&1; then
+    say "worktree: $root stays, because git did not remove it: $(tail -1 "$report")"
+    return 0
+  fi
+  if git branch -d "$branch" >"$report" 2>&1; then
+    say "worktree: removed $root and deleted the branch $branch"
+  else
+    say "worktree: removed $root. The branch $branch stays: $(tail -1 "$report")"
+  fi
+  say "continue in $checkout"
+}
+
 branch=$(git rev-parse --abbrev-ref HEAD) || exit 5
 [[ $branch != HEAD ]] || die "HEAD is detached, so there is no branch to land." 5
 [[ $branch != "$base" ]] || die "this is $base. Land a branch, from the worktree that holds it." 5
@@ -550,3 +612,5 @@ while read -r path; do
     say "page: $path did not render in $checkout: $(tail -1 "$report")"
   fi
 done <<<"$written"
+
+remove_landed_worktree

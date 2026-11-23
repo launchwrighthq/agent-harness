@@ -28,6 +28,9 @@ config.register_defaults(
         "staleHours": 24,
         # A live lock whose session transcript is idle this many days is a stale session.
         "sessionIdleDays": 2,
+        # The worktree sweep (`work/sweep.py`). `staleHours` 0 turns it off, and above 0 it is
+        # the stale window of the sweep. `everyMinutes` is the least time between two sweeps.
+        "autoApply": {"staleHours": 0, "everyMinutes": 30},
     },
 )
 

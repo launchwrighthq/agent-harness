@@ -15,6 +15,7 @@ from pathlib import Path
 from agent_harness import HarnessError, config
 from agent_harness.env import (
     checks,
+    command_keys,
     declarations,
     envfile,
     generate,
@@ -46,7 +47,8 @@ USAGE = """usage: ah env [--root DIR] [--master FILE] [--declarations FILE ...] 
                                       empty required keys, stray and git-tracked env files
   where <KEY>                         each file that sets KEY, each declaration that reads it,
                                       each workflow or infra file that names it, and each code
-                                      line that reads it
+                                      line that reads it; with [env] declarationsCommand, whether
+                                      that command lists it
   get <KEY> <file> [--reveal]         the masked value; --reveal prints the value itself
   set <KEY> <file> --value <v>        set or add KEY in its master block and order
   set <KEY> <file> --stdin            the same, with the value on standard input
@@ -202,6 +204,9 @@ def cmd_where(ctx: Context, argv: list[str]) -> int:
         ctx.out(f"  declared in {declared.file}, read by {apps}")
     elif decl.files:
         ctx.out("  declared in no declaration file")
+    if ctx.settings.get("declarationsCommand"):
+        listed = key in ctx.keys_of_command()
+        ctx.out(f"  {'declared and read' if listed else 'not listed'} by env.declarationsCommand")
     pattern = re.compile(rf"\b{re.escape(key)}\b")
     for path in _scan_paths(ctx):
         try:
@@ -656,6 +661,7 @@ def main(
     stdin: Callable[[], str] = _read_stdin,
     runner: stores.Runner = stores.run_process,
     ask: Callable[[str], str] | Terminal | None = Terminal.DETECT,
+    execute: command_keys.Execute = command_keys.execute,
 ) -> int:
     """`ask` defaults to `input` when standard input is a terminal, else to None."""
     asker = (input if sys.stdin.isatty() else None) if ask is Terminal.DETECT else ask
@@ -677,6 +683,7 @@ def main(
         if "--declarations" in globals_.lists:
             settings["declarations"] = globals_.lists["--declarations"]
         ctx = Context(loaded.root, settings, write_out, write_err, runner, asker)
+        ctx.execute = execute
         if sub == "set":
             return cmd_set(ctx, sub_argv, stdin)
         return SUBCOMMANDS[sub](ctx, sub_argv)

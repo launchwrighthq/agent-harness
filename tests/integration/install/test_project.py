@@ -1404,3 +1404,74 @@ def test_installs_a_package_that_from_names_with_the_global_launcher(
     assert done.returncode == 0, done.stderr
     assert (repo / ".claude/agent-harness/rules/plain.md").read_text() == "# Plain rule\n"
     assert ah("check").returncode == 0
+
+
+def test_lists_only_the_harness_skills_in_the_agents_block_on_request(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    own = repo / ".claude/skills/my-own"
+    own.mkdir(parents=True)
+    (own / "SKILL.md").write_text("# My own skill\n")
+    write_config(repo, '[harness]\nagentsSkills = "harness"\n')
+
+    done = ah("install", "--project", FROM, str(package))
+
+    assert done.returncode == 0, done.stderr
+    agents = (repo / "AGENTS.md").read_text()
+    assert "Skills: `lw-demo`. Claude Code runs one as" in agents
+    assert "my-own" not in agents
+    assert os.readlink(repo / ".agents/skills/my-own") == "../../.claude/skills/my-own"
+    assert ah("check").returncode == 0
+
+
+def test_refuses_an_agents_skills_mode_outside_the_two_values(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    write_config(repo, '[harness]\nagentsSkills = "own"\n')
+
+    done = ah("install", "--project", FROM, str(package))
+
+    assert done.returncode == 1
+    assert done.stderr == (
+        "ah install: config key harness.agentsSkills must be one of all, harness, not 'own'\n"
+    )
+
+
+REMOVED_HOOKS = "warning: this install removed"
+
+
+def test_warns_once_of_a_removed_hook_file_and_says_to_restart_the_sessions(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    ah("install", "--project", FROM, str(package))
+    (package / "hooks/rm_guard.py").rename(package / "hooks/rm_check.py")
+    manifest = package / "harness.toml"
+    manifest.write_text(manifest.read_text().replace("hooks/rm_guard.py", "hooks/rm_check.py"))
+
+    done = ah("install", "--project", FROM, str(package))
+    again = ah("install", "--project", FROM, str(package))
+
+    assert done.returncode == 0, done.stderr
+    assert [line for line in done.stdout.splitlines() if line.startswith("warning:")] == [
+        f"{REMOVED_HOOKS} 1 hook files: .claude/agent-harness/hooks/rm_guard.py."
+        " An agent session that runs now still calls them, and each call fails."
+        " Restart every running agent session."
+    ]
+    assert not (repo / ".claude/agent-harness/hooks/rm_guard.py").exists()
+    assert REMOVED_HOOKS not in again.stdout
+
+
+def test_prints_no_removed_hook_warning_when_an_install_removes_a_file_that_no_hook_calls(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    ah("install", "--project", FROM, str(package))
+    (package / "hooks/edit_check.py").unlink()
+    manifest = package / "harness.toml"
+    head, rest = manifest.read_text().split('[[hook]]\nid = "edit-check"')
+    manifest.write_text(head + rest[rest.index("[[rule]]") :])
+
+    done = ah("install", "--project", FROM, str(package))
+
+    assert done.returncode == 0, done.stderr
+    assert "removed .claude/agent-harness/hooks/edit_check.py" in done.stdout.splitlines()
+    assert REMOVED_HOOKS not in done.stdout

@@ -1,6 +1,7 @@
 """`ah env check`: the env facts of a repository that a gate can enforce.
 
-A finding names a file, a key and a line, never a value:
+A finding names a file, a key and a line, never a value. A key that `[env] declarationsCommand`
+prints counts as a key that a declaration names. The findings:
 
 - a key that code reads (see `readers`) and that no master or declaration names;
 - a key of a live env file that no master or declaration names;
@@ -26,8 +27,9 @@ def environment_of(name: str) -> str:
 
 
 def known_keys(ctx: Context) -> tuple[set[str], bool]:
-    """The keys that a master or a template names, and whether declarations are configured."""
-    names: set[str] = set()
+    """The keys that a master, a template or `declarationsCommand` names, and whether
+    declarations are configured."""
+    names: set[str] = set(ctx.keys_of_command())
     for path in [ctx.master, *ctx.templates(), *ctx.extra_masters()]:
         if path.is_file():
             names.update(envfile.read(path).key_names())

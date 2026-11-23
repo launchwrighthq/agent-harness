@@ -2901,6 +2901,132 @@
           }
         }
       }
+    },
+    {
+      "name": "the public certificate bundle of a package under a rebuildable folder is cache, and the worktree goes",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "write",
+          "in": "w1",
+          "path": "node_modules/pkg/index.js",
+          "text": "x\n"
+        },
+        {
+          "op": "write",
+          "in": "w1",
+          "path": "node_modules/certs/cacert.pem",
+          "text": "public certificates\n"
+        }
+      ],
+      "args": [
+        "--apply"
+      ],
+      "expect": {
+        "worktrees": {
+          "w1": {
+            "verdict": "merged",
+            "risk": "none",
+            "files": {
+              "node_modules/": {
+                "state": "cache"
+              },
+              "node_modules/certs/cacert.pem": null
+            }
+          }
+        },
+        "plan": {
+          "remove:w1": {
+            "risk": "none"
+          }
+        },
+        "after": {
+          "paths": {
+            "gone": [
+              "repo/.claude/worktrees/w1"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "the public certificate bundle of a package outside a rebuildable folder is cache too",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "write",
+          "in": "w1",
+          "path": "data/certs/cacert.pem",
+          "text": "public certificates\n"
+        }
+      ],
+      "args": [],
+      "expect": {
+        "worktrees": {
+          "w1": {
+            "verdict": "merged",
+            "risk": "none",
+            "files": {
+              "data/": {
+                "state": "cache"
+              }
+            }
+          }
+        },
+        "plan": {
+          "remove:w1": {
+            "risk": "none"
+          }
+        }
+      }
+    },
+    {
+      "name": "a .pem file with another name stays a credential, also beside the public bundle",
+      "setup": [
+        {
+          "op": "use",
+          "fixture": "one"
+        },
+        {
+          "op": "write",
+          "in": "w1",
+          "path": "node_modules/certs/cacert.pem",
+          "text": "public certificates\n"
+        },
+        {
+          "op": "write",
+          "in": "w1",
+          "path": "node_modules/certs/server.pem",
+          "text": "k\n",
+          "mode": "000"
+        }
+      ],
+      "args": [],
+      "expect": {
+        "worktrees": {
+          "w1": {
+            "verdict": "holds_data",
+            "risk": "high",
+            "files": {
+              "node_modules/": {
+                "state": "cache"
+              },
+              "node_modules/certs/server.pem": {
+                "state": "credential"
+              }
+            }
+          }
+        },
+        "plan": {
+          "remove:w1": null
+        }
+      }
     }
   ]
 }

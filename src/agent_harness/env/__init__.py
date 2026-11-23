@@ -15,6 +15,8 @@ config.register_defaults(
         "files": [],
         # TOML files of [keys.<NAME>] and [environments.<env>] tables, merged in order.
         "declarations": [],
+        # A shell command that prints one declared key name per line. Empty: no command.
+        "declarationsCommand": "",
         "layout": True,
         # Live files that always take their own `<file>.example` as master.
         "paired": [".env.ci"],

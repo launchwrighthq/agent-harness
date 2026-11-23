@@ -48,6 +48,9 @@ class Heredoc:
     body: str
     # Bash expands nothing in a body with a quoted delimiter, nor in a here-string body here.
     quoted: bool
+    # Where the body lines of a `<<` heredoc sit in the text. A here-string has no span.
+    start: int = field(default=0, compare=False)
+    end: int = field(default=0, compare=False)
 
 
 @dataclass
@@ -183,6 +186,7 @@ class _Parser:
         text = self.text
         for pending in self.pending:
             lines: list[str] = []
+            start = stop = min(i, len(text))
             while i < len(text):
                 end = text.find("\n", i)
                 end = len(text) if end < 0 else end
@@ -192,8 +196,9 @@ class _Parser:
                 if shown == pending.delimiter:
                     break
                 lines.append(shown + "\n")
+                stop = end
             body = "".join(lines)
-            pending.step.heredocs.append(Heredoc(body, pending.quoted))
+            pending.step.heredocs.append(Heredoc(body, pending.quoted, start, stop))
             if not pending.quoted:
                 pending.step.nested.extend(body_substitutions(body))
         self.pending = []

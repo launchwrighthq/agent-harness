@@ -31,7 +31,7 @@ command calls the same engine, and you can use it instead.
 | Undeclared keys, empty required keys, stray and git-tracked env files | `ah env check` |
 | Where a key is set, declared, used and read in code | `ah env where <KEY>` |
 | Whether a key is set, without its value | `ah env get <KEY> <file>` |
-| Set or add a key | `ah env set <KEY> <file> --stdin` (value on standard input) or `--value <v>` |
+| Set or add a key | `ah env set <KEY> <file> --stdin` with the value in a quoted heredoc (see below) |
 | Remove a key | `ah env unset <KEY> <file>` |
 | Copy a key to another file | `ah env copy <KEY> <from> <to> [--as <NEW>]` |
 | Move a key to another file | `ah env move <KEY> <from> <to>` |
@@ -55,9 +55,17 @@ A masked value prints as `empty`, or as `set, <length> chars, sha256:<8 hex>`. A
 print as they are only for a key declared `secret = false`. Two files hold the same value when
 the digests are equal.
 
-When the user gives you a value to set, pass it with `--value '<v>'` in single quotes. A person or
-a script that holds the value pipes it to `--stdin`, so the value stays out of `ps` and the shell
-history.
+When the user gives you a value to set, pass it on standard input in a quoted heredoc, with the
+env command alone on its line. The value stays out of the process list, and the hooks do not
+scan it. This is the one form the hooks clear:
+
+```bash
+ah env set <KEY> <file> --stdin <<'EOF'
+<value>
+EOF
+```
+
+A person or a script that holds the value pipes it to `--stdin`.
 
 ## Run a command with an env file
 

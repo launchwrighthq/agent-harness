@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_harness import HarnessError, config
-from agent_harness.env import declarations, envfile, layout, readers, stores
+from agent_harness.env import command_keys, declarations, envfile, layout, readers, stores
 
 
 class Context:
@@ -35,6 +35,9 @@ class Context:
         self.main_checkout = main_checkout_of(root)
         self._declarations: declarations.Declarations | None = None
         self._reads: list[readers.Read] | None = None
+        # Runs `declarationsCommand`. A test sets its own.
+        self.execute: command_keys.Execute = command_keys.execute
+        self._command_keys: set[str] | None = None
 
     @property
     def master(self) -> Path:
@@ -94,6 +97,13 @@ class Context:
             paths = [Path(n) if Path(n).is_absolute() else self.root / n for n in names]
             self._declarations = declarations.load(paths)
         return self._declarations
+
+    def keys_of_command(self) -> set[str]:
+        """The key names that `declarationsCommand` prints. The command runs once per run."""
+        if self._command_keys is None:
+            setting = self.settings.get("declarationsCommand", "")
+            self._command_keys = command_keys.names(setting, self.root, self.execute)
+        return self._command_keys
 
     def for_folder(self, folder: str) -> Context:
         """The context of another folder of env files, with `<folder>/.env.example` as master."""

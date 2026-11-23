@@ -184,6 +184,29 @@ def project_entries(text: str | None, file: str) -> Registry:
     return out
 
 
+# The installed script of a harness command: inside the quotes of the Claude form, and the word
+# after the adapter of the Codex form.
+OWN_SCRIPT = re.compile(r'"\$CLAUDE_PROJECT_DIR/([^"]+)"|/run-hook\.py" (\S+)')
+
+
+def hook_scripts(text: str | None) -> set[str]:
+    """The installed script of each harness command in the hook file `text`, relative to the root.
+
+    A running agent session holds these commands, so it still calls each script after an install
+    rewrites the file. The text is one that `project_entries` accepts.
+    """
+    hooks = json.loads(text).get("hooks", {}) if text is not None else {}
+    out: set[str] = set()
+    for groups in hooks.values():
+        for group in groups:
+            entries = group.get("hooks") if isinstance(group, dict) else None
+            for entry in entries if isinstance(entries, list) else []:
+                found = OWN_SCRIPT.search(entry["command"]) if is_own(entry) else None
+                if found:
+                    out.add(found.group(1) or found.group(2))
+    return out
+
+
 def merged(own: Registry, project: Registry) -> Registry:
     """The harness groups first in each event, then the project groups in their old order.
 

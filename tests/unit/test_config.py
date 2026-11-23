@@ -160,6 +160,16 @@ def test_takes_the_project_root_from_ah_root_when_no_start_is_given(
     assert config.find_root() == project.resolve()
 
 
+def test_names_no_project_board_library_by_default(tmp_path: Path) -> None:
+    assert config.get("specs.mockupLibrary", tmp_path) == ""
+
+
+def test_reads_the_project_board_library_from_the_file(tmp_path: Path) -> None:
+    write_config(tmp_path, '[specs]\nmockupLibrary = "docs/specs/boardlib"\n')
+
+    assert config.get("specs.mockupLibrary", tmp_path) == "docs/specs/boardlib"
+
+
 def test_asks_before_a_spec_commit_by_default(tmp_path: Path) -> None:
     assert config.get("specs.commit", tmp_path) == "ask"
 
@@ -181,3 +191,25 @@ def test_refuses_a_spec_commit_mode_other_than_ask_and_auto(
     assert captured.err == (
         "ah config: config key specs.commit must be one of ask, auto, not 'push'\n"
     )
+
+
+def test_lists_every_skill_in_the_agents_block_by_default(tmp_path: Path) -> None:
+    assert config.get("harness.agentsSkills", tmp_path) == "all"
+
+
+def test_refuses_an_agents_skills_mode_other_than_all_and_harness(tmp_path: Path) -> None:
+    write_config(tmp_path, '[harness]\nagentsSkills = "none"\n')
+
+    with pytest.raises(HarnessError) as refused:
+        config.get("harness.agentsSkills", tmp_path)
+
+    assert str(refused.value) == (
+        "config key harness.agentsSkills must be one of all, harness, not 'none'"
+    )
+
+
+def test_keeps_the_worktree_of_a_landing_and_the_worktree_sweep_off_by_default(
+    tmp_path: Path,
+) -> None:
+    assert config.get("harness.land.removeWorktree", tmp_path) is False
+    assert config.get("branches.autoApply", tmp_path) == {"staleHours": 0, "everyMinutes": 30}

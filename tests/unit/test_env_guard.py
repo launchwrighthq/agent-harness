@@ -150,6 +150,34 @@ def test_skips_only_the_words_of_a_quiet_engine_step_in_the_name_scan(tmp_path: 
     )
 
 
+def test_skips_the_value_that_a_quoted_heredoc_feeds_to_set_stdin(tmp_path: Path) -> None:
+    engine = "ah env set A .env.production --stdin"
+    value = "k*.pem"
+    command = f"{engine} <<'EOF'\n{value}\nEOF\ncat x"
+
+    assert scanned(command, tmp_path) == (
+        f"{' ' * len(engine)} <<'EOF'\n{' ' * len(value)}\nEOF\ncat x"
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "ah env set A .env.local --stdin <<EOF\nk*.pem\nEOF",
+        "ah env set A .env.local --stdin <<< 'k*.pem'",
+        "ah env set A .env.local --stdin <<'EOF' > out.txt\nk*.pem\nEOF",
+        "ah env set A .env.local --value x <<'EOF'\nk*.pem\nEOF",
+        "ah env keys .env.local <<'EOF'\nk*.pem\nEOF",
+        "./bin/ah env set A .env.local --stdin <<'EOF'\nk*.pem\nEOF",
+        "bash <<'EOF'\nah env set A .env.local --stdin <<'V'\nk*.pem\nV\nEOF",
+    ],
+)
+def test_keeps_the_scan_of_a_value_that_reaches_the_engine_another_way(
+    command: str, tmp_path: Path
+) -> None:
+    assert "k*.pem" in scanned(command, tmp_path)
+
+
 @pytest.mark.parametrize(
     "command",
     [

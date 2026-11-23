@@ -61,6 +61,9 @@ class Layout:
     archive: str
     out: str
     kinds: tuple[tuple[str, Domain], ...] = ()
+    # The page texts of `specs.wordmark` and `specs.footer`.
+    wordmark: str = config.SECTION_DEFAULTS["specs"]["wordmark"]
+    footer: str = config.SECTION_DEFAULTS["specs"]["footer"]
 
     @property
     def domain_dirs(self) -> tuple[str, ...]:
@@ -150,6 +153,12 @@ def _name(value: object, key: str) -> str:
     return value
 
 
+def _page_text(value: object, key: str) -> str:
+    if not isinstance(value, str) or "\n" in value or "\r" in value:
+        raise HarnessError(f"{key} must be one line of text, got {value!r}")
+    return value
+
+
 def _kind(folder: str, value: object) -> Domain:
     key = f"specs.kinds.{folder}"
     if not isinstance(value, dict):
@@ -184,6 +193,8 @@ def from_config(cfg: config.Config) -> Layout:
         archive=_name(cfg.get("specs.archive"), "specs.archive"),
         out=_name(cfg.get("specs.out"), "specs.out"),
         kinds=named,
+        wordmark=_page_text(cfg.get("specs.wordmark"), "specs.wordmark"),
+        footer=_page_text(cfg.get("specs.footer"), "specs.footer"),
     )
 
 

@@ -106,6 +106,22 @@ def test_denies_a_terraform_block_over_the_cap_of_its_override(tmp_path: Path) -
     assert "infra/main.tf would get a 2-line comment block, cap 1" in reason
 
 
+def test_holds_the_opening_block_of_an_env_template_to_its_head_cap(tmp_path: Path) -> None:
+    caps = "headBlock = 3\nmaxBlock = 1\nminLines = 0\n"
+    project = project_on_main(tmp_path, f'[harness.comments.overrides."**/.env*.example"]\n{caps}')
+    commit(project)
+    path = str(project / ".env.example")
+    within = {"file_path": path, "content": "# a\n# b\n# c\n\n# App\nAPP_URL=\n"}
+    over = {"file_path": path, "content": "# a\n# b\n# c\n# d\n\n# App\nAPP_URL=\n"}
+
+    assert run(project, "PreToolUse", "Write", within) == ""
+    out = json.loads(run(project, "PreToolUse", "Write", over))["hookSpecificOutput"]
+
+    assert out["permissionDecision"] == "deny"
+    reason = out["permissionDecisionReason"]
+    assert ".env.example would get a 4-line opening comment block, cap 3" in reason
+
+
 def stop(project: Path, session: str = "s1") -> subprocess.CompletedProcess[str]:
     payload = {"cwd": str(project), "hook_event_name": "Stop", "session_id": session}
     return hook_project.run_hook(project, HOOK, "Stop", payload)

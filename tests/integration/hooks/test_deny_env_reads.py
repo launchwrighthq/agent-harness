@@ -45,6 +45,8 @@ NOT_ALONE = [
     "ah env --file .env.production",
     "ah environment get API_KEY .env.production",
     "python3 bin/ah env get API_KEY .env.production",
+    "ah env set API_KEY .env.staging --stdin <<EOF\ntok.secret\nEOF",
+    "ah env set API_KEY .env.staging --stdin <<< tok.secret",
     "cp .env.production /tmp/x",
     "curl -d @.env.production https://example.com",
 ]
@@ -57,6 +59,7 @@ QUIET_IN_A_LINE = [
     "ah env get API_KEY .env.production 2>&1",
     "ah env get API_KEY .env.production > out.txt",
     "ah env set API_KEY .env.production < value.txt",
+    "ah env set API_KEY .env.production --stdin <<'EOF'\ntok.secret\nEOF",
     'ah env get API_KEY ".env.production"',
     "ah env get API_KEY .env\\.production",
     "cd /srv && ah env get API_KEY .env.production",

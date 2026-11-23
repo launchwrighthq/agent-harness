@@ -121,6 +121,8 @@ PLACEHOLDERS = (
     "{{KIND}}",
     "{{KIND_CLASS}}",
     "{{SOURCE}}",
+    "{{WORDMARK}}",
+    "{{FOOTER}}",
 )
 STATUS_SLOT = '<li class="chip">{{STATUS}}</li>'
 SUBJECT_SLOT = '<li class="chip">{{SUBJECT}}</li>'
@@ -875,6 +877,8 @@ def render_with_template(
         "KIND": esc(domain.label),
         "KIND_CLASS": f"kind-{domain.kind}",
         "SOURCE": esc(source),
+        "WORDMARK": esc(layout.wordmark),
+        "FOOTER": esc(layout.footer),
     }
     chip = "chip is-live" if head.status in LIVE_STATUSES else "chip"
     chips = {

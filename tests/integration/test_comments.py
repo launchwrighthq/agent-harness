@@ -129,6 +129,45 @@ def test_measures_terraform_with_the_caps_of_its_override(main_repo: Path, ah: A
     )
 
 
+CONFIG_CAPS = """\
+[harness.comments.overrides."**/.env*.example"]
+headBlock = 3
+maxBlock = 2
+longBlock = 2
+minLines = 0
+maxLineLength = 100
+
+[harness.comments.overrides."**/*.yml"]
+maxBlock = 3
+longBlock = 3
+minLines = 0
+maxLineLength = 100
+"""
+
+
+def test_measures_a_config_file_only_under_the_override_that_names_it(
+    main_repo: Path, ah: Ah
+) -> None:
+    write(main_repo, ".agents/harness.toml", CONFIG_CAPS)
+    commit(main_repo, "base")
+    head = "# Keys of the app.\n#\n# One block per area.\n# One key per line.\n"
+    write(main_repo, ".env.example", f"{head}\n# App\n# The public URL.\n# Unit: none.\nAPP_URL=\n")
+    wide = "# " + "x" * 101
+    write(main_repo, ".github/workflows/build.yml", f"# Builds the app.\nname: build\n{wide}\n")
+    write(main_repo, "deploy/Dockerfile", "# note\n" * 30 + "FROM scratch\n")
+
+    done = ah("comments")
+
+    assert (done.returncode, done.stdout.splitlines()[:-1]) == (
+        1,
+        [
+            ".env.example has a 4-line opening comment block, cap 3",
+            ".env.example has a 3-line comment block, cap 2",
+            ".github/workflows/build.yml:3 has a 103-character comment line, cap 100",
+        ],
+    )
+
+
 def test_refuses_a_path_outside_the_checkout(main_repo: Path) -> None:
     with pytest.raises(HarnessError, match="is outside the checkout"):
         comments.comment_findings(main_repo, BUDGET, "main", ["/"])

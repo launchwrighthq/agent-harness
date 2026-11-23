@@ -42,7 +42,7 @@ never rewrites an existing file.
 | `[specs]` | The spec folders, the archive folder, the page folder and the audit store. | [docs/spec.md](docs/spec.md) |
 | `[env]` | The master env file, the other env files, the declarations, the layout check and the secret store. | [docs/env.md](docs/env.md) |
 | `[deploy]` | The CI workflows and jobs, the environments, the phases and the serving targets. | [docs/deploy.md](docs/deploy.md) |
-| `[branches]` | The remote base, the protected refs, the worktree folder, the rebuildable folder names and the age gates of `ah branch-audit`. | [docs/work.md](docs/work.md) |
+| `[branches]` | The remote base, the protected refs, the worktree folder, the rebuildable folder names and the age gates of `ah branch-audit`. `[branches.autoApply]` turns the worktree sweep on. | [docs/work.md](docs/work.md) |
 
 `ah config get <key>` prints one value. A string prints as it is. Any other value prints as JSON.
 Skill text names this command where it needs a project fact.
@@ -89,6 +89,41 @@ The hooks, the rules and the git hooks are in [docs/hooks.md](docs/hooks.md).
 | `hooks/`, `skills/`, `rules/`, `githooks/`, `codex/` | The installed content and the Codex hook adapter. |
 | `docs/` | One document per area. |
 | `tests/unit/`, `tests/integration/` | The tests. |
+
+## Changes in 0.4.1
+
+This release has thirteen changes. Each default keeps the behavior of 0.4.0.
+
+| Change | Keys and commands | Details |
+|---|---|---|
+| A value on standard input | No key. The env guards clear the value of `ah env set <KEY> <file> --stdin <<'EOF'`, a quoted heredoc on the env command. The `secrets` rule and the `lw-env` skill name this form. | [docs/hooks.md](docs/hooks.md) |
+| A heredoc body that is text | No key. The glob scan of `bash-read-guard` skips the quoted body of `git commit -F -` anywhere in a command, and of a program that is no reader, shell or runner. The literal name scan still reads the body. | [docs/hooks.md](docs/hooks.md) |
+| A new worktree of a listed repository | No key. `workspace-guard` reads the missing folder `<main checkout>/.claude/worktrees/<name>` of a repository of `harness.workspace.repos` as that repository, so one command can add a worktree and run git in it. | [docs/hooks.md](docs/hooks.md) |
+| The skills of the `AGENTS.md` block | `harness.agentsSkills = "harness"` lists only the skills of the manifests. The default `all` also lists the project skills. | [docs/install.md](docs/install.md) |
+| A removed hook script | No key. `ah install` prints one warning line when it removes a hook script that a running agent session still calls. | [docs/install.md](docs/install.md) |
+| The texts of a spec page | `specs.wordmark` and `specs.footer` replace the mark above the contents list and the footer note. | [docs/spec.md](docs/spec.md) |
+| More board pieces | No key. `boards.py` of `lw-spec-mockup` has `tabbar`, `link` and `tokens(sets=)`, and `embed_font` reads `.woff`, `.ttf` and `.otf` files too. | [docs/spec.md](docs/spec.md) |
+| A project board library | `specs.mockupLibrary` names a project folder that a board script imports from. | [docs/spec.md](docs/spec.md) |
+| The worktree sweep | `[branches.autoApply] staleHours` above 0 turns it on, and `everyMinutes` spaces the sweeps. The new `worktree-sweep` hook starts it. It removes a merged and clean worktree that no live session owns, and the branch of that worktree. | [docs/work.md](docs/work.md) |
+| A landing that removes its worktree | `harness.land.removeWorktree = true` removes the clean branch worktree and the landed branch as the last step of a landing. | [docs/hooks.md](docs/hooks.md) |
+| The certificate bundle of a package | No key. `ah branch-audit` reads an ignored `cacert.pem` as `cache`. Every other `.pem` file stays a `credential`. | [docs/work.md](docs/work.md) |
+| Env keys from a command | `env.declarationsCommand` is a shell command that prints one key name per line. `ah env check` and `ah env where` take each name as a declared key. | [docs/env.md](docs/env.md) |
+| The comment budget of config files | A pattern of `comments.overrides` or `comments.include` puts a YAML file, a Dockerfile or an env template in the budget. `comments.headBlock` caps the block that opens a file. | [docs/hooks.md](docs/hooks.md) |
+
+Six behaviors differ from 0.4.0:
+
+- The two env guards and `bash-read-guard` pass the three command forms of the first two rows,
+  and `workspace-guard` passes git in the new worktree folder of the third row. Each one was
+  refused before.
+- An upgrade adds the `worktree-sweep` hook to `.claude/settings.json` and `.codex/hooks.json`.
+  The hook does nothing while `branches.autoApply.staleHours` is 0.
+- `ah install` can print the warning line for a removed hook script.
+- `ah branch-audit` gives a worktree whose only ignored credential file is a `cacert.pem` the
+  verdict of its other files. Before, that file was a `credential` row.
+- `tokens()` of `boards.py` raises `ValueError` for a `theme` other than `light`, `dark` or a
+  name of `sets`. Before, it gave the light values. `embed_font` raises for a file that is no
+  `.woff2`, `.woff`, `.ttf` or `.otf`.
+- The `lw-env` skill tells an agent to give a value in the quoted heredoc, not with `--value`.
 
 ## Changes in 0.4.0
 

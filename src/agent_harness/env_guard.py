@@ -212,7 +212,9 @@ class _Line:
                 self.other(step)
             return
         size, own = match
-        _EngineStep(self, step.words, size, own and not nested, nested, cwd).check()
+        engine = _EngineStep(self, step.words, size, own and not nested, nested, cwd)
+        engine.check()
+        engine.stdin_value(step)
 
     def engine(self, words: list[Word]) -> tuple[int, bool] | None:
         """The number of engine command words, and True for a configured form."""
@@ -296,6 +298,19 @@ class _EngineStep:
             self.run()
         elif self.sub.text in QUIET_SUBCOMMANDS:
             self.exempt(self.words)
+
+    def stdin_value(self, step: Step) -> None:
+        """Exempt the body of the heredoc that feeds `set --stdin`: it is the value, and it
+        names no file. The one form is `set <KEY> <file> --stdin <<'D'`, with a quoted
+        delimiter and no other redirection. A here-string and an unquoted body stay scanned."""
+        if self.sub is None or self.sub.text != "set" or dynamic(self.sub) or not self.own:
+            return
+        flags = [w for w in self.args if w.text == "--stdin"]
+        if len(flags) != 1 or dynamic(flags[0]) or step.redirects or len(step.heredocs) != 1:
+            return
+        body = step.heredocs[0]
+        if body.quoted and body.end > body.start and self.globals_in_scope():
+            self.line.check.exempt.append((body.start, body.end))
 
     def exempt(self, words: list[Word]) -> None:
         if self.own and self.globals_in_scope():

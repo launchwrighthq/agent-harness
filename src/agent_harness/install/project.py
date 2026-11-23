@@ -158,7 +158,8 @@ def registries(
     skills = [*(s.id for s in plan.skills), *own]
     links = {f"{registry.LINK_DIR}/{s}": registry.link_target(s) for s in sorted(skills)}
     adapter_dir = cfg.get("harness.adapterDir")
-    block = registry.agents_block(plan, skills, str(adapter_dir))
+    listed = skills if cfg.get("harness.agentsSkills") == "all" else [s.id for s in plan.skills]
+    block = registry.agents_block(plan, listed, str(adapter_dir))
     return Registries(plan, skills, links, block)
 
 
@@ -434,6 +435,28 @@ def _take_over(root: Path, copies: Sequence[tuple[str, str]], replace: bool, out
     return changes
 
 
+def stale_hooks(
+    root: Path, called: set[str], previous: Lock | None, contents: Mapping[str, Content]
+) -> list[str]:
+    """The hook scripts that this install removes, sorted. Read before the install writes.
+
+    Each one is a file of the previous lock that a hook file of the project calls (`called`) and
+    that the new install does not hold.
+    """
+    locked = previous.files if previous else {}
+    return sorted(
+        rel for rel in locked if rel in called and rel not in contents and (root / rel).is_file()
+    )
+
+
+def removed_hooks_line(removed: Sequence[str]) -> str:
+    return (
+        f"warning: this install removed {len(removed)} hook files: {', '.join(removed)}."
+        " An agent session that runs now still calls them, and each call fails."
+        " Restart every running agent session."
+    )
+
+
 def install_project(
     root: Path,
     cfg: Config,
@@ -454,6 +477,8 @@ def install_project(
     previous = read_lock(root / LOCK_FILE)
     plan = plan_for(root, cfg, manifests)
     mode, cap = global_hooks(cfg), rule_cap(cfg)
+    # Read before the first write, so another value refuses the install with no file written.
+    cfg.get("harness.agentsSkills")
     files = merge(
         engine_files(package_root, ENGINE_PARTS),
         plan.files,
@@ -463,8 +488,12 @@ def install_project(
     contents = read_all(files)
     # Built before the first write: they refuse a project folder that the Codex command cannot
     # name, and a hook file that is not valid JSON.
-    codex_text = registry.codex_file(_read(root / registry.CODEX_FILE), plan, root)
-    settings_text = registry.settings_file(_read(root / registry.SETTINGS_FILE), plan)
+    codex_before = _read(root / registry.CODEX_FILE)
+    settings_before = _read(root / registry.SETTINGS_FILE)
+    codex_text = registry.codex_file(codex_before, plan, root)
+    settings_text = registry.settings_file(settings_before, plan)
+    called = registry.hook_scripts(settings_before) | registry.hook_scripts(codex_before)
+    leaving = stale_hooks(root, called, previous, contents)
     changes = _take_over(root, project_copies(root, contents, previous, plan), replace, out)
     changes += apply_files(root, contents, previous, out)
 
@@ -509,6 +538,8 @@ def install_project(
     # Information only: the project removes an old copy itself (docs/install.md).
     for line in [*likely_duplicates(root, plan), *machine_paths(cfg)]:
         out(line)
+    if leaving:
+        out(removed_hooks_line(leaving))
     out(always_loaded_line(root, cap))
     out(
         f"ah install: {len(plan.hooks)} hooks, {len(plan.rules)} rules, {len(plan.skills)} skills,"

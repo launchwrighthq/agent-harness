@@ -40,8 +40,30 @@ asked for a picture of the product as it will look, with its tokens, its copy an
 Generated SVG, drawn with one library: [boards.py](boards.py) beside this file. Each spec has
 one script, `docs/specs/assets/<date>-<topic>-boards.py`. It imports the library and writes into
 `docs/specs/assets/<date>-<topic>/`. Never edit a generated SVG by hand: change the script and run
-it again. When the library lacks a piece, add it to the project's own helper module beside the
-script, so the next spec has it too.
+it again. When the library lacks a piece, add it to the project board library, so the next spec
+has it too.
+
+### The project board library
+
+The config key `specs.mockupLibrary` names one folder of project Python modules, relative to the
+repository root. Read it first:
+
+```bash
+ah config get specs.mockupLibrary
+```
+
+The import of `boards` puts that folder at the end of the import path. A script then imports a
+project module by its name, after the line that imports `boards`:
+
+```python
+from boards import Board, tokens
+from console_pieces import order_table  # <mockupLibrary>/console_pieces.py
+```
+
+When the key is empty, set it in `.agents/harness.toml` before you write the first project
+piece, for example `mockupLibrary = "docs/specs/boardlib"`. Keep the folder outside `assets/`.
+A project module never replaces `boards` or a standard module, so give it a name of its own. A
+value that is no folder stops each board script with an error that names the key.
 
 [example.py](example.py) is a worked board: a page on desktop and on a phone, with pins and a
 legend. Run it to see the shape:
@@ -84,7 +106,7 @@ b.save("docs/specs/assets/<date>-<topic>/desktop-empty.svg")
 
 | Call | Draws |
 |---|---|
-| `tokens(files, theme, base=, dark=, overlay=)` | The resolved `--*` values of the token files. `t["accent"]`. A missing token raises. `overlay` is a proposed restyle |
+| `tokens(files, theme, base=, dark=, sets=, overlay=)` | The resolved `--*` values of the token files. `t["accent"]`. A missing token raises. `theme` is `light`, `dark` or a set that `sets` names with its selectors: `sets={"contrast": (".contrast",)}`. `overlay` is a proposed restyle |
 | `phone(x, y, bg, ink, surface, url)`, `desktop(x, y, bg, url)` | A phone (`web` or `app`), a browser window |
 | `sidebar_app(x, y, ...)` | An app with a left sidebar, such as a console. Copy `nav` from the app's route table |
 | `screenshot(path, x, y)`, `crop(path, ...)` | A real capture of the shipped screen, or a region of it, for the `Today` column |
@@ -92,10 +114,11 @@ b.save("docs/specs/assets/<date>-<topic>/desktop-empty.svg")
 | `node_module(rel)` | A path under `node_modules`, from the main checkout when the worktree has none |
 | `console_phone(x, y, bg, ink, bar, page, url)` | A console in a phone browser, with its top bar |
 | `button`, `field`, `toggle`, `toast`, `spinner`, `scrim`, `dialog` | The base pieces. Each takes the tokens `t` and draws from the roles of `ROLES`. `Board(roles={...})` maps a role to the project's token name |
+| `tabbar(x, y, w, tabs, active, t)`, `link(x, y, label, t)` | A row of tabs with one active, which gives the y under it, and an underlined text link in the accent |
 | `gradient(stops, x2, y2, radial)` | A gradient fill. Gives `url(#id)` for a `fill` |
 | `clip(x, y, w, h, r)`, `clip_end()` | Paint only inside a box, such as a list under a header |
 | `text(..., max_w=)`, `wrap`, `ellipsis` | Text that ends in `...` past its width, and lines wrapped to a width |
-| `image(path, ...)`, `embed_font(family, path)` | Real art and a brand face from the repository |
+| `image(path, ...)`, `embed_font(family, path)` | Real art and a brand face from the repository. The font file (`.woff2`, `.woff`, `.ttf` or `.otf`) goes into the SVG as an `@font-face`, so text renders the same on each machine. Pass the family it gives as `font=` |
 | `pin`, `legend`, `caption`, `column_head`, `row_label`, `title` | The notes. A legend note longer than two lines raises |
 | `render(svg, png, w, h)` | The headless Chrome screenshot for the check below |
 

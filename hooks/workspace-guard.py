@@ -1015,6 +1015,21 @@ def glob_repo(directory: Path, pattern: str) -> Path | None:
     return main
 
 
+def planned_worktree(directory: Path, root: Path) -> Path | None:
+    """The main checkout of the listed repository whose `.claude/worktrees/<name>` is
+    `directory`, a folder that does not exist yet, or None. An earlier git step of the command
+    can make that worktree, so git there is judged as git in its repository."""
+    home = directory.parent
+    if (
+        os.path.lexists(directory)
+        or (home.parent.name, home.name) != (".claude", "worktrees")
+        or not WORKTREE_NAME.fullmatch(directory.name)
+    ):
+        return None
+    repo = home.parent.parent
+    return repo if repo.is_dir() and trusted_repo(repo, root) == repo else None
+
+
 def shared_checkout(root: Path) -> Path:
     """The main checkout of the repository of `root`. A session that starts in a worktree runs
     the hooks of that worktree, and its agents work in sibling worktrees of the same repository."""
@@ -1367,6 +1382,8 @@ def check_shapes(
                     directory = start
                     for move in moves:
                         directory = (directory / move).resolve()
+                    if planned := planned_worktree(directory, root):
+                        directory = planned
                     require_shared(directory, root)
                     if refusal := flag_refusal(args):
                         return refusal

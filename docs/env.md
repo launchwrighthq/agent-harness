@@ -17,6 +17,7 @@ The `[env]` section of `.agents/harness.toml` holds the env facts. Every key has
 | `master` | `.env.example` | The master template. Its blocks and key order are the layout of every other env file. |
 | `files` | `[]` | The live env files that `status`, `rename`, `layout` and `template` cover. Empty: every live `.env*` file beside the master. |
 | `declarations` | `[]` | TOML files of key declarations, merged in order. See Declarations. |
+| `declarationsCommand` | `""` | A shell command that prints one declared key name per line. `where` and `check` take each name as a declared key that the code reads. Empty: no command. See The declarations command. |
 | `layout` | `true` | `false`: a new key goes at the end of a file, and no master order applies. |
 | `paired` | `[".env.ci"]` | The live files that always take their own `<file>.example` as master, also when the root master holds a key of theirs. |
 | `placeholders` | `["changeme", "xxx"]` | The values that `push` reads as no value for a declared secret, in any case. |
@@ -59,16 +60,39 @@ of the family join the key list after the last key of the family's block. Any ot
 fits the family is declared too. Several declaration files merge in order, and a later file wins
 for each field and each value. The engine reads no other field.
 
+### The declarations command
+
+The code readers find a key only where a code line reads the environment by name. A project
+that keeps its keys in a schema module has no such line. `declarationsCommand` gives the engine
+those keys:
+
+```toml
+[env]
+declarationsCommand = "node tools/print-env-keys.mjs"
+```
+
+The command runs in a shell, in the repository root, and prints one key name per line. `check`
+takes each name as a key that a declaration names, so it reports neither a code read of that
+key nor that key in a live file. `where <KEY>` prints `declared and read by
+env.declarationsCommand` for a name of the output, and `not listed by env.declarationsCommand`
+for another key. No other subcommand runs the command.
+
+The run fails with exit 1 and a message when the command exits with a code other than 0, when it
+gives no answer in 60 seconds, or when a line of its output is not a key name (letters, digits
+and `_`, no digit first). The engine skips an empty line. The message gives the exit code and
+the first line of the error output of the command, or the number of the bad line, and never a
+line of the output.
+
 ## Subcommands
 
 | Subcommand | Behavior |
 |---|---|
 | `keys <file\|app>` | The keys of a file in file order, or the keys an app reads from the declarations. |
 | `status [<file> ...] [--matrix]` | Per file: key count, empty keys, keys missing against its master, keys not in its master. The master of a file is its own `<file>.example` when `check` and `layout` take that template as its master, else the root master. `--matrix` prints one row per key, one column per live file with `set`, `empty` or `-`, and an APP column: the declared apps, `all`, or `-` for an undeclared key. |
-| `check` | Each key that code reads and no master or declaration names, each key of a live file that none names, each empty or missing `required` key, each env file outside the master folder and `dirs`, and each live env file that git tracks. Exit 1 on a finding. |
-| `where <KEY>` | Each env file that sets the key, the declaration that reads it, each line of a scanned file that names it, and each code line that reads it (`path:line`, never the line text). |
+| `check` | Each key that code reads and no master or declaration names, each key of a live file that none names, each empty or missing `required` key, each env file outside the master folder and `dirs`, and each live env file that git tracks. A key that `declarationsCommand` prints counts as named. Exit 1 on a finding. |
+| `where <KEY>` | Each env file that sets the key, the declaration that reads it, each line of a scanned file that names it, and each code line that reads it (`path:line`, never the line text). With `declarationsCommand`, also whether that command lists the key. |
 | `get <KEY> <file> [--reveal]` | The masked value (see Masks). `--reveal` prints the value, except the value of a public key that looks like a credential. |
-| `set <KEY> <file> --value <v>` or `--stdin` | Sets the key in place, or adds it in its master block and order. |
+| `set <KEY> <file> --value <v>` or `--stdin` | Sets the key in place, or adds it in its master block and order. An agent gives the value in a quoted heredoc: `set <KEY> <file> --stdin <<'EOF'`, the value, then `EOF`. The env guards clear that one form (docs/hooks.md, "The env engine exemption"). |
 | `unset <KEY> <file>` | Removes the key. A block left with no key goes too. |
 | `copy <KEY> <from> <to> [--as <NEW>]` | Copies one key. The entry keeps its lines as written. |
 | `move <KEY> <from> <to>` | Copies one key, then removes it from `<from>`. |

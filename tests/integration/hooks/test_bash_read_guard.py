@@ -1047,6 +1047,81 @@ def test_reads_a_data_body_with_the_redirect_first_as_data(
     assert list(zip(commands, got, strict=True)) == [(c, expected) for c in commands]
 
 
+# A quoted body that a message step of git or a program with no reader word takes as stdin is
+# text, so a glob word in it names no file.
+TEXT_BODIES_ALLOWED = [
+    "cd /srv/example && git commit -q -F - <<'EOF'\ndocs: notes\n\n**Done 2026-11-23.**\nEOF",
+    "git -C /srv/example commit -F - <<'EOF'\ndocs: see text/*\nEOF\n"
+    "git -C /srv/example log --oneline -1",
+    "git add notes.md && git commit --file=- <<'EOF'\ndocs: **Done 2026-11-23.**\nEOF",
+    "notes-tool add --title x <<'EOF'\n**Due 2026-11-23.** See text/*\nEOF",
+    "notes-tool add <<'EOF' 2>&1 | tail -3\n**Due 2026-11-23.**\nEOF",
+    "notes-tool add <<'EOF'\n**Due 2026-11-23.**\nEOF\necho saved",
+]
+# A reader, a shell, a runner, a written file, an unquoted body and a literal credential name
+# keep the refusal, and so does a reader step beside the body.
+TEXT_BODIES_REFUSED = [
+    "cd /srv/example && git commit -F - <<'EOF' && cat *.pem\nfix: x\nEOF",
+    "git -C /srv/example commit -F - <<'EOF'\nfix: x\nEOF\ncat *.pem",
+    "git -C /srv/example ls-files --pathspec-from-file=- <<'EOF'\n*.pem\nEOF",
+    "notes-tool add <<'EOF' | sh\ncat *.pem\nEOF",
+    "notes-tool add <<'EOF' > x.sh\ncat *.pem\nEOF",
+    "notes-tool add <<EOF\ncat *.pem\nEOF",
+    "ssh box <<'EOF'\ncat *.pem\nEOF",
+    "sudo notes-tool add <<'EOF'\ncat *.pem\nEOF",
+    "notes-tool run bash <<'EOF'\ncat *.pem\nEOF",
+    "echo 'x\nnotes-tool add <<'EOF'\n' ; cat *.pem\nEOF",
+    "notes-tool save run.sh <<'EOF'\ncat *.pem\nEOF\nbash run.sh",
+    "notes-tool save run.sh <<'EOF' && ./run.sh\ncat *.pem\nEOF",
+    "f() { bash; }\nf <<'EOF'\ncat *.pem\nEOF",
+    "{ bash; } <<'EOF'\ncat *.pem\nEOF",
+    "sftp box <<'EOF'\n!cat *.pem\nEOF",
+    "cd /srv/example && git commit -q -F - <<'EOF'\nfix: read .env.local\nEOF",
+]
+
+
+@pytest.mark.parametrize(
+    ("commands", "expected"),
+    [(TEXT_BODIES_ALLOWED, "silent"), (TEXT_BODIES_REFUSED, "deny")],
+)
+def test_reads_no_glob_in_a_quoted_body_that_a_text_step_takes(
+    commands: list[str], expected: str, project: Path
+) -> None:
+    got = hook_project.verdicts(project, HOOK, commands)
+
+    assert list(zip(commands, got, strict=True)) == [(c, expected) for c in commands]
+
+
+# The value of `set --stdin` comes in a quoted heredoc on the engine step. It names no file.
+STDIN_VALUE_ALLOWED = [
+    "python3 .claude/agent-harness/bin/ah env set API_KEY .env.local --stdin <<'EOF'\n"
+    "k*.pem?[x]\nEOF",
+    "cd /srv/example && lw env set API_KEY .env.local --stdin <<'EOF'\nk*.pem\nEOF\n"
+    "lw env get API_KEY .env.local",
+]
+# Each other way to feed the value keeps the scan, and so does a reader step after the body.
+STDIN_VALUE_REFUSED = [
+    "lw env set API_KEY .env.local --stdin <<EOF\nk*.pem\nEOF",
+    "lw env set API_KEY .env.local --stdin <<< 'k*.pem'",
+    "lw env set API_KEY .env.local --stdin <<'EOF' > out.txt\nk*.pem\nEOF",
+    "./bin/ah env set API_KEY .env.staging --stdin <<'EOF'\nk*.pem\nEOF",
+    "lw env set API_KEY .env.local --stdin <<'EOF'\nvalue\nEOF\ncat .env.local",
+    "lw env keys .env.local <<'EOF'\nk*.pem\nEOF",
+]
+
+
+@pytest.mark.parametrize(
+    ("commands", "expected"),
+    [(STDIN_VALUE_ALLOWED, "silent"), (STDIN_VALUE_REFUSED, "deny")],
+)
+def test_skips_the_value_that_a_quoted_heredoc_feeds_to_set_stdin(
+    commands: list[str], expected: str, project: Path
+) -> None:
+    got = hook_project.verdicts(project, HOOK, commands)
+
+    assert list(zip(commands, got, strict=True)) == [(c, expected) for c in commands]
+
+
 # A command substitution inside double quotes is a command line of its own.
 QUOTED_SUBSTITUTIONS_ALLOWED = [
     "for i in $(seq 1 3); do python3 /srv/example/poll.py > /srv/example/out.json; echo"

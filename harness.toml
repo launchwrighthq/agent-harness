@@ -824,6 +824,12 @@ summary = "Say at session start when a local env file holds edits a secret store
 events = ["SessionStart"]
 script = "hooks/env-drift.py"
 
+[[hook]]
+id = "worktree-sweep"
+summary = "Start the sweep of merged and clean worktrees at the start and the end of a session, when branches.autoApply turns it on"
+events = ["SessionStart", "SessionEnd"]
+script = "hooks/worktree-sweep.py"
+
 # Context
 
 [[hook]]

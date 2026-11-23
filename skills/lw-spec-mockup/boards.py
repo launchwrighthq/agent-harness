@@ -19,6 +19,8 @@ import mimetypes
 import re
 import shutil
 import subprocess
+import sys
+import tomllib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,6 +42,9 @@ PIN_INK = "#18181b"
 PHONE_W, PHONE_H = 390, 844
 DESKTOP_W, DESKTOP_H = 1440, 900
 GUTTER = 48
+
+# The font files that `embed_font` reads, each with its CSS `format()` name.
+FONT_FORMATS = {"woff2": "woff2", "woff": "woff", "ttf": "truetype", "otf": "opentype"}
 
 
 # The colour roles of the base pieces (`button`, `field`, `dialog` and the rest), each mapped to
@@ -85,6 +90,45 @@ def _path(path: str | Path) -> Path:
     if p.parts and p.parts[0] == "node_modules" and not (ROOT / p).exists():
         return node_module(str(Path(*p.parts[1:])))
     return ROOT / p
+
+
+CONFIG_FILE = ".agents/harness.toml"
+
+
+def library_dir(root: Path = ROOT) -> Path | None:
+    """The folder that `specs.mockupLibrary` names, or None when the key is empty or absent."""
+    file = root / CONFIG_FILE
+    if not file.is_file():
+        return None
+    specs = tomllib.loads(file.read_text(encoding="utf-8")).get("specs", {})
+    value = specs.get("mockupLibrary", "") if isinstance(specs, dict) else ""
+    if value == "":
+        return None
+    if not isinstance(value, str) or Path(value).is_absolute() or ".." in Path(value).parts:
+        raise ValueError(
+            f"specs.mockupLibrary must be a folder path relative to the repository root, "
+            f"with no `..` part, got {value!r}. Fix {file}."
+        )
+    folder = root / value
+    if not folder.is_dir():
+        raise FileNotFoundError(
+            f"specs.mockupLibrary names {value}, which is no folder of {root}. "
+            f"Make the folder or fix {file}."
+        )
+    return folder
+
+
+def add_library(root: Path = ROOT) -> Path | None:
+    """Puts the folder of `specs.mockupLibrary` at the end of the import path, so a project
+    module never hides this library or a standard module. Gives the folder."""
+    folder = library_dir(root)
+    if folder is not None and str(folder) not in sys.path:
+        sys.path.append(str(folder))
+    return folder
+
+
+# Runs at import, so the next line of a board script can import a module of the project.
+add_library()
 
 
 # Tokens
@@ -142,13 +186,20 @@ def tokens(
     base: tuple[str, ...] = (":root",),
     dark: tuple[str, ...] = (".dark", "[data-theme='dark']", '[data-theme="dark"]'),
     overlay: str | Path | None = None,
+    sets: Mapping[str, tuple[str, ...]] | None = None,
 ) -> Tokens:
     """The custom properties of the project's token files, in order, outside @media blocks.
 
     `base` names the selectors of the light values. With `theme="dark"`, the `dark` selectors
-    add their values on top. `overlay` is a CSS file of the same shape whose values replace the
-    others: a proposed restyle, drawn before it ships.
+    add their values on top. `sets` names more token sets, each with its selectors, such as
+    `{"contrast": (".contrast",)}` for `theme="contrast"`. Another `theme` raises. `overlay` is a
+    CSS file of the same shape whose values replace the others: a proposed restyle, drawn
+    before it ships.
     """
+    named = {"dark": dark, **(sets or {})}
+    if theme != "light" and theme not in named:
+        raise ValueError(f"unknown token set {theme!r}: light, {', '.join(named)}")
+    extra = set(named[theme]) if theme != "light" else set()
     paths = [_path(f) for f in (files if isinstance(files, list) else [files])]
     blocks = [blk for p in paths for blk in _blocks(p.read_text())]
 
@@ -156,21 +207,15 @@ def tokens(
         return {x.strip() for x in s.split(",")}
 
     light = [b for s, b, media in blocks if not media and selectors(s) & set(base)]
-    arm = (
-        [b for s, b, media in blocks if not media and selectors(s) & set(dark)]
-        if theme == "dark"
-        else []
-    )
-    if not light or (theme == "dark" and not arm):
+    arm = [b for s, b, media in blocks if not media and selectors(s) & extra]
+    if not light or (theme != "light" and not arm):
         raise ValueError(f"no {theme} values in {', '.join(str(p) for p in paths)}")
     t = Tokens()
     for body in light + arm:
         t.update(_decls(body))
     if overlay is not None:
         for s, body, media in _blocks(_path(overlay).read_text()):
-            if not media and (
-                selectors(s) & set(base) or (theme == "dark" and selectors(s) & set(dark))
-            ):
+            if not media and selectors(s) & (set(base) | extra):
                 t.update(_decls(body))
     return t
 
@@ -435,12 +480,16 @@ class Board:
         )
 
     def embed_font(self, family: str, path: str | Path, weight: str = "100 900") -> str:
-        """Embeds a woff2 font, so a brand face renders the same on every machine. Gives the family
-        for `font=`."""
-        data = base64.b64encode(_path(path).read_bytes()).decode()
+        """Embeds a font file (`.woff2`, `.woff`, `.ttf` or `.otf`) as an `@font-face`, so a
+        brand face renders the same on every machine. Gives the family for `font=`."""
+        p = _path(path)
+        kind = p.suffix.lower().lstrip(".")
+        if kind not in FONT_FORMATS:
+            raise ValueError(f"{p.name}: embed_font reads {', '.join(FONT_FORMATS)} only")
+        data = base64.b64encode(p.read_bytes()).decode()
         self._defs.append(
             f"<style>@font-face{{font-family:'{family}';font-weight:{weight};"
-            f"src:url(data:font/woff2;base64,{data}) format('woff2')}}</style>"
+            f"src:url(data:font/{kind};base64,{data}) format('{FONT_FORMATS[kind]}')}}</style>"
         )
         return f"'{family}'"
 
@@ -731,6 +780,36 @@ class Board:
         track = self.role(t, "accent" if on else "control")
         self.rect(x, y, 44, 26, track, r=13, stroke=None if on else self.role(t, "line"))
         self.circle(x + (31 if on else 13), y + 13, 10, self.role(t, "surface"))
+
+    def link(
+        self, x, y, label: str, t: Mapping[str, str], size=14, weight=400, anchor="start"
+    ) -> None:
+        """An underlined text link in the accent, with its baseline at `y`."""
+        self.add(
+            f'<text x="{x:.1f}" y="{y:.1f}" font-size="{size}" fill="{self.role(t, "accent")}" '
+            f'font-weight="{weight}" text-anchor="{anchor}" text-decoration="underline">'
+            f"{escape(label)}</text>"
+        )
+
+    def tabbar(
+        self, x, y, w, tabs: list[str], active: str, t: Mapping[str, str], h: int = 44
+    ) -> float:
+        """A row of tabs over a line. The `active` tab has the ink and an accent bar. Gives the
+        y under the row."""
+        if active not in tabs:
+            raise ValueError(f"tabbar: the active tab {active!r} is not one of {tabs}")
+        self.line(x, y + h, x + w, y + h, self.role(t, "line"))
+        cx = x
+        for tab in tabs:
+            ink, weight = ("ink", 600) if tab == active else ("muted", 400)
+            tw = text_width(tab, 14, weight)
+            self.text(cx + 16, y + h / 2 + 5, tab, 14, self.role(t, ink), weight)
+            if tab == active:
+                self.rect(cx + 16, y + h - 2, tw, 2, self.role(t, "accent"), r=1)
+            cx += tw + 32
+        if cx - x > w:
+            raise ValueError(f"tabbar: the tabs need {cx - x:.0f} px and the row has {w}")
+        return y + h
 
     def toast(self, cx, y, label: str, t: Mapping[str, str], tone: str = "success") -> None:
         """A one-line notice centred on `cx`: `success`, `danger` or `info` (the accent)."""

@@ -41,7 +41,10 @@ merge. It does not allow a push to origin, a deploy or an account action.
    the landing added none of its failures.
 6. After a landing, the branch and its worktree stay. Run the `lw-branch-audit` skill to see
    whether they are safe to delete. Delete only what the user names. `ah worktree remove <name>`
-   removes a clean worktree and keeps its branch.
+   removes a clean worktree and keeps its branch. With `removeWorktree = true`, the land command
+   removes the clean worktree and the landed branch itself. Its last line is then
+   `continue in <base checkout>`: run each later command from that folder. A `worktree: ... stays`
+   line gives the reason when the worktree stays.
 
 | Exit | Meaning | What to do |
 |---|---|---|
@@ -65,6 +68,7 @@ Each key sits in `[harness.land]` of `.agents/harness.toml`. An empty value turn
 | `gates` | `{}` | A table of gate modes: each key is a mode name, and its value is the gate command of that mode. `harness.gateCommand` is the mode `full`. The names `full` and `none` are not allowed as keys. |
 | `defaultGate` | `"full"` | The mode that a landing runs when `LAND_GATE` is unset or 1. |
 | `explainCommand` | `""` | On a red gate that stops the landing, this command runs in the worktree root with `LAND_GATE_LOG` set to the path of the gate log. The land command prints its output before the log tail. Its exit code does not change the exit code of the landing. |
+| `removeWorktree` | `false` | With `true`, a landing that succeeded removes its clean branch worktree and deletes the landed branch as its last step, then prints the base checkout to continue in. A worktree with a changed, untracked or unrebuildable ignored file stays, and so does the main checkout. |
 
 The dials are environment variables: `LAND_ATTEMPTS` (3), `LAND_PEER_TRIES` (10),
 `LAND_PEER_WAIT` (60 seconds), `LAND_GATE` (1) and `LAND_TARGET` (the base branch).

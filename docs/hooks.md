@@ -14,6 +14,7 @@ the config keys it reads, the manifest format and the limits of the guards.
 | `deny-env-reads` | PreToolUse (Bash and the file tools) | Refuses any tool call that names a guarded credential file, and refuses every env file but a `.example` and a plain env file (`plainEnvFiles`) to the file tools. |
 | `bash-read-guard` | PreToolUse (Bash) | Refuses a shell reader (`cat`, `grep`, `sed`, ...) of an env, key or credential file. A plain env file (`plainEnvFiles`) passes. |
 | `env-drift` | SessionStart | Says when a local env file holds edits that a secret store has not received. |
+| `worktree-sweep` | SessionStart, SessionEnd | Does nothing until `branches.autoApply.staleHours` is above 0. Then it starts the worktree sweep as a process of its own, at most once per `branches.autoApply.everyMinutes`. An error prints one line, and the hook exits 0. See [work.md](work.md). Codex runs it on SessionStart only. |
 | `load-memory` | SessionStart, PreToolUse | Injects the memory index once per session, keyed on the session id. |
 | `prompt-directives` | UserPromptSubmit | Turns prompt flags (`-u`, `-e`, `-d`) and an embedded `/lw-goal-spec` into added context. A command after a quote mark or a backtick is a quote and adds nothing. |
 | `render-spec` | PostToolUse, Stop | Renders a changed spec to its HTML page (see `docs/spec.md`). |
@@ -77,6 +78,7 @@ guards with the defaults.
 | `land.gates` | `lw-land` | Default `{}`. A table of gate modes: each key is a mode name, and its value is the gate command of that mode. `gateCommand` is the mode `full`. See [The land gate](#the-land-gate). |
 | `land.defaultGate` | `lw-land` | Default `"full"`. The mode of a landing when `LAND_GATE` is unset or 1. The value `none` is refused. |
 | `land.explainCommand` | `lw-land` | Default `""`. A command that runs when a red gate stops the landing. It runs with `bash -c` in the worktree root, with `LAND_GATE_LOG` (the path of the gate log) and `LAND_ROOT` (the worktree root) in its environment. The land command prints its output before the log tail. Its exit code never changes the exit code of the landing. |
+| `land.removeWorktree` | `lw-land` | Default `false`. With `true`, a landing that succeeded removes its branch worktree and deletes the landed branch as its last step, then prints `continue in <base checkout>`. The worktree stays, with one line that says why, when it holds a changed or untracked file, or an ignored file that is neither under a folder name of `branches.rebuildable` nor a spec page. The main checkout always stays. A value other than `true` and `false` stops the landing at exit 5 before the merge. |
 | `workspace.worktreesOnly` | `workspace-guard` | Also refuse a git mutation in the main checkout. |
 | `workspace.gitConfigAllow` | `workspace-guard` | The keys `git -c` may set in an agent command. |
 | `workspace.repos` | `workspace-guard` | Default `["../*"]`, every sibling repository of the project at any depth. Other repositories where git may run, as paths relative to the main checkout of the project, such as `..`, `../client` or `../../*`. Every worktree reads an entry from the main checkout, so it gets the same answer. A pattern has `*`, `?` or `[` and matches the main checkout of a repository; `*` matches across `/`. A pattern does not match a repository that sits inside another checkout below its fixed part, such as a vendored clone. In a listed repository git may change the main checkout and every worktree, and that repository's own rules govern it. `[]` keeps git in the main checkout of the project and its worktrees. An absolute or `~/` entry still works, but it names one machine, so `ah install` and `ah check` print a warning line for it. |
@@ -90,7 +92,7 @@ guards with the defaults.
 | `directives` | `prompt-directives` | Each prompt flag and the text it adds. |
 | `gateCommand`, `localRuns.hint`, `localRuns.dispatch` | `local-run-guard` | `gateCommand` is also the gate of `lw-land` in the mode `full`. The gate command that always passes, the hint in a refusal, and the commands that pick their runner. A dispatch command passes, except with `--target local`. |
 | `scratchCap.memoryMax`, `scratchCap.cpuMax` | `scratch-cap` | The caps of the cgroup. |
-| `comments.maxBlock`, `comments.longBlock`, `comments.maxShare`, `comments.shareFloor`, `comments.minLines`, `comments.maxLineLength`, `comments.include`, `comments.exclude`, `comments.overrides` | `comment-budget`, `ah comments` | The comment budget (below). |
+| `comments.maxBlock`, `comments.longBlock`, `comments.maxShare`, `comments.shareFloor`, `comments.minLines`, `comments.maxLineLength`, `comments.headBlock`, `comments.include`, `comments.exclude`, `comments.overrides` | `comment-budget`, `ah comments` | The comment budget (below). |
 
 A file pattern matches one whole base name and ignores case. `*` and `?` match inside one name.
 
@@ -241,12 +243,13 @@ attributable step in the record of the probe.
 `ah comments [path ...]` and the `comment-budget` hook share one measure, `agent_harness.comments`.
 It scans lines and does not parse: `//`, `/* */` and a JSDoc block in JS and TS, `#` lines
 and a docstring that opens a line in Python and shell, and `#`, `//` and `/* */` in Terraform. A
-shebang is code.
+shebang is code. In a config file, it scans `#` lines only (see Config files below).
 
 A file is new when the base branch (`harness.baseBranch`) does not hold it. A file that git finds
 renamed from a path the base branch holds is not new: it keeps the caps of its old path. The
-check is `git diff --find-renames=30% <base>` over the `include` patterns, so it sees a rename
-that is staged or committed. The floor is 30% because a move rewrites the import lines.
+check is `git diff --find-renames=30% <base>` over the `include` patterns and the `overrides`
+patterns, so it sees a rename that is staged or committed. The floor is 30% because a move
+rewrites the import lines.
 
 | Key | Default | Applies to |
 |---|---|---|
@@ -256,12 +259,13 @@ that is staged or committed. The floor is 30% because a move rewrites the import
 | `comments.shareFloor` | `60` | Below this many code lines, the share is not measured. |
 | `comments.minLines` | `20` | A file with fewer lines is not measured. |
 | `comments.maxLineLength` | `0` | The longest comment line in characters, indent left out. `0` is no cap. |
+| `comments.headBlock` | `0` | The longest comment block that opens a file, after blank lines and a shebang. Above `0`, `maxBlock` and `longBlock` cap the other blocks only. `0` gives the opening block the cap of every block. |
 | `comments.include`, `comments.exclude` | TS, JS, Python and Terraform files; tests, `docs/`, `.claude/`, `dist/` and declarations out | The path patterns (`**`, `*`, `?`) of the files that the budget reads. |
 | `comments.overrides` | `{}` | A path pattern and the caps that replace the ones above for the files it matches. The first pattern that matches wins. |
 
-An override sets only the caps: `maxBlock`, `longBlock`, `maxShare`, `shareFloor`, `minLines`
-and `maxLineLength`. Any other key fails the run. This override gives Terraform one comment
-line per value or block, and 100 characters per line:
+An override sets only the caps: `maxBlock`, `longBlock`, `maxShare`, `shareFloor`, `minLines`,
+`maxLineLength` and `headBlock`. Any other key fails the run. This override gives Terraform one
+comment line per value or block, and 100 characters per line:
 
 ```toml
 [harness.comments.overrides."**/*.tf"]
@@ -270,6 +274,54 @@ longBlock = 1
 minLines = 0
 maxLineLength = 100
 ```
+
+### Config files
+
+The budget also knows four kinds of config file, and it scans `#` lines in them:
+
+| Kind | Paths |
+|---|---|
+| YAML, such as a workflow | `*.yml`, `*.yaml` |
+| Dockerfile | `Dockerfile`, `Dockerfile.<name>`, `<name>.dockerfile` |
+| Env template | `.env.example`, `.env.<name>.example` |
+| Terraform | `*.tf` (in the default `include` list) |
+
+The budget reads a YAML file, a Dockerfile or an env template only when a pattern of
+`comments.overrides` or of `comments.include` names it. With no such pattern, the budget skips
+these files. A file of `comments.exclude` stays out. The budget never reads a live env file,
+such as `.env` or `.env.production`, whatever pattern names it.
+
+This example caps the env templates and the workflows. An env template gets an opening block of
+3 lines at most. Each other block gets 2 lines: a block title and one comment line of the first
+key, or one comment line of a later key. Each comment line gets 100 characters. `maxShare = 1`
+turns the share cap off, because a template with one comment per key is half comments.
+
+```toml
+[harness.comments.overrides."**/.env*.example"]
+headBlock = 3
+maxBlock = 2
+longBlock = 2
+maxShare = 1
+minLines = 0
+maxLineLength = 100
+
+[harness.comments.overrides."**/*.yml"]
+maxBlock = 3
+longBlock = 3
+minLines = 0
+maxLineLength = 100
+```
+
+`ah comments` then prints, for example:
+
+```text
+.env.example has a 4-line opening comment block, cap 3
+.github/workflows/build.yml:3 has a 103-character comment line, cap 100
+```
+
+A Dockerfile takes the same table under `"**/Dockerfile*"`. The scan does not parse YAML, so a
+line of a block scalar that starts with `#`, such as a comment in a `run: |` script, counts as a
+comment line.
 
 A project that moves to the budget with files over a cap names each of them in
 `comments.exclude`. That list is the exemption register. It only shrinks: a file leaves the list
@@ -428,6 +480,21 @@ cannot check its global options, when it is no form of the list, and when it sit
 substitution or a shell body. Each other step of the line
 gets the checks of any command.
 
+One heredoc body is no part of that scan: the value of `set --stdin`. The form is a step of the
+list with a quoted delimiter and no other redirection:
+
+```bash
+python3 .claude/agent-harness/bin/ah env set API_KEY .env.local --stdin <<'EOF'
+<value>
+EOF
+```
+
+The value is not in the arguments of a process, and bash expands nothing in it. Both hooks skip
+the body, so a value with a `*`, a `/` or a name such as `x.pem` passes. This is the one way to
+give a value on stdin that the hooks clear. A here-string, an unquoted heredoc, a second
+redirection, a step that is no form of the list and a step in a shell body keep the full scan
+of the value.
+
 The global options `--root`, `--master` and `--declarations` may come before the subcommand. The
 guard checks each value: `--root` comes once and resolves to the project root or a folder inside
 it, and `--master` and `--declarations` resolve inside the project and name no credential file by
@@ -507,6 +574,11 @@ Git reads configuration from more places, so the guard also refuses:
 - The git flags `--exec-path`, `--git-dir`, `--work-tree`, `--bare` and `--namespace`.
 - Git in a directory outside the repository of the project. The guard follows each `cd` and `-C`
   to the effective directory of each git step. A nested repository or a submodule is refused.
+  One folder that does not exist yet passes: `<main checkout>/.claude/worktrees/<name>` of a
+  repository of `harness.workspace.repos`. The guard judges git there as git in the main
+  checkout of that repository, so `git -C ../client worktree add -b fix-a
+  .claude/worktrees/fix-a && git -C ../client/.claude/worktrees/fix-a status` runs from the
+  project. A missing folder anywhere else, and one of an unlisted repository, stay refused.
 
 ## Git command shapes
 
@@ -617,6 +689,29 @@ a regex class in such a body passes. The literal name scan still reads the body,
 after the delimiter are commands like any other. perl, ruby and the other interpreters keep the
 full scan, because a backtick or a pipe `open` there runs a shell. A line that opens the heredoc
 and holds a `#`, a backtick, `$(` or `((` keeps the whole command scanned.
+
+The glob scan also skips the quoted body that a text step takes as stdin, because the body is a
+message or data and no file argument. A text step is one of these:
+
+- `git commit`, `git tag`, `git merge` or `git notes` with `-F -`, `--file -` or `--file=-`, in
+  any place of the command, also after `cd` or with `-C`. A word with `stdin` or `from-file`
+  cancels it.
+- A program whose step holds no reader, wrapper, shell, interpreter or lister of this guard, no
+  `git`, and none of `ssh`, `docker`, `podman`, `kubectl`, `make`, `tsx`, `ts-node`, `psql`,
+  `mysql`, `npx`, `npm`, `pnpm`, `yarn`, `bunx`, `uv`, `uvx`, `poetry`, `pipx`, `su`, `runuser`,
+  `chroot`, `nsenter`, `flock`, `script`, `expect`, `at`, `batch`, `crontab`, `pwsh` and the
+  other programs of `STDIN_RUNNERS` in `hooks/bash-read-guard.py`. Such a program can write the
+  body to a file, so each command after this step, on its line and after the body, is one of
+  `ls`, `wc`, `cat`, `head`, `tail`, `grep`, `stat`, `du`, a checksum command, `diff`, `cmp`,
+  `nl`, `echo`, `printf`, `true` and `pwd`.
+
+The line that opens the heredoc holds one heredoc and no other `<`, no `#`, backtick, `(`, `)`,
+`{` or `}`, and no `\` at its end. The command word has no quote and no `$`. The step writes no
+file, and a pipe after it feeds only `head`, `tail`, `grep`, `wc` or `cat`. The lines before it
+hold no quote, backslash, backtick, bracket or `#`. So `cd repo && git commit -F - <<'EOF'` with a `**bold**` line
+or a `text/*` line passes. The literal name scan still reads the body, and each step outside the
+body gets every check: `git commit -F - <<'EOF' && cat *.pem` is refused, and so is
+`bash <<'EOF'` with a `cat *.pem` line.
 
 Some words name no file that the command reads, so the scans skip them:
 

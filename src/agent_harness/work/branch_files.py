@@ -22,10 +22,14 @@ _CREDENTIAL = re.compile(
 )
 
 
+# The certificate bundle that a package ships: public certificates and no key, so it is cache.
+PUBLIC_BUNDLE = "cacert.pem"
+
+
 def is_credential(path: str) -> bool:
-    """The family the read guards refuse, an `.example` aside."""
+    """The family the read guards refuse, an `.example` and the public bundle aside."""
     name = os.path.basename(path)
-    if name.endswith(".example"):
+    if name.endswith(".example") or name == PUBLIC_BUNDLE:
         return False
     shaped = re.search(r"(^|/)(sessions/[^/]+\.json|\.aws/credentials)$", path)
     return bool(_CREDENTIAL.match(name) or shaped)
@@ -187,6 +191,8 @@ class Files:
     def _judge(self, worktree: str, rel: str, size: int) -> Loose:
         if is_credential(rel):
             return Loose(rel, "credential", size)
+        if os.path.basename(rel) == PUBLIC_BUNDLE:
+            return Loose(rel, "cache", size)
         return Loose(rel, "copy" if self.is_copy(worktree, rel, size) else "data", size)
 
     def _ignored_entry(self, worktree: str, entry: str) -> list[Loose]:

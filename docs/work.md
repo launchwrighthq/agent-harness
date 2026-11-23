@@ -122,18 +122,61 @@ python3 .claude/agent-harness/bin/ah branch-audit --apply --only remove:foo,bran
 | `branches.remoteBase` | `""` | The remote base. Empty means `origin/<harness.baseBranch>`. |
 | `branches.protect` | `[]` | Refs never offered, with or without the remote name. `--protect` replaces the list. |
 | `branches.worktreeRoot` | `.claude/worktrees` | The folder whose unlisted subfolders are stray folders. |
-| `branches.rebuildable` | `node_modules`, `.venv`, `__pycache__`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache` | Folder names whose files are `cache`. |
+| `branches.rebuildable` | `node_modules`, `.venv`, `__pycache__`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache` | Folder names whose files are `cache`. An ignored file named `cacert.pem`, the public certificate bundle of a package, is `cache` in any folder. Every other `.pem` file is a `credential`. |
 | `branches.staleHours` | `24` | A worktree or a branch touched inside this many hours is IN PROGRESS. A stray folder is offered only past it. `--stale-hours` overrides it. |
 | `branches.sessionIdleDays` | `2` | A live lock whose session transcript is idle this many days is a STALE SESSION. |
+| `branches.autoApply.staleHours` | `0` | `0` turns the worktree sweep off. A number above 0 turns it on and is the stale window of the sweep, in hours. |
+| `branches.autoApply.everyMinutes` | `30` | The least time between two sweeps, in minutes. `0` starts one on every session start and end. |
 
 The base comes from `harness.baseBranch`, the spec folders of the `obsolete-draft` check from
 `specs.dirs` and `specs.archive`, and the land command of the plan footer from
 `harness.landCommand`. The config of the main checkout is read, whichever worktree runs it.
 
+### The worktree sweep
+
+The sweep removes the worktrees that a finished task leaves behind, with no command from the
+user. It is off by default. This config turns it on:
+
+```toml
+[branches.autoApply]
+staleHours = 24
+everyMinutes = 30
+```
+
+The `worktree-sweep` hook runs at the start and the end of a session. It starts the sweep as a
+process of its own, so no session waits for the audit. The file `worktree-sweep/stamp` in the
+state folder (`specs.auditDir` of the main checkout, or `AGENT_STATE_DIR`) holds the start time of
+the last sweep. The hook reads and writes it under a file lock on `worktree-sweep/lock`, and
+the sweep keeps that lock until it ends. So several sessions start one sweep per `everyMinutes`,
+and no second sweep starts while one runs. The sweep writes its lines to `worktree-sweep/log`.
+
+The sweep audits the repository as `ah branch-audit --stale-hours <staleHours>` does. It then
+runs fewer rows than `--apply` runs:
+
+| Row | Runs when |
+|---|---|
+| `git worktree remove <path>`, never with `--force` | The row is at risk `none` and its verdict is MERGED, and the owner session of the worktree did not write its transcript inside the stale window. |
+| `git branch -d <branch>` | The sweep removes the worktree of that branch in the same run. |
+
+A MERGED worktree at risk `none` has a tip that is an ancestor of the base branch, which includes
+a branch with no commit of its own. It holds no changed, untracked or stray file, and each of its
+ignored files is `cache`. No process works in it, no git lock holds it, and nothing touched it
+inside the stale window. The session that runs the hook keeps its own worktree.
+
+`--apply` also runs `git worktree prune` and deletes a merged branch that no worktree holds. The
+sweep runs neither. The owner session is the one in `lw-owner` (`ah worktree add`, `ah worktree
+claim`). The sweep reads its transcript `<session>.jsonl` in each folder of `~/.claude/projects`.
+An owner with no transcript there, such as a Codex session, does not keep the worktree: the
+other conditions decide.
+
+A value of `[branches.autoApply]` that is not a number of 0 or more starts no sweep. The hook
+prints one line on stderr and exits 0.
+
 ### Modules
 
 | Module | Holds |
 |---|---|
+| `work/sweep.py` | The worktree sweep: its config, the stamp lock, and the rows it runs. |
 | `work/branches.py` | The options, the audit of each worktree, the stray folders, the run and the entry point. |
 | `work/branch_refs.py` | The judge of one ref: ancestry, patch id, content, subject, and the second route. |
 | `work/branch_files.py` | The loose files of a worktree, judged by their bytes. |
