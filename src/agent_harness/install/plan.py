@@ -18,8 +18,11 @@ from agent_harness.manifest import Fixture, Item, Manifest
 # The name of the package manifest in a lockfile and in messages.
 PACKAGE_NAME = "agent-harness"
 ENGINE_DIR = ".claude/agent-harness"
-# The folders of the package that make the engine. The installed copy mirrors them.
-ENGINE_PARTS = ("bin", "src", "hooks", "tools", "codex")
+# The folders of the package that hold the source of each rule, skill and git hook.
+SOURCE_PARTS = ("rules", "skills", "githooks")
+# The folders of the package that a project install copies. The installed copy mirrors them, so
+# it is a package root too and `ah install` runs from it.
+ENGINE_PARTS = ("bin", "src", "hooks", "tools", "codex", *SOURCE_PARTS)
 # A global install runs no hook, so it leaves out the hooks and the Codex adapter.
 GLOBAL_ENGINE_PARTS = ("bin", "src", "tools")
 MANIFEST_FILE = "harness.toml"

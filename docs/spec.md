@@ -18,6 +18,7 @@ The `[specs]` section of `.agents/harness.toml` holds the spec facts. Every key 
 | `archive` | `archive` | The folder name, inside each spec folder, for settled documents. |
 | `out` | `dist` | The folder name, inside each spec folder, for rendered pages. Keep it out of git. |
 | `missingAssets` | `refuse` | What `spec render` does with an image under `assets/` that has no file. `refuse` refuses the render. `placeholder` writes the page with a box in place of the image and prints a warning. Another value is a config error. See [Missing images](#missing-images). |
+| `commit` | `ask` | When the `lw-spec-write` skill commits a spec it wrote or revised. `ask`: it asks the user after the approval. `auto`: it commits the source and its assets by path at once, with no question, on a branch that is not the base branch. The commit holds each file under `assets/` that the spec names and each file under `assets/` that a board of the spec links. It never pushes. Another value is a config error: `config key specs.commit must be one of ask, auto, not '<value>'`. |
 | `auditDir` | `.claude/state` | The audit store, relative to the main checkout, so every worktree shares one store. An absolute path is used as it is. |
 | `kinds` | `{}` | Per spec folder, a table with `kind` (`spec`, `plan` or `qa`), `label` (the badge word) and `statuses` (the vocabulary the renderer accepts). `label` and `statuses` default to those of the kind. The key names a folder of `dirs` or a folder under one, else the config fails and names the key. A folder under a spec folder is a folder of its own, with its own `out` folder and, unless its kind is `qa`, its own `archive` folder: the longest folder that holds a file decides its kind and its page for `render`, `check` and `census`. See [QA reports](#qa-reports). |
 | `checks` | `["archive", "superseded", "pointers", "assets"]` | The checks that `spec check` runs. |
@@ -57,9 +58,9 @@ there. `spec audit digest` and `spec audit record` refuse a named report, and `-
 
 | Command | Behavior |
 |---|---|
-| `spec render [--strict] <file.md> [--out <dir>]` | Writes the page to the `out` folder of the source's spec folder, mirroring any `archive/` below it. `--out` names another folder, which must sit inside an `out` folder. It refuses a page that git tracks. It refuses an image whose file is missing, unless `specs.missingAssets` is `placeholder`. `--strict` refuses such an image in each mode. |
+| `spec render [--strict] <file.md> [--out <dir>]` | Writes the page to the `out` folder of the source's spec folder, mirroring any `archive/` below it. `--out` names another folder, which must sit inside an `out` folder. It refuses a page that git tracks. It refuses an image whose file is missing, unless `specs.missingAssets` is `placeholder`. `--strict` refuses such an image in each mode, and a board problem (see [Pictures that a board links](#pictures-that-a-board-links)). |
 | `spec render [--strict] --all` | Renders every source of every spec folder and its archive. It follows `specs.missingAssets` and `--strict` like the render of one file. A `README.md` describes its folder, so it is no source, as in `census` and `check`. A refused source does not stop the rest: it prints one line that starts with the source and gives the reason, and the command then exits 1. |
-| `spec check` | Checks the tracked tree: a settled document outside the archive or an unsettled one inside it, a `superseded-by` path, every spec path in a file of `pointerFiles` outside an archive, and an asset that no document names. Exits 1 on a finding. |
+| `spec check` | Checks the tracked tree: a settled document outside the archive or an unsettled one inside it, a `superseded-by` path, every spec path in a file of `pointerFiles` outside an archive, and an asset that no document names and no board links. Exits 1 on a finding. |
 | `spec census [--json]` | Counts the tracked documents of each folder by status. Lists a name in an active folder and its archive, a settled status with no evidence, and a document with no status. |
 | `spec verify <old.html> <new.md>` | Renders the Markdown and lists each word of the old page that the new page lost. Exits 1 on a loss. |
 | `spec audit digest [<spec> ...] [--open] [--session [<id>]] [--base <branch>] [--json]` | Lists the requirement rows, the amendment candidates and the related branches of each spec, for a fresh reviewer. |
@@ -125,6 +126,51 @@ A value other than `refuse` and `placeholder` stops the command at exit 1 with n
 The template changed by the one CSS rule `.missing-asset`, so each page differs from a page of
 0.2.11 by that rule.
 
+### Pictures that a board links
+
+A board is an SVG under `assets/`. A board can link a picture file with an `<image>` element
+whose `href` or `xlink:href` names a file under `assets/`, relative to the folder of the board.
+A browser loads no linked file for an SVG that a page shows through `<img>`, so the renderer
+writes each linked file into the board for the page:
+
+- The page shows such a board as `<img src="data:image/svg+xml;base64,...">`. Each linked file
+  is a `data:` URI in that copy. The page needs no file beside it, so it shows the board from
+  `dist/` and from `dist/archive/`.
+- The renderer never changes the board file in `assets/`.
+- A board that links no file keeps `<img src="../assets/<file>.svg">`.
+- A linked SVG gets its own linked files in the same way.
+- A linked file is a `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.avif` or `.svg` file.
+- An `href` that is a `data:` URI, a URL or a `#fragment` stays as it is.
+
+The `Board` class of the `lw-spec-mockup` skill embeds its art as `data:` URIs, so only a board
+with a hand-written `<image>` link takes this path. The page holds each linked file in base64,
+so it grows by about 1.8 times the size of the file.
+
+The renderer cannot write a linked file into the board in four cases. Such a board has a board
+problem. A board problem does not follow `specs.missingAssets`: in the mode `refuse` and in the
+mode `placeholder`, the page keeps `<img src="../assets/<file>.svg">`, as for a board that links
+no file. The command prints one line per board on stderr and exits 0:
+
+```
+warning: <file>: the board assets/<board> links <path>, which <reason>; the page shows the board file as it is
+```
+
+Only `ah spec render --strict` refuses a board problem. It writes no page, exits 1 and prints
+`<file>:<line>: the board assets/<board> links <path>, which <reason>`.
+
+| Case | `<reason>` |
+|---|---|
+| The linked file does not exist. | `has no file at <folder>/assets/<path>` |
+| The path leaves `assets/`. | `is outside <folder>/assets` |
+| The file has another extension. | `is not a PNG, JPEG, GIF, WebP, AVIF or SVG file` |
+| A linked SVG links a board before it. | `links it back` |
+
+`<path>` is the path of the `href` with its percent escapes decoded, so `my%20shot.png` names
+the file `my shot.png`. An `<image>` element inside an XML comment is no link.
+
+`spec check` does not report a file under `assets/` that a board of the folder links. It reads
+the links in the same way.
+
 ## The audit store
 
 | File | Writer | Reader |
@@ -138,5 +184,5 @@ The template changed by the one CSS rule `.missing-asset`, so each page differs 
 
 | Hook | Events | Behavior |
 |---|---|---|
-| `render-spec` | PostToolUse (Write, Edit), Stop | Renders a changed spec. At Stop it also renders a spec that a shell command wrote, and holds a turn whose reply links a page that does not exist. It renders only inside `CLAUDE_PROJECT_DIR` and its `.claude/worktrees/`. It follows `specs.missingAssets` of the checkout that it renders in: in the mode `placeholder` it adds each `warning:` line after the page link. It has no strict mode. |
+| `render-spec` | PostToolUse (Write, Edit), Stop | Renders a changed spec. At Stop it also renders a spec that a shell command wrote, and holds a turn whose reply links a page that does not exist. It renders only inside `CLAUDE_PROJECT_DIR` and its `.claude/worktrees/`. It follows `specs.missingAssets` of the checkout that it renders in: in the mode `placeholder` it adds each `warning:` line after the page link. In each mode it adds the `warning:` line of a board problem. It has no strict mode. |
 | `goal-spec` | Stop | Holds a turn until the saved audit of each goal spec shows zero open rows on the current base commit. |

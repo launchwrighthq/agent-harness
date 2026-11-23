@@ -1,6 +1,9 @@
+import base64
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 LAUNCHER = Path(__file__).resolve().parents[3] / "bin" / "ah"
 HEAD = "# A\n\nDate: 2026-01-01\nStatus: draft\n\n## 1. One\n\n"
@@ -196,3 +199,163 @@ def test_skips_the_readme_of_a_spec_folder_and_of_its_archive_with_all(tmp_path:
 
     assert done.returncode == 0, done.stderr
     assert done.stdout == "wrote docs/specs/dist/a.html (1 sections)\nrendered 1 of 1 specs\n"
+
+
+PNG = b"\x89PNG\r\n\x1a\nfake"
+LINKING = '<svg><image href="shot.png" width="4" height="4"/></svg>'
+
+
+def board_in(page: str) -> str:
+    head = '<img src="data:image/svg+xml;base64,'
+    start = page.index(head) + len(head)
+    return base64.b64decode(page[start : page.index('"', start)]).decode("utf-8")
+
+
+def test_shows_the_picture_that_a_board_links_and_keeps_the_board_file(tmp_path: Path) -> None:
+    body = "![Board](assets/board.svg)\n\n![Ok](assets/ok.svg)\n"
+    write(tmp_path, "docs/specs/a.md", HEAD + body)
+    write(tmp_path, "docs/specs/assets/board.svg", LINKING)
+    write(tmp_path, "docs/specs/assets/ok.svg", "<svg/>")
+    (tmp_path / "docs/specs/assets/shot.png").write_bytes(PNG)
+
+    done = run_ah(tmp_path, "spec", "render", "docs/specs/a.md")
+
+    assert done.returncode == 0, done.stderr
+    page = (tmp_path / "docs/specs/dist/a.html").read_text(encoding="utf-8")
+    picture = f"data:image/png;base64,{base64.b64encode(PNG).decode()}"
+    assert board_in(page) == LINKING.replace("shot.png", picture)
+    assert '<img src="../assets/ok.svg"' in page
+    assert (tmp_path / "docs/specs/assets/board.svg").read_text(encoding="utf-8") == LINKING
+
+
+def test_shows_the_picture_that_a_board_links_on_an_archived_page(tmp_path: Path) -> None:
+    write(tmp_path, "docs/specs/archive/a.md", HEAD + "![Board](assets/board.svg)\n")
+    write(tmp_path, "docs/specs/assets/board.svg", LINKING)
+    (tmp_path / "docs/specs/assets/shot.png").write_bytes(PNG)
+
+    done = run_ah(tmp_path, "spec", "render", "docs/specs/archive/a.md")
+
+    assert done.returncode == 0, done.stderr
+    page = (tmp_path / "docs/specs/dist/archive/a.html").read_text(encoding="utf-8")
+    assert f"data:image/png;base64,{base64.b64encode(PNG).decode()}" in board_in(page)
+
+
+NO_LINKED = (
+    "the board assets/board.svg links shot.png, which has no file at docs/specs/assets/shot.png"
+)
+
+
+BOARD_WARNING = f"warning: docs/specs/a.md: {NO_LINKED}; the page shows the board file as it is\n"
+
+
+@pytest.mark.parametrize("config", ["", PLACEHOLDER])
+def test_warns_of_a_missing_linked_picture_and_keeps_the_plain_board_image(
+    tmp_path: Path, config: str
+) -> None:
+    write(tmp_path, ".agents/harness.toml", config)
+    write(tmp_path, "docs/specs/a.md", HEAD + "![Board](assets/board.svg)\n")
+    write(tmp_path, "docs/specs/assets/board.svg", LINKING)
+
+    done = run_ah(tmp_path, "spec", "render", "docs/specs/a.md")
+
+    assert done.returncode == 0, done.stderr
+    assert done.stderr == BOARD_WARNING
+    page = (tmp_path / "docs/specs/dist/a.html").read_text(encoding="utf-8")
+    assert '<img src="../assets/board.svg" alt="Board"' in page
+    assert 'missing-asset">' not in page
+
+
+def test_warns_once_for_a_board_that_a_page_shows_twice(tmp_path: Path) -> None:
+    body = "![Board](assets/board.svg)\n\n![Again](assets/board.svg)\n"
+    write(tmp_path, "docs/specs/a.md", HEAD + body)
+    write(tmp_path, "docs/specs/assets/board.svg", LINKING)
+
+    done = run_ah(tmp_path, "spec", "render", "docs/specs/a.md")
+
+    assert (done.returncode, done.stderr) == (0, BOARD_WARNING)
+
+
+def test_warns_of_a_board_problem_and_renders_every_spec_with_all(tmp_path: Path) -> None:
+    write(tmp_path, "docs/specs/a.md", HEAD + "![Board](assets/board.svg)\n")
+    write(tmp_path, "docs/specs/assets/board.svg", LINKING)
+
+    done = run_ah(tmp_path, "spec", "render", "--all")
+
+    assert (done.returncode, done.stderr) == (0, BOARD_WARNING)
+    assert done.stdout == "wrote docs/specs/dist/a.html (1 sections)\nrendered 1 of 1 specs\n"
+
+
+def test_refuses_a_missing_linked_picture_with_strict_in_placeholder_mode(tmp_path: Path) -> None:
+    write(tmp_path, ".agents/harness.toml", PLACEHOLDER)
+    write(tmp_path, "docs/specs/a.md", HEAD + "![Board](assets/board.svg)\n")
+    write(tmp_path, "docs/specs/assets/board.svg", LINKING)
+
+    done = run_ah(tmp_path, "spec", "render", "--strict", "docs/specs/a.md")
+
+    assert done.returncode == 1
+    assert done.stderr == f"docs/specs/a.md:8: {NO_LINKED}\n"
+
+
+def test_refuses_a_missing_linked_picture_with_strict_in_refuse_mode(tmp_path: Path) -> None:
+    write(tmp_path, "docs/specs/a.md", HEAD + "![Board](assets/board.svg)\n")
+    write(tmp_path, "docs/specs/assets/board.svg", LINKING)
+
+    done = run_ah(tmp_path, "spec", "render", "--strict", "docs/specs/a.md")
+
+    assert done.returncode == 1
+    assert done.stderr == f"docs/specs/a.md:8: {NO_LINKED}\n"
+    assert not (tmp_path / "docs/specs/dist/a.html").exists()
+
+
+@pytest.mark.parametrize(
+    ("files", "reason"),
+    [
+        (
+            {"assets/board.svg": '<svg><image href="../secret.png"/></svg>', "secret.png": "png"},
+            "the board assets/board.svg links ../secret.png, which is outside docs/specs/assets",
+        ),
+        (
+            {"assets/board.svg": '<svg><image href="notes.txt"/></svg>', "assets/notes.txt": "t"},
+            "the board assets/board.svg links notes.txt, which is not a PNG, JPEG, GIF, WebP, AVIF"
+            " or SVG file",
+        ),
+        (
+            {
+                "assets/board.svg": '<svg><image href="b.svg"/></svg>',
+                "assets/b.svg": '<svg><image href="board.svg"/></svg>',
+            },
+            "the board assets/b.svg links board.svg, which links it back",
+        ),
+    ],
+)
+def test_refuses_a_board_that_the_page_cannot_hold_with_strict(
+    tmp_path: Path, files: dict[str, str], reason: str
+) -> None:
+    write(tmp_path, "docs/specs/a.md", HEAD + "![Board](assets/board.svg)\n")
+    for name, text in files.items():
+        write(tmp_path, f"docs/specs/{name}", text)
+
+    done = run_ah(tmp_path, "spec", "render", "--strict", "docs/specs/a.md")
+
+    assert done.returncode == 1
+    assert done.stderr == f"docs/specs/a.md:8: {reason}\n"
+    assert not (tmp_path / "docs/specs/dist/a.html").exists()
+
+
+def test_shows_the_picture_of_a_board_that_another_board_links(tmp_path: Path) -> None:
+    inner = '<svg><image href="shot.png"/></svg>'
+    write(tmp_path, "docs/specs/a.md", HEAD + "![Board](assets/board.svg)\n")
+    write(tmp_path, "docs/specs/assets/board.svg", '<svg><image href="inner.svg"/></svg>')
+    write(tmp_path, "docs/specs/assets/inner.svg", inner)
+    (tmp_path / "docs/specs/assets/shot.png").write_bytes(PNG)
+
+    done = run_ah(tmp_path, "spec", "render", "--strict", "docs/specs/a.md")
+
+    assert (done.returncode, done.stderr) == (0, "")
+    picture = f"data:image/png;base64,{base64.b64encode(PNG).decode()}"
+    inner_page = inner.replace("shot.png", picture).encode("utf-8")
+    page = (tmp_path / "docs/specs/dist/a.html").read_text(encoding="utf-8")
+    assert board_in(page) == (
+        f'<svg><image href="data:image/svg+xml;base64,{base64.b64encode(inner_page).decode()}"/>'
+        "</svg>"
+    )

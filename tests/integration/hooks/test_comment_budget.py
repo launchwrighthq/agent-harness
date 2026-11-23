@@ -104,3 +104,146 @@ def test_denies_a_terraform_block_over_the_cap_of_its_override(tmp_path: Path) -
     assert out["permissionDecision"] == "deny"
     reason = out["permissionDecisionReason"]
     assert "infra/main.tf would get a 2-line comment block, cap 1" in reason
+
+
+def stop(project: Path, session: str = "s1") -> subprocess.CompletedProcess[str]:
+    payload = {"cwd": str(project), "hook_event_name": "Stop", "session_id": session}
+    return hook_project.run_hook(project, HOOK, "Stop", payload)
+
+
+def shell_write(project: Path, rel: str, text: str) -> None:
+    """Write a file as a shell command does: no Write or Edit event reaches the hook."""
+    (project / rel).parent.mkdir(parents=True, exist_ok=True)
+    (project / rel).write_text(text, encoding="utf-8")
+
+
+def test_holds_the_turn_for_an_untracked_file_that_a_shell_command_wrote(tmp_path: Path) -> None:
+    project = project_on_main(tmp_path)
+    commit(project)
+    shell_write(project, "src/new.mts", ts_file(13, 10))
+
+    done = stop(project)
+
+    assert done.returncode == 2
+    assert "comment-budget: src/new.mts has a 13-line comment block, cap 12" in done.stderr
+    assert "end the turn" in done.stderr
+
+
+def test_holds_the_turn_for_a_tracked_file_that_changed_since_the_base(tmp_path: Path) -> None:
+    project = project_on_main(tmp_path)
+    shell_write(project, "src/old.mts", ts_file(5, 20))
+    commit(project)
+    subprocess.run(["git", "-C", str(project), "checkout", "-q", "-b", "work"], check=True)
+    shell_write(project, "src/old.mts", ts_file(26, 20))
+    commit(project)
+
+    done = stop(project)
+
+    assert done.returncode == 2
+    assert "src/old.mts has a 26-line comment block, cap 25" in done.stderr
+
+
+def test_lets_the_turn_end_on_a_second_stop_with_the_same_findings(tmp_path: Path) -> None:
+    project = project_on_main(tmp_path)
+    commit(project)
+    shell_write(project, "src/new.mts", ts_file(13, 10))
+    assert stop(project).returncode == 2
+
+    again = stop(project)
+
+    assert (again.returncode, again.stdout) == (0, "")
+
+
+def test_holds_the_turn_again_when_the_findings_change(tmp_path: Path) -> None:
+    project = project_on_main(tmp_path)
+    commit(project)
+    shell_write(project, "src/new.mts", ts_file(13, 10))
+    assert stop(project).returncode == 2
+    shell_write(project, "src/other.mts", ts_file(14, 10))
+
+    done = stop(project)
+
+    assert done.returncode == 2
+    assert "src/other.mts has a 14-line comment block, cap 12" in done.stderr
+
+
+def test_holds_each_session_once(tmp_path: Path) -> None:
+    project = project_on_main(tmp_path)
+    commit(project)
+    shell_write(project, "src/new.mts", ts_file(13, 10))
+    assert stop(project, "s1").returncode == 2
+
+    assert stop(project, "s2").returncode == 2
+
+
+def test_lets_the_turn_end_when_no_changed_file_has_a_finding(tmp_path: Path) -> None:
+    project = project_on_main(tmp_path)
+    shell_write(project, "src/old.mts", ts_file(30, 10))
+    commit(project)
+    shell_write(project, "src/new.mts", ts_file(12, 10))
+
+    done = stop(project)
+
+    assert (done.returncode, done.stdout, done.stderr) == (0, "", "")
+
+
+def test_holds_the_turn_again_after_a_clean_stop_removed_the_saved_findings(
+    tmp_path: Path,
+) -> None:
+    project = project_on_main(tmp_path)
+    commit(project)
+    shell_write(project, "src/new.mts", ts_file(13, 10))
+    assert stop(project).returncode == 2
+    shell_write(project, "src/new.mts", ts_file(12, 10))
+    clean = stop(project)
+    saved = list((tmp_path / "comment-budget").iterdir())
+    shell_write(project, "src/new.mts", ts_file(13, 10))
+
+    again = stop(project)
+
+    assert (clean.returncode, clean.stderr, saved) == (0, "", [])
+    assert again.returncode == 2
+
+
+def test_lets_the_turn_end_with_the_reason_when_git_fails(tmp_path: Path) -> None:
+    project = project_on_main(tmp_path)
+    commit(project)
+    shell_write(project, "src/new.mts", ts_file(13, 10))
+    (project / ".git" / "index").write_bytes(b"no index")
+
+    done = stop(project)
+
+    assert (done.returncode, done.stdout) == (0, "")
+    assert done.stderr.startswith(f"comment-budget: git diff failed in {project}: ")
+    assert done.stderr.endswith("; no verdict\n")
+
+
+def test_lets_the_turn_end_with_the_reason_for_a_file_that_is_not_utf8(tmp_path: Path) -> None:
+    project = project_on_main(tmp_path)
+    commit(project)
+    (project / "src").mkdir()
+    (project / "src" / "new.mts").write_bytes(b"// caf\xe9\nexport const v = 1;\n")
+
+    done = stop(project)
+
+    assert (done.returncode, done.stdout) == (0, "")
+    assert done.stderr.startswith("comment-budget: 'utf-8' codec can't decode byte 0xe9")
+    assert done.stderr.endswith("; no verdict\n")
+
+
+def test_lets_the_turn_end_with_the_reason_when_it_cannot_save_the_findings(
+    tmp_path: Path,
+) -> None:
+    project = project_on_main(tmp_path)
+    commit(project)
+    shell_write(project, "src/new.mts", ts_file(13, 10))
+    blocked = tmp_path / "runtime"
+    blocked.write_text("a file where the state folder goes", encoding="utf-8")
+    env = {**hook_project.hook_env(project, "s1", tmp_path), "XDG_RUNTIME_DIR": str(blocked)}
+    payload = {"cwd": str(project), "hook_event_name": "Stop", "session_id": "s1"}
+
+    done = hook_project.run_hook(project, HOOK, "Stop", payload, env)
+
+    assert (done.returncode, done.stdout) == (0, "")
+    assert done.stderr.startswith("comment-budget: [Errno 20] Not a directory")
+    assert done.stderr.endswith("; no verdict\n")

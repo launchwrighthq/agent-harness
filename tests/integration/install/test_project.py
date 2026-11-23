@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -1285,3 +1286,121 @@ def test_refuses_a_global_hooks_choice_other_than_run_and_skip(
         'ah install: config key harness.githooks.global must be "run" or "skip", not \'off\'\n'
     )
     assert not (repo / ".claude/agent-harness").exists()
+
+
+def test_installs_again_from_the_installed_copy_with_no_change(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    ah("install", "--project", FROM, str(package))
+    first = snapshot(repo)
+
+    again = ah("install", "--project", engine=repo / ".claude/agent-harness/bin/ah")
+
+    assert again.returncode == 0, again.stderr
+    assert again.stdout.splitlines() == [
+        ALWAYS,
+        "ah install: 3 hooks, 2 rules, 1 skills, 1 git hooks; nothing changed",
+    ]
+    assert snapshot(repo) == first
+
+
+def test_applies_a_config_change_from_the_installed_copy(repo: Path, package: Path, ah: Ah) -> None:
+    write_config(repo, '[harness]\ndisable = ["lw-demo", "plain"]\n')
+    ah("install", "--project", FROM, str(package))
+    write_config(repo, '[harness]\nenable = ["edit-check"]\n')
+    (repo / ".claude/adapters/rules").mkdir(parents=True)
+    (repo / ".claude/adapters/rules/house-style.md").write_text("Use the house terms.\n")
+
+    again = ah("install", "--project", engine=repo / ".claude/agent-harness/bin/ah")
+
+    assert again.returncode == 0, again.stderr
+    assert again.stdout.splitlines()[-1].startswith(
+        "ah install: 4 hooks, 2 rules, 1 skills, 1 git hooks; "
+    )
+    assert (repo / ".claude/rules/lw/plain.md").read_text() == "# Plain rule\n"
+    assert (repo / ".claude/rules/lw/house-style.md").read_text() == (
+        '---\npaths:\n  - "docs/**"\n---\n# House style\n\nWrite short sentences.\n'
+        "\n## Project notes\n\nUse the house terms.\n"
+    )
+    assert (repo / ".claude/skills/lw-demo/tool.sh").stat().st_mode & 0o100
+    assert ah("check").returncode == 0
+
+
+def test_refuses_an_installed_copy_that_lacks_a_rule_source(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    ah("install", "--project", FROM, str(package))
+    copy = (repo / ".claude/agent-harness").resolve()
+    (copy / "rules/house-style.md").unlink()
+    before = snapshot(repo)
+
+    done = ah("install", "--project", engine=copy / "bin/ah")
+
+    assert done.returncode == 1
+    assert done.stderr == (
+        f"ah install: {copy} is an installed copy that lacks a source file of its manifest"
+        f" ({copy}/harness.toml is invalid: rules/house-style.md does not exist)."
+        " Run ah install from the agent-harness package:"
+        " python3 <package root>/bin/ah install, or pass --from <package root>\n"
+    )
+    assert snapshot(repo) == before
+
+
+def test_refuses_an_installed_copy_with_no_rules_skills_and_githooks_folder(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    ah("install", "--project", FROM, str(package))
+    copy = (repo / ".claude/agent-harness").resolve()
+    for part in ("rules", "skills", "githooks"):
+        shutil.rmtree(copy / part)
+    before = snapshot(repo)
+
+    done = ah("install", "--project", engine=copy / "bin/ah")
+
+    assert done.returncode == 1
+    assert done.stderr.startswith(
+        f"ah install: {copy} is an installed copy that lacks a source file of its manifest"
+        f" ({copy}/harness.toml is invalid: "
+    )
+    assert done.stderr.endswith(
+        " does not exist). Run ah install from the agent-harness package:"
+        " python3 <package root>/bin/ah install, or pass --from <package root>\n"
+    )
+    assert snapshot(repo) == before
+
+
+def test_refuses_an_install_from_the_global_copy(
+    repo: Path, package: Path, ah: Ah, tmp_path: Path
+) -> None:
+    home = tmp_path / "home-dir"
+    home.mkdir()
+    ah("install", "--global", FROM, str(package), home=home)
+    copy = (home / ".claude/agent-harness").resolve()
+
+    done = ah("install", "--project", engine=copy / "bin/ah", home=home)
+
+    assert done.returncode == 1
+    assert done.stderr.startswith(
+        f"ah install: {copy} is an installed copy that lacks a source file of its manifest"
+        f" ({copy}/harness.toml is invalid: "
+    )
+    assert done.stderr.endswith(
+        " does not exist). Run ah install from the agent-harness package:"
+        " python3 <package root>/bin/ah install, or pass --from <package root>\n"
+    )
+    assert not (repo / ".claude").exists()
+
+
+def test_installs_a_package_that_from_names_with_the_global_launcher(
+    repo: Path, package: Path, ah: Ah, tmp_path: Path
+) -> None:
+    home = tmp_path / "home-dir"
+    home.mkdir()
+    ah("install", "--global", FROM, str(package), home=home)
+    launcher = home / ".claude/agent-harness/bin/ah"
+
+    done = ah("install", "--project", FROM, str(package), engine=launcher, home=home)
+
+    assert done.returncode == 0, done.stderr
+    assert (repo / ".claude/agent-harness/rules/plain.md").read_text() == "# Plain rule\n"
+    assert ah("check").returncode == 0

@@ -56,6 +56,13 @@ setting() {
 base=${LAND_TARGET:-$(setting harness.baseBranch)} || die "cannot read harness.baseBranch with $ah" 5
 gate_command=$(setting harness.gateCommand) || die "cannot read harness.gateCommand with $ah" 5
 green_token=$(setting harness.land.greenToken) || die "cannot read harness.land.greenToken with $ah" 5
+green_pattern=$(setting harness.land.greenPattern) || die "cannot read harness.land.greenPattern with $ah" 5
+if [[ -n $green_pattern ]]; then
+  # grep exits 2 on a pattern that it cannot compile, and 1 on no match.
+  grep -qE -- "$green_pattern" </dev/null 2>/dev/null
+  [[ $? -ne 2 ]] ||
+    die "harness.land.greenPattern is not an extended regular expression (grep -E): $green_pattern" 5
+fi
 probe_command=$(setting harness.land.probeCommand) || die "cannot read harness.land.probeCommand with $ah" 5
 after_merge=$(setting harness.land.afterMerge) || die "cannot read harness.land.afterMerge with $ah" 5
 explain_command=$(setting harness.land.explainCommand) || die "cannot read harness.land.explainCommand with $ah" 5
@@ -160,13 +167,21 @@ gate() {
   say "gate: $gate_command, logging to $log"
   # A gate that can end early with exit 0, such as a cancelled run, proves green with a line.
   if (cd "$root" && LAND_MERGED_BASE=$merged LAND_ROOT=$root bash -c "$gate_command") >"$log" 2>&1; then
-    if [[ -z $green_token ]] || grep -qxF -- "$green_token" "$log"; then
+    proof=1
+    if [[ -n $green_token ]] && ! grep -qxF -- "$green_token" "$log"; then
+      proof=0
+      say "gate: exit 0, but no line of the gate log is $green_token" >&2
+    fi
+    if [[ -n $green_pattern ]] && ! grep -qE -- "$green_pattern" "$log"; then
+      proof=0
+      say "gate: exit 0, but no line of the gate log matches $green_pattern" >&2
+    fi
+    if [[ $proof -eq 1 ]]; then
       : >"$marker"
       green_mode=$gate_mode
       say "gate: green"
       return 0
     fi
-    say "gate: exit 0, but no line of the gate log is $green_token" >&2
   fi
   gate_log=$log
   return 1

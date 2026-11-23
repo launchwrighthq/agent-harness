@@ -20,15 +20,17 @@ the config keys it reads, the manifest format and the limits of the guards.
 | `goal-spec` | Stop | Holds a turn open until the saved spec audit shows zero open rows. |
 | `local-run-guard` | UserPromptSubmit, PreToolUse | Off by default. Keeps tests, lints and builds on a remote runner unless the user asks for a local run. |
 | `scratch-cap` | PreToolUse (Bash) | Off by default. Runs a scratchpad probe in a cgroup with a memory and CPU cap. Needs `systemd-run` and `jq`. |
-| `comment-budget` | PreToolUse, PostToolUse (Write, Edit) | Off by default. Refuses a write that makes a comment block longer than its cap, and reports the budget findings of the written file as added context. |
+| `comment-budget` | PreToolUse, PostToolUse (Write, Edit), Stop | Off by default. Refuses a write that makes a comment block longer than its cap, and reports the budget findings of the written file as added context. At the end of a turn, holds the turn once for the findings of the files that changed since the base. |
 
 Every hook is Python 3.11 or a short bash script. `deny-foreign-branch-moves` and `scratch-cap`
 need `jq`. No hook needs Node.
 
 ## How a hook runs
 
-`ah install --project` copies `bin/`, `src/`, `hooks/` and `harness.toml` to
-`.claude/agent-harness/`. The client runs each hook through the launcher:
+`ah install --project` copies `bin/`, `src/`, `hooks/`, `tools/`, `codex/`, `rules/`, `skills/`,
+`githooks/` and `harness.toml` to `.claude/agent-harness/`. No client loads a file from
+`rules/`, `skills/` and `githooks/` of the copy: they are the source of a later install
+([install.md](install.md)). The client runs each hook through the launcher:
 
 ```bash
 bash .claude/agent-harness/hooks/run.sh .claude/agent-harness/hooks/<script> <event>
@@ -68,6 +70,7 @@ guards with the defaults.
 |---|---|---|
 | `landCommand` | `workspace-guard`, `deny-foreign-branch-moves` | The command a refusal names for landing. |
 | `land.greenToken` | `lw-land` | Default `""`. When set, a gate is green only when it exits 0 and one line of its log equals this text. |
+| `land.greenPattern` | `lw-land` | Default `""`. An extended regular expression (`grep -E`). When set, a gate is green only when it exits 0 and one line of its log matches it. Use it when the green line of the gate has a part that changes, for example `^gate: green( in [0-9.]+s\| \(carried [0-9]+ steps\))$`. Anchor it with `^` and `$` to match the full line. When `land.greenToken` is set too, both must hold. A pattern that `grep -E` cannot compile stops the landing at exit 5. |
 | `land.probeCommand` | `lw-land` | Default `""`. When set and the gate is red, `ah land-results` reads the last `verify: failures <json>` line of the gate log. A failed step that names no file stops the landing. Otherwise the probe command runs in a detached worktree at the merged base, with the failed files appended as arguments and `LAND_ROOT` and `LAND_CHECKOUT` in its environment. It exits 1 and prints its own record. When every failed file fails there too, the landing goes on. |
 | `land.afterMerge` | `lw-land` | Default `""`. A command that runs in the branch worktree after the landing merges the base in, for example one that writes an index of the specs again. Its changes to tracked files are amended into that merge commit. It does not run when the merge made no merge commit. A failure stops the landing at exit 3. |
 | `land.overlapExclude` | `lw-land` | Default `[]`. Paths, relative to the repository root, that the check for a carried gate does not count. A base move that touches only these paths and paths the branch did not change carries a green gate over. |
@@ -278,6 +281,20 @@ longer than its cap. A block that the file already holds is the floor, so an edi
 passes. After the write, the hook reports each finding as added context, the line length
 included. A Codex `apply_patch` gives the hook the path only, so Codex gets the report and not
 the deny.
+
+A Write or Edit matcher does not see a file that a shell command wrote, such as a heredoc, a
+`sed -i` or a script. At the Stop event, the hook measures each file that changed since the base.
+That is each tracked file that differs from the commit where HEAD left `harness.baseBranch`, and
+each untracked file that git does not ignore. Without the branch, the commit is HEAD. On a
+finding, the hook exits 2 with the findings on stderr, so the turn stays open and the agent
+corrects the files.
+
+The hook holds a turn once per set of findings. It saves a hash of the findings for the session
+and the checkout in `$XDG_RUNTIME_DIR/comment-budget/`, else `/tmp/claude-<uid>/comment-budget/`.
+A Stop with the same findings lets the turn end. A Stop with other findings holds the turn
+again, and a Stop with no finding removes the saved hash. A git failure, a file that is not
+UTF-8 or a state file that the hook cannot write lets the turn end with the reason on stderr.
+The Stop check adds no config key: it runs when the project turns the `comment-budget` hook on.
 
 ## The credential name guard
 

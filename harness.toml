@@ -916,8 +916,8 @@ default = "off"
 
 [[hook]]
 id = "comment-budget"
-summary = "Refuse a write that makes a comment block longer than its cap, and report the budget of the written file"
-events = ["PreToolUse", "PostToolUse"]
+summary = "Refuse a write that makes a comment block longer than its cap, report the budget of the written file, and hold a turn once for the findings of the changed files"
+events = ["PreToolUse", "PostToolUse", "Stop"]
 matcher = "Write|Edit|MultiEdit"
 script = "hooks/comment-budget.py"
 default = "off"

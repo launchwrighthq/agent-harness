@@ -20,6 +20,24 @@ import agent_harness
 PACKAGE_ROOT = Path(agent_harness.__file__).resolve().parents[2]
 
 
+def _require_sources(source: Path) -> None:
+    """Refuse an installed copy that lacks a file its manifest names, such as a global copy."""
+    from agent_harness import HarnessError
+    from agent_harness.install.plan import MANIFEST_FILE, PACKAGE_NAME
+    from agent_harness.manifest import read_manifest
+
+    if not (source / "lock.json").is_file():
+        return
+    try:
+        read_manifest(source / MANIFEST_FILE, name=PACKAGE_NAME, extra=False)
+    except HarnessError as error:
+        raise HarnessError(
+            f"{source} is an installed copy that lacks a source file of its manifest ({error})."
+            " Run ah install from the agent-harness package:"
+            " python3 <package root>/bin/ah install, or pass --from <package root>"
+        ) from error
+
+
 def _say(line: str) -> None:
     print(line)
 
@@ -66,6 +84,7 @@ def main(argv: list[str]) -> int:
 
     args = _parser().parse_args(argv)
     source = (args.source or PACKAGE_ROOT).resolve()
+    _require_sources(source)
     if args.global_:
         if args.manifest:
             print("ah install: --global installs no extra manifest", file=sys.stderr)

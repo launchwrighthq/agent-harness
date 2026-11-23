@@ -231,3 +231,52 @@ def test_leaves_a_qa_folder_out_of_the_archive_check(tmp_path: Path) -> None:
 
     assert done.returncode == 0, done.stdout
     assert done.stdout == "spec check: 2 documents, no finding\n"
+
+
+def test_passes_a_picture_that_only_a_board_of_the_folder_links(tmp_path: Path) -> None:
+    root = make_repo(
+        tmp_path,
+        {
+            "docs/specs/a.md": doc("draft", "![Board](assets/board.svg)\n"),
+            "docs/specs/assets/board.svg": '<svg><image href="art/shot.png"/></svg>',
+            "docs/specs/assets/art/shot.png": "png",
+        },
+        config='[specs]\nchecks = ["assets"]\n',
+    )
+
+    done = check(root)
+
+    assert done.returncode == 0, done.stdout
+
+
+def test_passes_a_picture_that_a_board_links_with_a_percent_escape(tmp_path: Path) -> None:
+    root = make_repo(
+        tmp_path,
+        {
+            "docs/specs/a.md": doc("draft", "![Board](assets/board.svg)\n"),
+            "docs/specs/assets/board.svg": '<svg><image href="my%20shot.png"/></svg>',
+            "docs/specs/assets/my shot.png": "png",
+        },
+        config='[specs]\nchecks = ["assets"]\n',
+    )
+
+    done = check(root)
+
+    assert done.returncode == 0, done.stdout
+
+
+def test_reports_a_picture_that_only_a_comment_of_a_board_links(tmp_path: Path) -> None:
+    root = make_repo(
+        tmp_path,
+        {
+            "docs/specs/a.md": doc("draft", "![Board](assets/board.svg)\n"),
+            "docs/specs/assets/board.svg": '<svg><!-- <image href="shot.png"/> --></svg>',
+            "docs/specs/assets/shot.png": "png",
+        },
+        config='[specs]\nchecks = ["assets"]\n',
+    )
+
+    done = check(root)
+
+    assert done.returncode == 1
+    assert "docs/specs/assets/shot.png: no document of docs/specs names shot.png" in done.stdout

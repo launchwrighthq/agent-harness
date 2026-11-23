@@ -158,3 +158,26 @@ def test_takes_the_project_root_from_ah_root_when_no_start_is_given(
     monkeypatch.setenv(config.ROOT_ENV, str(project))
 
     assert config.find_root() == project.resolve()
+
+
+def test_asks_before_a_spec_commit_by_default(tmp_path: Path) -> None:
+    assert config.get("specs.commit", tmp_path) == "ask"
+
+
+def test_reads_the_auto_mode_of_the_spec_commit(tmp_path: Path) -> None:
+    write_config(tmp_path, '[specs]\ncommit = "auto"\n')
+
+    assert config.get("specs.commit", tmp_path) == "auto"
+
+
+def test_refuses_a_spec_commit_mode_other_than_ask_and_auto(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_config(tmp_path, '[specs]\ncommit = "push"\n')
+
+    assert config.main(["get", "specs.commit"], tmp_path) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        "ah config: config key specs.commit must be one of ask, auto, not 'push'\n"
+    )

@@ -133,6 +133,8 @@ SECTION_DEFAULTS: dict[str, dict[str, Any]] = {
         # The lw-land options. An empty value turns the option off.
         "land": {
             "greenToken": "",
+            # An extended regular expression (grep -E) that one line of the gate log must match.
+            "greenPattern": "",
             "probeCommand": "",
             "afterMerge": "",
             "overlapExclude": [],
@@ -176,6 +178,8 @@ SECTION_DEFAULTS: dict[str, dict[str, Any]] = {
         "out": "dist",
         # `refuse` or `placeholder`: what `ah spec render` does with an image that has no file.
         "missingAssets": "refuse",
+        # `ask` or `auto`: whether lw-spec-write asks before it commits a spec it wrote.
+        "commit": "ask",
         # Relative to the main checkout, so every worktree shares one audit store.
         "auditDir": ".claude/state",
         # The checks that `ah spec check` runs, and the git pathspecs it reads pointers from.
@@ -187,6 +191,10 @@ SECTION_DEFAULTS: dict[str, dict[str, Any]] = {
         "kinds": {},
     },
 }
+
+
+# The values of each key with a fixed vocabulary. `Config.get` refuses another value.
+CHOICES: dict[str, tuple[str, ...]] = {"specs.commit": ("ask", "auto")}
 
 
 def register_defaults(section: str, defaults: Mapping[str, Any]) -> None:
@@ -248,7 +256,12 @@ class Config:
             if not isinstance(node, Mapping) or part not in node:
                 raise HarnessError(_unknown(key, parts[:depth], node))
             node = node[part]
-        return _resolve(node, self.root)
+        value = _resolve(node, self.root)
+        if key in CHOICES and value not in CHOICES[key]:
+            raise HarnessError(
+                f"config key {key} must be one of {', '.join(CHOICES[key])}, not {value!r}"
+            )
+        return value
 
 
 def _resolve(value: Any, root: Path) -> Any:

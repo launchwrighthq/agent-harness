@@ -7,7 +7,8 @@ active folder, or an unsettled one in the archive. A document of `[specs] keep` 
 reference and stays in its active folder when it is settled. A `qa` folder has no archive, so
 `archive` leaves it out. `superseded`: a `superseded-by` path that does not resolve.
 `pointers`: a spec path in a file of `[specs] pointerFiles` that does not exist.
-`assets`: a file in `<folder>/assets/` whose name no document of the folder holds.
+`assets`: a file in `<folder>/assets/` whose name no document of the folder holds and no board
+of the folder links.
 
 A pointer inside an archive is history, and a path with a placeholder is a pattern, so neither
 counts. A pointer to a rendered page resolves when its source exists.
@@ -16,13 +17,14 @@ counts. A pointer to a rendered page resolves when its source exists.
 from __future__ import annotations
 
 import argparse
+import posixpath
 import re
 from collections.abc import Callable
 from pathlib import Path
 
 from agent_harness import HarnessError, config
+from agent_harness.spec import board, store, tree
 from agent_harness.spec import layout as layouts
-from agent_harness.spec import store, tree
 from agent_harness.spec.layout import ASSETS, Layout
 
 CHECKS = ("archive", "superseded", "pointers", "assets")
@@ -138,9 +140,16 @@ def asset_findings(root: Path, layout: Layout) -> list[str]:
             if name.endswith(tree.DOC_SUFFIXES)
             and not name.startswith((assets, f"{folder}/{layout.out}/"))
         )
+        # A picture file that a board links belongs to that board.
+        linked = {
+            posixpath.basename(path)
+            for name in names
+            if name.startswith(assets) and name.endswith(".svg")
+            for path in board.linked_files(tree.read(root, name))
+        }
         for name in names:
             base = name.rsplit("/", 1)[-1]
-            if name.startswith(assets) and base not in text:
+            if name.startswith(assets) and base not in text and base not in linked:
                 found.append(f"{name}: no document of {folder} names {base}")
     return found
 

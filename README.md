@@ -90,6 +90,25 @@ The hooks, the rules and the git hooks are in [docs/hooks.md](docs/hooks.md).
 | `docs/` | One document per area. |
 | `tests/unit/`, `tests/integration/` | The tests. |
 
+## Changes in 0.3.1
+
+This release has five changes. Each default keeps the behavior of 0.3.0.
+
+| Change | Keys and commands | Details |
+|---|---|---|
+| The comment budget at the end of a turn | No key. With the `comment-budget` hook on, the Stop event measures each file that changed since the base, also a file that a shell command wrote. A finding holds the turn once. | [docs/hooks.md](docs/hooks.md) |
+| Pictures that a board links | No key. `ah spec render` writes each file that a board links into the board of the page as a `data:` URI. A link that it cannot write prints a warning, and `ah spec render --strict` refuses it. | [docs/spec.md](docs/spec.md) |
+| The commit of a spec | `specs.commit = "auto"` lets the `lw-spec-write` skill commit a spec with no question. The default `ask` asks first. | [docs/spec.md](docs/spec.md) |
+| An install from the installed copy | `python3 .claude/agent-harness/bin/ah install --project` installs again with no source package. The project copy now also holds `rules/`, `skills/` and `githooks/`. | [docs/install.md](docs/install.md) |
+| A green gate line with a part that changes | `harness.land.greenPattern` is an extended regular expression that one line of the gate log must match. | [docs/hooks.md](docs/hooks.md) |
+
+Two behaviors differ from 0.3.0:
+
+- A project with the `comment-budget` hook on can get one hold at the end of a turn, for the
+  findings of the files that changed since the base.
+- `.claude/agent-harness/` and its `lock.json` hold three more folders: `rules/`, `skills/` and
+  `githooks/`. An upgrade writes them once.
+
 ## Changes in 0.3.0
 
 This release closes six gaps. Each one has a config key, and

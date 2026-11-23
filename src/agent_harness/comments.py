@@ -282,15 +282,44 @@ def comment_findings(
         if not (root / r).exists():
             raise HarnessError(f"{p} does not exist")
         rel.append(r)
+    return _findings_of(root, budget, base_branch, _files(root, rel))
+
+
+def _findings_of(
+    root: Path, budget: Mapping[str, Any], base_branch: str, files: list[str]
+) -> list[str]:
+    """Each finding of the files of `files` that the budget reads, one line per finding."""
     base = _base_files(root, base_branch)
     moved = renamed(root, base_branch, budget) if base is not None else set()
     out: list[str] = []
-    for file in _files(root, rel):
+    for file in files:
         if not in_scope(file, budget) or not (root / file).is_file():
             continue
         new = base is not None and file not in base and file not in moved
         out.extend(findings(file, measure_file(root / file, file), new, caps_for(file, budget)))
     return out
+
+
+def changed_files(root: Path, base_branch: str) -> list[str]:
+    """The files of the working tree that changed since the base, relative to `root`.
+
+    That is each tracked file that differs from the commit where HEAD left `base_branch`, and
+    each untracked file that git does not ignore. Without the branch, the commit is HEAD. A
+    deleted file is left out.
+    """
+    fork = _git(root, ["merge-base", base_branch, "HEAD"])
+    since = fork.stdout.strip() if fork.returncode == 0 else "HEAD"
+    tracked = _git(root, ["diff", "--relative", "--name-only", "--diff-filter=d", "-z", since])
+    untracked = _git(root, ["ls-files", "--others", "--exclude-standard", "-z"])
+    for done, name in ((tracked, "diff"), (untracked, "ls-files")):
+        if done.returncode != 0:
+            raise HarnessError(f"git {name} failed in {root}: {done.stderr.strip()}")
+    return sorted({f for f in (tracked.stdout + untracked.stdout).split("\0") if f})
+
+
+def changed_findings(root: Path, budget: Mapping[str, Any], base_branch: str) -> list[str]:
+    """Each finding of the comment budget in the files of `changed_files`."""
+    return _findings_of(root, budget, base_branch, changed_files(root, base_branch))
 
 
 USAGE = """usage: ah comments [path ...]

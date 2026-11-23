@@ -17,7 +17,7 @@ a fact in `.agents/harness.toml`, never in an installed file.
 
 Run the launcher with `python3`: `python3 agent-harness/bin/ah install` from a source tree, or
 `python3 .claude/agent-harness/bin/ah check` in an installed project. `--from` installs from
-another package root, for example a newer global copy at `~/.claude/agent-harness`.
+another package root, for example the project copy of another checkout.
 
 The project root is the top folder of the repository of the current folder. `AH_ROOT` names
 another root, for a project in a subfolder of a larger repository. `install`, `check` and
@@ -27,7 +27,7 @@ another root, for a project in a subfolder of a larger repository. `install`, `c
 
 | Part | Content |
 |---|---|
-| `.claude/agent-harness/` | The engine: `bin/`, `src/`, `hooks/`, `tools/`, `codex/` and `harness.toml` of the package. |
+| `.claude/agent-harness/` | The engine: `bin/`, `src/`, `hooks/`, `tools/`, `codex/` and `harness.toml` of the package. Also the source of every rule, skill and git hook of the package: `rules/`, `skills/` and `githooks/`. No client loads a file from these three folders. |
 | `.claude/agent-harness/manifests/<name>/` | The copy of each extra manifest and of its hook and tool files. |
 | `.claude/agent-harness/lock.json` | The package version, the installed manifests, a sha256 per file, the executable files, the skills and the skill links. It also holds a sha256 per rule adapter, and the table `scoped` when the config gives a rule its paths or its generated line. |
 | `.claude/skills/<id>/` | Every file of each enabled skill. |
@@ -44,8 +44,28 @@ A second install with no change writes nothing and prints `nothing changed`. An 
 each file and link that the previous lockfile lists and the new one does not. It then removes
 each folder that it leaves empty.
 
-The installer reads every source file before it writes, so an install from the installed copy
-(`--from .claude/agent-harness`) works.
+## Install from the installed copy
+
+The project copy in `.claude/agent-harness/` is a package root. It holds the engine, the
+manifest and the source of every rule, skill and git hook, also of a disabled one. So the
+installed launcher installs again with no source package:
+
+```bash
+python3 .claude/agent-harness/bin/ah install --project
+```
+
+Run it after a change of `.agents/harness.toml`, of a rule adapter or of a project manifest. It
+installs the version that the copy holds. A newer version comes from its own package. The
+installer reads every source file before it writes, because this install reads and writes the
+same files.
+
+A copy that lacks a file of its manifest cannot install. That is a global copy, a project copy
+with a deleted source file, and a project copy with no `rules/`, `skills/` and `githooks/`
+folder. `ah install` then exits 1, writes nothing and prints:
+
+```
+ah install: <copy> is an installed copy that lacks a source file of its manifest (<copy>/harness.toml is invalid: <file> does not exist). Run ah install from the agent-harness package: python3 <package root>/bin/ah install, or pass --from <package root>
+```
 
 A project copy is a file that the previous lockfile does not list and that the install would
 replace or leave behind. It is a planned file with other bytes (`differs`), or a file in
@@ -363,7 +383,9 @@ with `git` in the client column, and they count in the last line
 `ah install --global` writes `~/.claude/agent-harness/` (`bin/`, `src/`, `tools/`,
 `harness.toml` and `lock.json`) and `~/.claude/skills/lw-*`. `HOME` decides the folder. A global
 `ah` inside a repository with a project install hands over to the project engine. `ah install`
-never hands over: it installs the package of the engine that you start.
+never hands over: it installs the package of the engine that you start. The global copy holds no
+hook, no rule and no git hook, so it is no package root: `ah install` from the global launcher
+needs `--from <package root>` (see "Install from the installed copy").
 
 Claude Code prefers a personal skill to a project skill with the same name, so a global skill can
 hide a newer project skill. Keep the global install no older than the newest project install.

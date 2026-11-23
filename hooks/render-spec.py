@@ -140,12 +140,13 @@ def render_line(root: Path, source: Path) -> str:
     """Render `source` with the engine beside this hook, and give the line for the model."""
     where = layout.for_root(root)
     warnings: list[str] | None = [] if render.placeholder_mode(config.load(root)) else None
+    boards: list[str] = []
     try:
-        render.render_file(str(source), where, cwd=root, warnings=warnings)
+        render.render_file(str(source), where, cwd=root, warnings=warnings, board_warnings=boards)
     except render.SpecError as error:
         return f"The spec did not render, so there is no page yet: {error}"
     page = render.dist_for(str(source), where)
-    note = "".join(f"\n{line}" for line in render.warning_lines(warnings or []))
+    note = "".join(f"\n{line}" for line in render.warning_lines(warnings or [], boards))
     if WORKTREES in str(root):
         note += (
             "\nThis page exists in this worktree only. "

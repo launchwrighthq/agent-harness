@@ -67,8 +67,18 @@ folder (`ah config get specs.out`, default `dist`). Keep the page folder out of 
 
 A draft stays `draft` until the user accepts it. An approved design does not allow a commit, a
 push, a deploy or a real account action by itself. A request for a spec does not allow you to
-build it. When the user approves a spec, ask whether to commit it, unless the user already
-allowed the commit.
+build it.
+
+`ah config get specs.commit` decides the commit of a spec:
+
+- `ask` (the default): when the user approves a spec, ask whether to commit it, unless the user
+  already allowed the commit.
+- `auto`: commit right after you write or revise a spec, with no question. Stage the source,
+  each file of its `assets/` folder that the spec names, and each file under `assets/` that a
+  board of the spec links with an `<image>` element. Stage by path, and commit only those
+  paths: `docs(spec): <summary>`. On the base branch (`ah config get harness.baseBranch`), make a
+  branch or a worktree first, as the git workflow rule says. Never push. The spec stays `draft`
+  until the user accepts it: the commit is no approval.
 
 ## 3. The header block
 

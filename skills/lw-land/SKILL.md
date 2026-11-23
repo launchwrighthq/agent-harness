@@ -58,6 +58,7 @@ Each key sits in `[harness.land]` of `.agents/harness.toml`. An empty value turn
 | Key | Default | Effect |
 |---|---|---|
 | `greenToken` | `""` | The gate is green only when it exits 0 and one line of its log equals this text. |
+| `greenPattern` | `""` | An extended regular expression (`grep -E`). The gate is green only when it exits 0 and one line of its log matches it. Use it for a green line with a part that changes, such as a duration. With `greenToken` set too, both must hold. A bad pattern stops the landing at exit 5. |
 | `probeCommand` | `""` | On a red gate, the land command reads the `verify: failures <json>` record of the log with `ah land-results`. It runs this command on the failed files in a worktree at the merged base. When every file fails there too, the landing goes on. |
 | `afterMerge` | `""` | A command that runs after the merge. Its changes to tracked files go into the merge commit. |
 | `overlapExclude` | `[]` | Paths that do not count when a base move decides whether a green gate carries over. |

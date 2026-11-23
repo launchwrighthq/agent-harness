@@ -3,15 +3,19 @@
 
     comment-budget.py PreToolUse    deny a Write or Edit that makes a comment block too long
     comment-budget.py PostToolUse   report each finding of the written file as added context
+    comment-budget.py Stop          hold the turn once for the findings of the changed files
 
-`agent_harness.comments` measures, and `ah comments` reads the same module, so the hook and the
-check agree. A Codex `apply_patch` arrives as an Edit with the path only: it gets the report
-after the write, not the deny before it.
+A matcher on tool names cannot see a file that a shell command wrote, so Stop measures each file
+that changed since the base. `agent_harness.comments` measures, and `ah comments` reads the same
+module, so the hook and the check agree. A Codex `apply_patch` arrives as an Edit with the path
+only: it gets the report after the write, not the deny before it.
 """
 
 from __future__ import annotations
 
+import hashlib
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -55,9 +59,49 @@ def resulting_text(tool: str, data: dict[str, Any], current: str | None) -> str 
     return None if at == -1 else current[:at] + now + current[at + len(was) :]
 
 
+def state_file(payload: dict[str, Any], root: Path) -> Path:
+    """The file that holds the findings Stop last held this session for, one per checkout."""
+    session = payload.get("session_id") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "none"
+    base = os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/claude-{os.getuid()}"
+    name = re.sub(r"[^\w-]", "_", str(session))
+    checkout = hashlib.sha256(str(root).encode()).hexdigest()[:12]
+    return Path(base) / HOOK / f"{name}-{checkout}"
+
+
+def stop(payload: dict[str, Any]) -> int:
+    """Exit 2 with the findings of the changed files, once per set of findings.
+
+    The state file is the loop guard: a Stop with the findings of the last held Stop lets the
+    turn end. `stop_hook_active` is no guard, because another Stop hook sets it too.
+    """
+    root = checkout_of(payload)
+    cfg = hookio.hook_config(HOOK, __file__)
+    base = str(hookio.harness_value(cfg, "baseBranch") or "main")
+    state = state_file(payload, root)
+    try:
+        found = comments.changed_findings(root, comments.budget_of(cfg), base)
+        if not found:
+            state.unlink(missing_ok=True)
+            return 0
+        mark = hashlib.sha256("\n".join(found).encode()).hexdigest()
+        if state.exists() and state.read_text(encoding="utf-8") == mark:
+            return 0
+        state.parent.mkdir(parents=True, exist_ok=True)
+        state.write_text(mark, encoding="utf-8")
+    except (HarnessError, OSError, UnicodeError) as error:
+        # Without a verdict or a saved mark the hold could repeat, so the turn ends.
+        print(f"{HOOK}: {error}; no verdict", file=sys.stderr)
+        return 0
+    held = [*(f"{HOOK}: {f}" for f in found), comments.RULE]
+    print("\n".join([*held, "Correct each file, then end the turn."]), file=sys.stderr)
+    return 2
+
+
 def main() -> None:
     event = sys.argv[1] if len(sys.argv) > 1 else "PostToolUse"
     payload = hookio.read_payload(HOOK)
+    if payload is not None and event == "Stop":
+        sys.exit(stop(payload))
     data = payload.get("tool_input") if payload else None
     if payload is None or not isinstance(data, dict) or not isinstance(data.get("file_path"), str):
         return

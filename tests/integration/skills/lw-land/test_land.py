@@ -217,6 +217,64 @@ def test_lands_when_the_gate_log_holds_the_green_token(tmp_path: Path) -> None:
     assert git(repo, "rev-parse", "trunk") == git(tree, "rev-parse", "HEAD")
 
 
+PATTERN = (
+    "[harness.land]\ngreenPattern = '^gate: green( in [0-9.]+s| \\(carried [0-9]+ steps\\))$'\n"
+)
+
+
+def test_refuses_a_gate_that_exits_0_without_a_line_that_matches_the_green_pattern(
+    tmp_path: Path,
+) -> None:
+    repo, tree = make_repo(tmp_path, "echo gate: files changed in the run", extra=PATTERN)
+
+    done = land(tree)
+
+    assert done.returncode == 2, done.stdout + done.stderr
+    assert "no line of the gate log matches ^gate: green" in done.stderr
+    assert git(repo, "rev-parse", "trunk") != git(tree, "rev-parse", "HEAD")
+
+
+def test_lands_when_a_line_of_the_gate_log_matches_the_green_pattern(tmp_path: Path) -> None:
+    for number, line in enumerate(("gate: green in 123.4s", "gate: green (carried 3 steps)")):
+        folder = tmp_path / str(number)
+        folder.mkdir()
+        repo, tree = make_repo(folder, f"echo '{line}'", extra=PATTERN)
+
+        done = land(tree)
+
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert git(repo, "rev-parse", "trunk") == git(tree, "rev-parse", "HEAD")
+
+
+def test_needs_the_green_token_and_the_green_pattern_when_both_are_set(tmp_path: Path) -> None:
+    both = GREEN + "greenPattern = '^gate: green in [0-9.]+s$'\n"
+    repo, tree = make_repo(tmp_path, "echo gate: green in 1.0s", extra=both)
+
+    done = land(tree)
+
+    assert done.returncode == 2, done.stdout + done.stderr
+    assert "no line of the gate log is verify: green" in done.stderr
+    assert git(repo, "rev-parse", "trunk") != git(tree, "rev-parse", "HEAD")
+
+
+def test_refuses_a_green_pattern_that_is_not_a_regular_expression(tmp_path: Path) -> None:
+    extra = "[harness.land]\ngreenPattern = 'green ('\n"
+    repo, tree = make_repo(tmp_path, "touch gate-ran", extra=extra)
+    (repo / "base.txt").write_text("a base move\n", encoding="utf-8")
+    git(repo, "add", "base.txt")
+    git(repo, "commit", "--quiet", "-m", "base move")
+    head = git(tree, "rev-parse", "HEAD")
+
+    done = land(tree)
+
+    assert done.returncode == 5, done.stdout + done.stderr
+    assert done.stderr.endswith(
+        "harness.land.greenPattern is not an extended regular expression (grep -E): green (\n"
+    )
+    assert git(tree, "rev-parse", "HEAD") == head
+    assert not (tree / "gate-ran").exists()
+
+
 def failures(step: str, attributable: str, files: str) -> str:
     """A shell line that prints a `verify: failures` record of one failed step."""
     return (

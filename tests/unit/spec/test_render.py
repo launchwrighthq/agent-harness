@@ -302,3 +302,14 @@ def test_refuses_a_fenced_code_line_left_of_its_list_item_and_says_how_to_indent
         " marker. Indent every line of the block, the closing fence too, under the item text, or"
         " end the list with a blank line and start the fence at the left margin below it"
     )
+
+
+def test_shows_an_image_with_the_page_source_that_the_caller_gives() -> None:
+    sources = {"assets/board.svg": "data:image/svg+xml;base64,QQ=="}
+
+    got = inline("![x](assets/board.svg) ![y](assets/plain.svg)", "../", None, sources.get)
+
+    assert got == (
+        '<img src="data:image/svg+xml;base64,QQ==" alt="x" loading="lazy"> '
+        '<img src="../assets/plain.svg" alt="y" loading="lazy">'
+    )
