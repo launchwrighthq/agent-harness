@@ -3,17 +3,13 @@
 
 Off by default. A project that has a remote runner turns it on with `harness.enable`.
 
-On UserPromptSubmit it opens local runs for the turn when the user writes "verify locally", and
-closes them on the next prompt that does not. On PreToolUse it refuses a runner such as pytest,
-vitest, tsc or `make test` unless that turn is open. It refuses only a runner whose folder is in
-this project: a `cd` or `pushd` moves the folder for the commands after it, and so does a folder
-option such as `npm --prefix`, `uv --directory` or `make -C`. A linked worktree counts as its main
-checkout. A folder that the hook cannot know, such as `cd "$DIR"`, counts as this project.
-`make verify`, `npm run verify` and
-`harness.gateCommand` of the config pass. So does each command of `harness.localRuns.dispatch`,
-for example `ci test`: it dispatches to the remote runner or picks its target from the config.
-With `--target local`, a dispatch command runs here, so it needs an open turn. The hint in the
-refusal is `harness.localRuns.hint`.
+"verify locally" in a prompt opens local runs for that turn. On PreToolUse it refuses a runner
+such as pytest, vitest, tsc or `make test` in this project unless the turn is open. A `cd`,
+`pushd` or folder option (`npm --prefix`, `uv --directory`, `make -C`) moves the folder; a linked
+worktree counts as its main checkout, and an unknown folder such as `cd "$DIR"` as this project.
+`make verify`, `npm run verify`, `harness.gateCommand` and each `harness.localRuns.dispatch`
+command pass; a dispatch command with `--target local` needs an open turn. Refusal hint:
+`harness.localRuns.hint`.
 """
 
 from __future__ import annotations
