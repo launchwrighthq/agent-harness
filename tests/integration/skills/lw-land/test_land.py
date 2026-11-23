@@ -1,5 +1,6 @@
 """land.sh reads the base branch and the gate from the config and renders the landed spec."""
 
+import json
 import os
 import re
 import shutil
@@ -429,3 +430,261 @@ def test_lands_with_the_noreply_address_on_its_own_merge_commit(tmp_path: Path) 
 
     assert done.returncode == 0, done.stdout + done.stderr
     assert git(repo, "log", "-1", "--format=%ae %ce", "trunk") == f"{noreply} {noreply}"
+
+
+# Each gate appends its mode name to the file that OUT names.
+def test_prints_each_warning_of_the_page_render_after_the_landing(tmp_path: Path) -> None:
+    extra = '[specs]\nmissingAssets = "placeholder"\n'
+    repo, tree = make_repo(tmp_path, "true", extra=extra)
+    commit(tree, SPEC, (tree / SPEC).read_text(encoding="utf-8") + "\n![Board](assets/b.svg)\n")
+
+    done = land(tree)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    warnings = [line for line in done.stdout.splitlines() if line.startswith("land: page: warn")]
+    assert len(warnings) == 1, done.stdout
+    assert warnings[0].startswith(f"land: page: warning: {repo / SPEC}:")
+    assert warnings[0].endswith(
+        f"the image assets/b.svg has no file at {repo}/docs/specs/assets/b.svg;"
+        " the page shows a placeholder"
+    )
+
+
+MODES = '[harness.land.gates]\nchanged = "echo changed >> $OUT"\n'
+FULL_GATE = "echo full >> $OUT"
+
+
+@pytest.mark.parametrize(
+    ("extra", "env", "mode"),
+    [
+        (MODES, {"LAND_GATE": "changed"}, "changed"),
+        (MODES, {}, "full"),
+        ('[harness.land]\ndefaultGate = "changed"\n' + MODES, {}, "changed"),
+        ('[harness.land]\ndefaultGate = "changed"\n' + MODES, {"LAND_GATE": "full"}, "full"),
+    ],
+)
+def test_runs_the_gate_command_of_the_picked_mode(
+    tmp_path: Path, extra: str, env: dict[str, str], mode: str
+) -> None:
+    repo, tree = make_repo(tmp_path, FULL_GATE, extra=extra)
+    out = tmp_path / "out.txt"
+
+    done = land(tree, OUT=str(out), **env)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert out.read_text(encoding="utf-8") == f"{mode}\n"
+    assert f"land: gate: mode {mode}\n" in done.stdout
+    assert git(repo, "rev-parse", "trunk") == git(tree, "rev-parse", "HEAD")
+
+
+def test_gives_the_gate_the_merged_base_and_the_worktree_root(tmp_path: Path) -> None:
+    repo, tree = make_repo(tmp_path, "echo $LAND_MERGED_BASE $LAND_ROOT > $OUT")
+    out = tmp_path / "out.txt"
+    trunk = git(repo, "rev-parse", "trunk")
+
+    done = land(tree, OUT=str(out))
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert out.read_text(encoding="utf-8") == f"{trunk} {tree}\n"
+
+
+def test_stops_on_an_unknown_gate_mode_and_lists_the_modes(tmp_path: Path) -> None:
+    repo, tree = make_repo(tmp_path, FULL_GATE, extra=MODES)
+    out = tmp_path / "out.txt"
+
+    done = land(tree, OUT=str(out), LAND_GATE="quick")
+
+    assert done.returncode == 5, done.stdout + done.stderr
+    assert (
+        "land: the gate mode quick (LAND_GATE=quick) is unknown. "
+        "The modes are: full, none, changed.\n"
+    ) in done.stderr
+    assert not out.exists()
+    assert git(repo, "rev-parse", "trunk") != git(tree, "rev-parse", "HEAD")
+
+
+@pytest.mark.parametrize("name", ["full", "none"])
+def test_refuses_a_gates_table_that_names_a_reserved_mode(tmp_path: Path, name: str) -> None:
+    extra = f'[harness.land.gates]\n{name} = "true"\n'
+    repo, tree = make_repo(tmp_path, "true", extra=extra)
+
+    done = land(tree)
+
+    assert done.returncode == 5, done.stdout + done.stderr
+    assert f"land: harness.land.gates holds the mode {name}." in done.stderr
+    assert git(repo, "rev-parse", "trunk") != git(tree, "rev-parse", "HEAD")
+
+
+BAD_GATE_CONFIGS = [
+    (
+        '[harness.land]\ndefaultGate = "none"\n',
+        "land: harness.land.defaultGate is none. Only LAND_GATE=0 skips the gate."
+        " Set a mode that runs a command.\n",
+    ),
+    (
+        '[harness.land.gates]\n"quick!" = "true"\n',
+        "land: harness.land.gates holds the mode quick!. A mode name starts with a letter and"
+        " holds letters, digits, - and _.\n",
+    ),
+    (
+        '[harness.land]\ndefaultGate = "changed"\n[harness.land.gates]\nchanged = ""\n',
+        "land: harness.land.gates.changed is empty. Set the command of the mode.\n",
+    ),
+    (
+        "[harness.land.gates]\nchanged = 1\n",
+        "It is a table of mode names and commands.\n",
+    ),
+]
+
+
+@pytest.mark.parametrize(("extra", "message"), BAD_GATE_CONFIGS)
+def test_stops_before_the_merge_on_a_gate_config_that_names_no_command(
+    tmp_path: Path, extra: str, message: str
+) -> None:
+    repo, tree = make_repo(tmp_path, FULL_GATE, extra=extra)
+    out = tmp_path / "out.txt"
+
+    done = land(tree, OUT=str(out))
+
+    assert done.returncode == 5, done.stdout + done.stderr
+    assert message in done.stderr
+    assert not out.exists()
+    assert git(repo, "rev-parse", "trunk") != git(tree, "rev-parse", "HEAD")
+
+
+def test_says_that_the_result_record_of_a_red_gate_names_no_failed_step(tmp_path: Path) -> None:
+    steps = {"lint": {"code": 0, "attributable": False, "failedFiles": []}}
+    repo, tree = make_repo(tmp_path, "sh gate.sh")
+    commit(repo, "gate.sh", f"echo 'verify: failures {json.dumps(steps)}'\nexit 1\n")
+
+    done = land(tree)
+
+    assert done.returncode == 2, done.stdout + done.stderr
+    assert "land: gate: the result record names no failed step\n" in done.stderr
+    assert "land: gate: red at these steps" not in done.stderr
+
+
+@pytest.mark.parametrize("dial", ["0", "none"])
+def test_skips_the_gate_in_the_mode_none(tmp_path: Path, dial: str) -> None:
+    repo, tree = make_repo(tmp_path, FULL_GATE, extra=MODES)
+    out = tmp_path / "out.txt"
+
+    done = land(tree, OUT=str(out), LAND_GATE=dial)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "land: gate: mode none\n" in done.stdout
+    assert (
+        f"land: gate: SKIPPED by LAND_GATE={dial}. The report must say the gate was not run.\n"
+    ) in done.stdout
+    assert not out.exists()
+    assert git(repo, "rev-parse", "trunk") == git(tree, "rev-parse", "HEAD")
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "runs"),
+    [
+        ("changed", "full", "changed\nfull\n"),
+        ("full", "changed", "full\n"),
+        ("changed", "changed", "changed\n"),
+    ],
+)
+def test_reads_the_gate_mark_of_a_tree_per_mode(
+    tmp_path: Path, first: str, second: str, runs: str
+) -> None:
+    repo, tree = make_repo(tmp_path, FULL_GATE, extra=MODES)
+    out = tmp_path / "out.txt"
+    assert land(tree, OUT=str(out), LAND_GATE=first).returncode == 0
+    # A second commit of the same tree.
+    git(tree, "commit", "--quiet", "--allow-empty", "-m", "again")
+
+    done = land(tree, OUT=str(out), LAND_GATE=second)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert out.read_text(encoding="utf-8") == runs
+    assert git(repo, "rev-parse", "trunk") == git(tree, "rev-parse", "HEAD")
+
+
+def test_carries_the_gate_over_with_the_mode_of_the_gate(tmp_path: Path) -> None:
+    extra = (
+        '[harness.land]\noverlapExclude = ["index.txt"]\n'
+        '[harness.land.gates]\nchanged = "sh gate.sh"\n'
+    )
+    repo, tree = make_repo(tmp_path, "false", extra=extra)
+    commit(repo, "index.txt", INDEX)
+    commit(repo, "gate.sh", MOVE_BASE)
+    git(tree, "merge", "--quiet", "trunk")
+    commit(tree, "index.txt", INDEX.replace("a\n", "A\n"))
+
+    done = land(tree, MARK=str(tmp_path / "moved"), CHECKOUT=str(repo), LAND_GATE="changed")
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "touched no file this branch changed, so the gate carries over" in done.stdout
+    landed = git(tree, "rev-parse", "HEAD^{tree}")
+    marks = repo / ".git" / "land-gates"
+    assert (marks / f"{landed}.changed").is_file()
+    assert not (marks / landed).exists()
+
+
+RED_STEPS = {
+    "lint": {"code": 0, "attributable": False, "failedFiles": []},
+    "test": {"code": 1, "attributable": True, "failedFiles": ["t/old.sh", "t/new.sh"]},
+    "typecheck": {"code": 2, "attributable": False, "failedFiles": []},
+}
+RED_GATE = f"echo gate output\necho 'verify: failures {json.dumps(RED_STEPS)}'\nexit 1\n"
+
+
+def test_prints_each_failed_step_of_a_red_gate_without_a_probe(tmp_path: Path) -> None:
+    repo, tree = make_repo(tmp_path, "sh gate.sh")
+    commit(repo, "gate.sh", RED_GATE)
+
+    done = land(tree)
+
+    assert done.returncode == 2, done.stdout + done.stderr
+    assert (
+        "land:   test: exit 1, failed files: t/old.sh, t/new.sh\n"
+        "land:   typecheck: exit 2, no failed file\n"
+    ) in done.stderr
+    assert "land:   lint" not in done.stderr
+    assert git(repo, "rev-parse", "trunk") != git(tree, "rev-parse", "HEAD")
+
+
+def test_says_that_the_log_of_a_red_gate_has_no_result_record(tmp_path: Path) -> None:
+    _repo, tree = make_repo(tmp_path, "echo gate output; exit 1")
+
+    done = land(tree)
+
+    assert done.returncode == 2, done.stdout + done.stderr
+    assert "land: gate: the log has no result record\n" in done.stderr
+
+
+def test_prints_the_explain_output_between_the_steps_and_the_log_tail(tmp_path: Path) -> None:
+    extra = '[harness.land]\nexplainCommand = "echo explained $LAND_GATE_LOG in $PWD"\n'
+    repo, tree = make_repo(tmp_path, "sh gate.sh", extra=extra)
+    commit(repo, "gate.sh", RED_GATE)
+
+    done = land(tree)
+
+    assert done.returncode == 2, done.stdout + done.stderr
+    explained = re.search(
+        rf"^explained \S+/land-gates/[0-9a-f]{{40}}-[0-9]+\.log in {re.escape(str(tree))}$",
+        done.stderr,
+        re.MULTILINE,
+    )
+    assert explained is not None, done.stderr
+    steps = done.stderr.index("land:   typecheck: exit 2, no failed file\n")
+    tail = done.stderr.index("\ngate output\n")
+    assert steps < explained.start() < tail
+
+
+def test_keeps_the_exit_code_of_the_landing_when_the_explain_command_fails(
+    tmp_path: Path,
+) -> None:
+    extra = '[harness.land]\nexplainCommand = "echo explained; exit 7"\n'
+    repo, tree = make_repo(tmp_path, "sh gate.sh", extra=extra)
+    commit(repo, "gate.sh", RED_GATE)
+
+    done = land(tree)
+
+    assert done.returncode == 2, done.stdout + done.stderr
+    assert "explained\n" in done.stderr
+    assert "land: explain: the command failed (exit 7). The gate verdict stays.\n" in done.stderr

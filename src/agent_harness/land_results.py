@@ -21,13 +21,18 @@ NO_RECORD: dict[str, dict[str, Any]] = {
     "gate": {"code": 1, "attributable": False, "failedFiles": []}
 }
 
-USAGE = """usage: ah land-results files|unaccounted <log>
+# The exit code of `steps` for a log without a valid record.
+NO_RECORD_EXIT = 3
+
+USAGE = """usage: ah land-results files|unaccounted|steps <log>
 
 files        the failed files of the attributable steps, one per line, sorted
 unaccounted  the failed steps that are not attributable, one per line, sorted
+steps        one line per failed step, sorted: `<step>: exit <code>, failed files: <a>, <b>`
 
 The last `verify: failures <json>` line of the log is the record. A log without a valid record
-reads as one failed step `gate` that is not attributable."""
+reads as one failed step `gate` that is not attributable. `steps` prints no line for such a log
+and exits 3."""
 
 
 def _valid(check: Any) -> bool:
@@ -58,11 +63,24 @@ def unaccounted(steps: dict[str, dict[str, Any]]) -> list[str]:
     return sorted(s for s, c in steps.items() if c.get("code") != 0 and not c.get("attributable"))
 
 
+def step_lines(steps: dict[str, dict[str, Any]]) -> list[str]:
+    """One line per step whose exit code is not 0: the step, the code and its failed files."""
+    lines = []
+    for step in sorted(steps):
+        code = steps[step].get("code")
+        if code == 0:
+            continue
+        files = ", ".join(steps[step]["failedFiles"])
+        named = f"failed files: {files}" if files else "no failed file"
+        lines.append(f"{step}: exit {'unknown' if code is None else code}, {named}")
+    return lines
+
+
 def main(argv: list[str]) -> int:
     if argv in (["-h"], ["--help"]):
         print(USAGE)
         return 0
-    if len(argv) != 2 or argv[0] not in ("files", "unaccounted"):
+    if len(argv) != 2 or argv[0] not in ("files", "unaccounted", "steps"):
         print(USAGE, file=sys.stderr)
         return 2
     mode, log = argv
@@ -71,6 +89,12 @@ def main(argv: list[str]) -> int:
     except OSError as error:
         raise HarnessError(f"cannot read the gate log {log}: {error}") from error
     steps = checks(text)
-    for name in failed_files(steps) if mode == "files" else unaccounted(steps):
+    if mode == "steps":
+        if steps is NO_RECORD:
+            return NO_RECORD_EXIT
+        names = step_lines(steps)
+    else:
+        names = failed_files(steps) if mode == "files" else unaccounted(steps)
+    for name in names:
         print(name)
     return 0

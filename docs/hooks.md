@@ -11,8 +11,8 @@ the config keys it reads, the manifest format and the limits of the guards.
 | `workspace-guard` | PreToolUse (Bash) | Refuses a git mutation of another session's checkout, `git stash`, whole-tree staging, a ref-only move, a reflog expiry, an `ext::` URL and every git command that is not a simple shape. |
 | `deny-foreign-branch-moves` | PreToolUse (Bash) | Refuses a ref-only move of a branch that another worktree has checked out. |
 | `worktree-path-guard` | PreToolUse (Bash) | Refuses `git worktree add` at a path other than `.claude/worktrees/<name>`. `ah worktree add <name>` makes a worktree there, so every guard lets it pass. |
-| `deny-env-reads` | PreToolUse (Bash and the file tools) | Refuses any tool call that names a guarded credential file, and refuses every env file but a `.example` to the file tools. |
-| `bash-read-guard` | PreToolUse (Bash) | Refuses a shell reader (`cat`, `grep`, `sed`, ...) of an env, key or credential file. |
+| `deny-env-reads` | PreToolUse (Bash and the file tools) | Refuses any tool call that names a guarded credential file, and refuses every env file but a `.example` and a plain env file (`plainEnvFiles`) to the file tools. |
+| `bash-read-guard` | PreToolUse (Bash) | Refuses a shell reader (`cat`, `grep`, `sed`, ...) of an env, key or credential file. A plain env file (`plainEnvFiles`) passes. |
 | `env-drift` | SessionStart | Says when a local env file holds edits that a secret store has not received. |
 | `load-memory` | SessionStart, PreToolUse | Injects the memory index once per session, keyed on the session id. |
 | `prompt-directives` | UserPromptSubmit | Turns prompt flags (`-u`, `-e`, `-d`) and an embedded `/lw-goal-spec` into added context. A command after a quote mark or a backtick is a quote and adds nothing. |
@@ -71,20 +71,167 @@ guards with the defaults.
 | `land.probeCommand` | `lw-land` | Default `""`. When set and the gate is red, `ah land-results` reads the last `verify: failures <json>` line of the gate log. A failed step that names no file stops the landing. Otherwise the probe command runs in a detached worktree at the merged base, with the failed files appended as arguments and `LAND_ROOT` and `LAND_CHECKOUT` in its environment. It exits 1 and prints its own record. When every failed file fails there too, the landing goes on. |
 | `land.afterMerge` | `lw-land` | Default `""`. A command that runs in the branch worktree after the landing merges the base in, for example one that writes an index of the specs again. Its changes to tracked files are amended into that merge commit. It does not run when the merge made no merge commit. A failure stops the landing at exit 3. |
 | `land.overlapExclude` | `lw-land` | Default `[]`. Paths, relative to the repository root, that the check for a carried gate does not count. A base move that touches only these paths and paths the branch did not change carries a green gate over. |
+| `land.gates` | `lw-land` | Default `{}`. A table of gate modes: each key is a mode name, and its value is the gate command of that mode. `gateCommand` is the mode `full`. See [The land gate](#the-land-gate). |
+| `land.defaultGate` | `lw-land` | Default `"full"`. The mode of a landing when `LAND_GATE` is unset or 1. The value `none` is refused. |
+| `land.explainCommand` | `lw-land` | Default `""`. A command that runs when a red gate stops the landing. It runs with `bash -c` in the worktree root, with `LAND_GATE_LOG` (the path of the gate log) and `LAND_ROOT` (the worktree root) in its environment. The land command prints its output before the log tail. Its exit code never changes the exit code of the landing. |
 | `workspace.worktreesOnly` | `workspace-guard` | Also refuse a git mutation in the main checkout. |
 | `workspace.gitConfigAllow` | `workspace-guard` | The keys `git -c` may set in an agent command. |
 | `workspace.repos` | `workspace-guard` | Default `["../*"]`, every sibling repository of the project at any depth. Other repositories where git may run, as paths relative to the main checkout of the project, such as `..`, `../client` or `../../*`. Every worktree reads an entry from the main checkout, so it gets the same answer. A pattern has `*`, `?` or `[` and matches the main checkout of a repository; `*` matches across `/`. A pattern does not match a repository that sits inside another checkout below its fixed part, such as a vendored clone. In a listed repository git may change the main checkout and every worktree, and that repository's own rules govern it. `[]` keeps git in the main checkout of the project and its worktrees. An absolute or `~/` entry still works, but it names one machine, so `ah install` and `ah check` print a warning line for it. |
 | `guardedFiles` | `deny-env-reads`, `bash-read-guard` | Names no tool call may carry. An entry is a pattern or `{ pattern, hint }`. |
 | `secretFiles` | `bash-read-guard` | More credential names. An entry is a pattern or `{ pattern, hint }`. |
+| `plainEnvFiles` | `deny-env-reads`, `bash-read-guard`, `ah install` | Default `[]`. Env file names that an agent may read, because the project says that they hold no secret. An entry is one exact file name, a string with no `*` and no `?`. A name that `guardedFiles` or `secretFiles` matches stays refused. See [The credential name guard](#the-credential-name-guard). |
+| `githooks.global` | the git hook dispatcher, `ah install`, `ah check` | Default `"run"`. With `"skip"`, the dispatcher runs no hook of the global `core.hooksPath`. See [Git hooks](#git-hooks). |
 | `envCommand` | `deny-env-reads`, `bash-read-guard` | One more env engine command form, for example `lw env`. A deny names it. |
 | `envDrift.envs`, `envDrift.stores` | `env-drift` | The environments, and one `{ name, push }` per store. `{env}` in `push` is the environment. |
 | `memoryIndex` | `load-memory` | The index file, relative to the project root. |
 | `directives` | `prompt-directives` | Each prompt flag and the text it adds. |
-| `gateCommand`, `localRuns.hint`, `localRuns.dispatch` | `local-run-guard` | The gate command that always passes, the hint in a refusal, and the commands that pick their runner. A dispatch command passes, except with `--target local`. |
+| `gateCommand`, `localRuns.hint`, `localRuns.dispatch` | `local-run-guard` | `gateCommand` is also the gate of `lw-land` in the mode `full`. The gate command that always passes, the hint in a refusal, and the commands that pick their runner. A dispatch command passes, except with `--target local`. |
 | `scratchCap.memoryMax`, `scratchCap.cpuMax` | `scratch-cap` | The caps of the cgroup. |
 | `comments.maxBlock`, `comments.longBlock`, `comments.maxShare`, `comments.shareFloor`, `comments.minLines`, `comments.maxLineLength`, `comments.include`, `comments.exclude`, `comments.overrides` | `comment-budget`, `ah comments` | The comment budget (below). |
 
 A file pattern matches one whole base name and ignores case. `*` and `?` match inside one name.
+
+## The land gate
+
+The land command (`skills/lw-land/land.sh`) runs one gate per landing. A gate mode names the
+command of that gate. The mode `full` is `harness.gateCommand`. Each other mode is a key of
+`[harness.land.gates]`:
+
+```toml
+[harness]
+gateCommand = "ci verify"
+
+[harness.land]
+defaultGate = "changed"
+
+[harness.land.gates]
+changed = "ci verify --changed"
+```
+
+A mode name starts with a letter and holds letters, digits, `-` and `_`. The names `full` and
+`none` are not allowed as keys of the table. A config that sets only `gateCommand` needs no
+change.
+
+The dial `LAND_GATE` picks the mode of one landing:
+
+| `LAND_GATE` | Mode |
+|---|---|
+| unset or `1` | The mode of `harness.land.defaultGate`. |
+| a mode name, such as `changed` or `full` | That mode. |
+| `0` or `none` | The mode `none`. No gate runs, and the report must say so. |
+
+Each gate call prints `land: gate: mode <name>`. The mode `none` then prints
+`land: gate: SKIPPED by LAND_GATE=0. The report must say the gate was not run.`, with the value
+that the dial holds. Only the dial skips the gate: `defaultGate = "none"` is refused.
+
+The gate command runs with `bash -c` in the worktree root. It gets two variables:
+
+| Variable | Value |
+|---|---|
+| `LAND_MERGED_BASE` | The full commit id of the base that this landing merged. |
+| `LAND_ROOT` | The worktree root. |
+
+A green gate leaves a mark in `<git common dir>/land-gates`, so a retry does not run the gate
+again on the same tree:
+
+| Mode | Mark file | Covers |
+|---|---|---|
+| `full` | `<tree id>` | Every mode. |
+| another mode | `<tree id>.<mode>` | That mode only. |
+
+A tree with a mark that covers the mode prints
+`land: gate: already green on this tree (<tree id>) in mode <mode of the mark>, not running it again`.
+A later landing of the same tree in the mode `full` runs the full gate when only the mark of
+another mode exists. When a green gate carries over a base move, the new mark keeps the mode of
+that gate. A skipped gate leaves no mark, also when the base moves.
+
+The land command stops at exit 5 before the merge in each of these cases:
+
+| Case | Message, after `land: ` |
+|---|---|
+| The mode is no key of the table | `the gate mode <mode> (<source>) is unknown. The modes are: full, none, <keys of the table>.` The source is `LAND_GATE=<value>` or `harness.land.defaultGate`. |
+| The table has the key `full` or `none` | `harness.land.gates holds the mode <name>. harness.gateCommand is the mode full, and LAND_GATE=0 is the mode none. Remove the key.` |
+| A key is no mode name | `harness.land.gates holds the mode <name>. A mode name starts with a letter and holds letters, digits, - and _.` |
+| `defaultGate` is `none`, and `LAND_GATE` is unset or 1 | `harness.land.defaultGate is none. Only LAND_GATE=0 skips the gate. Set a mode that runs a command.` |
+| The command of the mode is empty | `harness.land.gates.<mode> is empty. Set the command of the mode.` |
+| The table is no table, or a value is no string | `cannot read harness.land.gates with <ah>. It is a table of mode names and commands.` |
+| `gateCommand` is empty in the mode `full` | `harness.gateCommand is empty. Set it in .agents/harness.toml, or ask the user for LAND_GATE=0.` |
+
+The two checks of the key names run on every landing, also with `LAND_GATE=0`. A landing in
+another mode works with an empty `gateCommand`.
+
+A red gate prints its report on stderr in this order:
+
+1. The failed steps of the result record (see [The gate result record](#the-gate-result-record)).
+   These lines print on every red gate, with or without `land.probeCommand`, and before the
+   probe.
+2. The output of `land.explainCommand`, after the line `land: explain: <command>`. This step
+   runs only when the landing stops. A command that fails adds
+   `land: explain: the command failed (exit <n>). The gate verdict stays.`
+3. The last 30 lines of the gate log, then the line that names the whole log. The landing stops
+   at exit 2.
+
+The lines of step 1 are one of these:
+
+| Gate log | Lines |
+|---|---|
+| A valid record with a failed step | `land: gate: red at these steps of the result record:`, then one line per failed step: `land:   <step>: exit <code>, failed files: <a>, <b>` or `land:   <step>: exit <code>, no failed file`. |
+| A valid record with no failed step | `land: gate: the result record names no failed step` |
+| No valid record | `land: gate: the log has no result record` |
+| A log that cannot be read | `land: gate: the result record of <log> could not be read. <error>` |
+
+Use `explainCommand` for a gate that keeps the log of a failed step in its own store, such as a
+remote runner. The command prints that log, so the reader of the landing sees the failure
+without a second command.
+
+## The gate result record
+
+A gate tool tells the land command which steps failed with one line in its output. This line is
+a contract between a gate tool and `ah land-results`. The gate log holds stdout and stderr of
+the gate command, so the line can go to either one.
+
+```
+verify: failures {"unit": {"code": 1, "attributable": true, "failedFiles": ["tests/a.test.ts"]}, "lint": {"code": 0, "attributable": false, "failedFiles": []}}
+```
+
+The line starts with the text `verify: failures `, with one space after the colon and one after
+the word. One JSON object follows on the same line. Each key is a step name, and each value is
+an object with these fields:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `code` | integer | The exit code of the step. `0` is a step that passed. A step with no `code` reads as failed, and its line says `exit unknown`. |
+| `attributable` | boolean | `true` when `failedFiles` names every failure of the step, so a run of those files alone gives the same verdict. A step with no `attributable` reads as `false`. |
+| `failedFiles` | list of strings | The files that failed, as paths that the probe command takes as arguments. The field is required. An empty list is valid. |
+
+These rules decide which record counts:
+
+- The last line that starts with `verify: failures ` is the record. A gate that prints one
+  record per stage prints the full record last.
+- A line that starts with `verify: refused result record:` voids every record of the log,
+  wherever the line stands. A gate tool prints it when it does not trust its own record.
+- A record is not valid when the text after the prefix is no JSON, when the JSON is no object,
+  or when a step has no `failedFiles` list of strings.
+- A log with no valid record reads as one failed step named `gate` with the code 1, not
+  attributable, with no file.
+
+`ah land-results <mode> <log>` reads the record:
+
+| Mode | Prints | A log with no valid record |
+|---|---|---|
+| `files` | The failed files of the attributable steps, one per line, sorted, each one once. | Nothing. Exit 0. |
+| `unaccounted` | The steps whose code is not 0 and that are not attributable, one per line, sorted. | The one line `gate`. Exit 0. |
+| `steps` | One line per step whose code is not 0, sorted by step name: `<step>: exit <code>, failed files: <a>, <b>` or `<step>: exit <code>, no failed file`. The files keep the order of the record. | Nothing. Exit 3. |
+
+The command exits 2 with its usage for another mode word. It exits 1 with
+`ah land-results: cannot read the gate log <log>: <error>` for a file that it cannot read.
+
+The land command uses the record in two places. On every red gate it prints the lines of
+`steps`. With `land.probeCommand` set, a step of `unaccounted` stops the landing, because no
+probe can run that step again on the base. Else the files of `files` go to the probe command
+as arguments. The probe command prints its own record in the same format and exits 1 for a
+test verdict. The landing goes on only when each failed file of the gate is a failed file of an
+attributable step in the record of the probe.
 
 ## The comment budget
 
@@ -144,6 +291,68 @@ heredoc body included. The one exemption is the words of an env engine step that
 clears (see The env engine exemption). In Bash, every other env file is the job of
 `bash-read-guard`, which refuses it to a reader. A credential backup in the tree is a copy
 outside the secret store that nothing rotates.
+
+`harness.plainEnvFiles` names the env files that an agent may read. The project owns the
+judgment that such a file holds no secret, for example a `.env.local` with ports and local
+URLs only. The default is `[]`, so every env file stays refused.
+
+```toml
+[harness]
+plainEnvFiles = [".env.local", ".env.dev"]
+```
+
+A path is plain only when all of these are true:
+
+1. Its base name is an env file name: `.env` or `.env.<anything>`. An entry such as `*.pem`
+   opens nothing.
+2. An entry of `plainEnvFiles` equals the base name, with the case kept. An entry is an exact
+   name, so the entry `.env.local` does not open `.env.local~`, `.env.local.swp` or
+   `.env.local.bak.1`. An entry with `*` or `?`, and an entry that is no string, opens nothing.
+3. No entry of `guardedFiles` and no entry of `secretFiles` matches the base name. The closed
+   lists win.
+4. It is no credential backup: no suffix `.bak`, `.backup`, `.orig`, `.old` or `.save`, and no
+   path under `.local/secrets/`.
+
+| Hook | A plain path |
+|---|---|
+| `deny-env-reads` | Read, Edit, Write, MultiEdit, NotebookEdit, Grep and Glob pass it with no verdict. |
+| `bash-read-guard` | A reader passes it with no verdict, for example `cat .env.local`, `grep -n KEY apps/web/.env.local`, `head -3 < .env.local` and `. ./.env.local`. |
+
+The key changes nothing else:
+
+- `.env.production` stays refused when a project lists it as plain, because the default
+  `guardedFiles` holds it. The Bash check of `deny-env-reads` for a guarded name never reads
+  `plainEnvFiles`.
+- A backup of a plain file, such as `.env.local.bak`, stays refused by both hooks.
+- A glob in Bash stays refused, also one that can only match a plain file: `cat .env.loc*` and
+  `cat .env*`. Write the name of the plain file in full.
+- A listing that a reader reads, such as `cat $(ls -a | grep env)`, stays refused.
+- The answers of the env engine steps do not change (see The env engine exemption). A plain
+  file is no credential file there, so it can be the value of `--master` or `--declarations`.
+
+`ah install --project`, `ah check` and `ah selftest` fail at exit 1 for each of these entries of
+`plainEnvFiles`. The message names the entry:
+
+| Entry | Message |
+|---|---|
+| It holds `*` or `?`, or it is empty | `harness.plainEnvFiles names '<entry>', which is no exact file name; write each file name in full, with no * and no ?` |
+| A pattern of `guardedFiles` or `secretFiles` matches it | `harness.plainEnvFiles names <entry>, which the entry <pattern> of harness.<key> matches, so the guards still refuse it; remove it from one of the two lists` |
+| It is no string | `config key harness.plainEnvFiles must be a list of strings` |
+
+The match of the second row is the match of the hooks: one whole base name, with `*` and `?`,
+and the case ignored. `plainEnvFiles = [".env.local.dev"]` with
+`guardedFiles = [".env.local.*"]` fails. An entry of `guardedFiles` or `secretFiles` is a
+pattern or `{ pattern, hint }` here too.
+
+When the list is not empty, the installed `secrets` rule ends with one generated paragraph that
+names the entries in config order: "This project lets an agent read these env files:
+`.env.local`, `.env.dev`." A change of the list needs `ah install`: until then, `ah check`
+reports the rule file as `stale`.
+
+Some fixtures of `deny-env-reads` and `bash-read-guard` in the package expect a deny for
+`.env.local`. `ah selftest` does not run such a fixture when its command or file names a plain
+env file of the project. It prints `SKIP <hook> <fixture>: names a plain env file of this project`,
+and the fixture counts as no run and as no failure.
 
 ## The env engine exemption
 
@@ -425,7 +634,7 @@ quotes. `ln` is no reader: a link prints nothing, and a later read through the l
 read that the guard does not follow.
 
 An env name, a `*.secret` name, `.netrc`, `.git-credentials` and each `secretFiles` name count
-wherever the command holds them. A key or certificate name (`*.pem`, `*.key`, `*.p12`, `*.pfx`,
+wherever the command holds them. A plain env file of `plainEnvFiles` does not count. A key or certificate name (`*.pem`, `*.key`, `*.p12`, `*.pfx`,
 `id_rsa*`, `id_ed25519*`) counts only when it holds a `/` or names a file in the command's
 directory. It counts by name alone when the command can read in another directory: `cd`, `find`,
 `xargs`, a `-C` flag, `--git-dir`, `--work-tree` or `chdir`. A glob that can expand to one of the
@@ -527,6 +736,42 @@ skipped. When no hook of the chain handles `push-to-checkout`, the dispatcher do
 without the hook: it refuses a checkout with staged or unstaged changes, else it updates the
 checkout with `git read-tree -u -m`.
 
+`harness.githooks.global` is `"run"` or `"skip"`. The default `"run"` gives the order above. With
+`"skip"`, the dispatcher runs no hook of the global `core.hooksPath`. It runs the harness hook
+and then `$(git rev-parse --git-common-dir)/hooks/<name>`. Use `"skip"` in a repository where a
+global hook of the machine must not run, for example a global `pre-commit` of another toolchain.
+
+```toml
+[harness.githooks]
+global = "skip"
+```
+
+The dispatcher is a shell script and reads no TOML. So `ah install --project` writes the value
+to the git config key `harness.globalHooks` of the repository and prints
+`set harness.globalHooks <run|skip>`. The dispatcher reads the key with
+`git config --get harness.globalHooks`. An unset key and each value other than `skip` read as
+`run`. `git config --get` reads every scope, so a user can also set the key in the global git
+config. `ah check` prints `harness.globalHooks differs` and exits 1 when the stored value is
+not the config value. Another value of the config key fails `ah install`, `ah check` and
+`ah selftest` at exit 1:
+`config key harness.githooks.global must be "run" or "skip", not '<value>'`.
+
+`ah selftest` proves both values with the case `global-hooks`, when the install has a git hook.
+It copies the installed dispatcher into a scratch repository with a scratch global git config.
+The hooks of the machine never run. Each run makes one commit in a worktree and one push to the
+checkout of `main`, and counts the runs of `pre-commit`, `prepare-commit-msg`, `commit-msg`,
+`post-commit`, `pre-push` and `push-to-checkout`:
+
+| Result line | Passes when |
+|---|---|
+| `ok   global-hooks git a plain global hook with run` | Each global hook runs once, and no hook of `.git/hooks/` runs. |
+| `ok   global-hooks git a plain global hook with skip` | No global hook runs, and each hook of `.git/hooks/` runs once. |
+| `ok   global-hooks git a global hook that runs .git/hooks with run` | Each global hook and each hook of `.git/hooks/` runs once. |
+| `ok   global-hooks git a global hook that runs .git/hooks with skip` | No global hook runs, and each hook of `.git/hooks/` runs once. |
+
+A failed line gives the counts, for example
+`the global hooks ran: pre-commit 1, pre-push 1; expected none`.
+
 | Git hook | Id | What it does |
 |---|---|---|
 | `push-to-checkout` | `push-to-checkout` | Lands `git push . HEAD:<branch>` into the checkout that holds the branch. It refuses, and changes nothing, when a file the landing writes is uncommitted there with content that differs from HEAD and from the pushed commit, or when an untracked or ignored path is in the way of a file the landing adds (the same path, a file where a folder comes, or a folder where a file comes). Git alone writes over an ignored path. A file that already holds the content of the pushed commit, in the index or in the working tree, is the landing's own and lands. An index entry staged to the pushed commit over a working tree file that still holds HEAD goes back to HEAD first, so the landing writes the file too. |
@@ -576,13 +821,16 @@ than the rules on purpose, so a regex that takes prose fails it.
 | `secrets` | `rules/secrets.md` | Every file |
 | `spec-format` | `rules/spec-format.md` | `docs/specs/**`, `docs/superpowers/plans/**` |
 | `operator-report` | `rules/operator-report.md` | Every file |
-| `codex` | `rules/codex.md` | Every file |
+| `codex` | `rules/codex.md` | `AGENTS.md`, `.codex/**` |
 | `core-principles` | `rules/core-principles.md` | Every file |
 | `instance-agnostic` | `rules/instance-agnostic.md` | Every file |
 | `code-limits` | `rules/code-limits.md` | Every file |
 
 The rules install to `.claude/rules/lw/`. They hold no project fact: a rule names the config key
-and the `ah config get` command instead, for example `harness.baseBranch`.
+and the `ah config get` command instead, for example `harness.baseBranch`. A rule with paths
+loads in Claude Code only for a file that matches. `[harness.rules.paths]` gives a rule other
+paths, and `ah rules` prints the size of the rules that load in every session (see "Rule sizes
+and scopes" in `docs/install.md`).
 
 ## Manifest format
 
@@ -612,6 +860,7 @@ id = "spec-format"
 summary = "Spec format and rendering"
 file = "rules/spec-format.md"
 paths = ["docs/specs/**"]        # empty means every file
+# agentsCovers = "every file"    # optional: the Covers cell of the AGENTS.md block
 
 [[skill]]
 id = "lw-spec-write"

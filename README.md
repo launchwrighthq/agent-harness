@@ -63,8 +63,8 @@ Run each command as `python3 .claude/agent-harness/bin/ah <command>` in a projec
 | Command | Does | Details |
 |---|---|---|
 | `ah install` | Installs the harness in a project or globally. | [docs/install.md](docs/install.md) |
-| `ah check [--global]` | Compares the installed files and registries with the lockfile and the manifests. Exits 1 and names each file that differs. | [docs/install.md](docs/install.md) |
-| `ah rules` | Prints each installed rule and each project rule of `.claude/rules/` with its line count and character count, a subtotal per group, then the total. A rule adapter in `.claude/adapters/rules/<rule id>.md` adds project notes to a rule or replaces its body. | [docs/install.md](docs/install.md) |
+| `ah check [--global]` | Compares the installed files and registries with the lockfile and the manifests. Exits 1 and names each file that differs. Prints the size of the always-loaded rules, and exits 1 when it is over `harness.rules.maxChars`. | [docs/install.md](docs/install.md) |
+| `ah rules` | Prints each installed rule and each project rule of `.claude/rules/` with its line count and character count, a subtotal per group, the total, then the size of the rules that load in every session. `[harness.rules.paths]` scopes a rule to globs. A rule adapter in `.claude/adapters/rules/<rule id>.md` adds project notes to a rule or replaces its body. | [docs/install.md](docs/install.md) |
 | `ah selftest` | Runs the fixture of every installed hook for Claude Code and Codex, then the portability checks. | [docs/install.md](docs/install.md) |
 | `ah lint <path ...>` | Finds banned words, banned fillers and em dashes in Markdown and code comments. | [docs/install.md](docs/install.md) |
 | `ah comments [path ...]` | Checks the comment budget: the longest comment block and the comment share of each source file. Exits 1 on a finding. | [docs/hooks.md](docs/hooks.md) |
@@ -75,7 +75,7 @@ Run each command as `python3 .claude/agent-harness/bin/ah <command>` in a projec
 | `ah work-status [--repo]` | Reports the work in progress from transcripts, git and saved audits. `--repo` reads git and the store alone. | [docs/work.md](docs/work.md) |
 | `ah branch-audit` | Judges what each worktree, branch and stray folder holds that the base lacks, and prints a prune plan. `--apply --only <ids>` runs the rows the user names. | [docs/work.md](docs/work.md) |
 | `ah worktree add <name> [--from <ref>]`, `ah worktree remove <name>` and `ah worktree claim <name>` | Adds `.claude/worktrees/<name>` of the main checkout on the new branch `<name>` (from `harness.baseBranch`, or `<ref>`), records the agent session that made it, and prints its path. Removes a clean worktree of this repository and keeps its branch. Claims a worktree that has no owner for this session. None takes a path. | [docs/hooks.md](docs/hooks.md) |
-| `ah land-results files\|unaccounted <log>` | Prints the failed files or the unaccounted steps of the `verify: failures <json>` record in a gate log, for `lw-land`. | [docs/hooks.md](docs/hooks.md) |
+| `ah land-results files\|unaccounted\|steps <log>` | Prints the failed files, the unaccounted steps or one line per failed step of the `verify: failures <json>` record in a gate log, for `lw-land`. `steps` exits 3 for a log with no valid record. | [docs/hooks.md](docs/hooks.md) |
 
 The hooks, the rules and the git hooks are in [docs/hooks.md](docs/hooks.md).
 
@@ -89,6 +89,41 @@ The hooks, the rules and the git hooks are in [docs/hooks.md](docs/hooks.md).
 | `hooks/`, `skills/`, `rules/`, `githooks/`, `codex/` | The installed content and the Codex hook adapter. |
 | `docs/` | One document per area. |
 | `tests/unit/`, `tests/integration/` | The tests. |
+
+## Changes in 0.3.0
+
+This release closes six gaps. Each one has a config key, and
+each default keeps the behavior of 0.2.11.
+
+| Gap | Keys and commands | Details |
+|---|---|---|
+| The cost of the land gate | `[harness.land.gates]` names more gate modes, `harness.land.defaultGate` picks the mode of a landing, and `LAND_GATE=<mode>` picks it for one landing. | [docs/hooks.md](docs/hooks.md) |
+| The report of a red gate | The land command prints the failed steps of the `verify: failures` record, then the output of `harness.land.explainCommand`. | [docs/hooks.md](docs/hooks.md) |
+| A spec image with no file | `specs.missingAssets = "placeholder"` renders a box and a warning. `ah spec render --strict` refuses the page. | [docs/spec.md](docs/spec.md) |
+| An env file with no secret | `harness.plainEnvFiles` lists exact file names that an agent may read. | [docs/hooks.md](docs/hooks.md) |
+| Global git hooks | `harness.githooks.global = "skip"` stops the dispatcher from running them. The selftest case `global-hooks` checks both values. | [docs/hooks.md](docs/hooks.md) |
+| The size of the rules | `ah rules`, `ah check` and `ah install` print the always-loaded size. `harness.rules.maxChars` caps it, and `[harness.rules.paths]` scopes a rule. | [docs/install.md](docs/install.md) |
+
+An entry of `harness.plainEnvFiles` is one exact file name. `ah install --project` and
+`ah check` fail for an entry with `*` or `?`, and for an entry that a pattern of `guardedFiles`
+or `secretFiles` matches. `ah selftest` skips a deny fixture that names a plain env file of the
+project, and prints one `SKIP` line for it.
+
+A manifest rule has the new optional key `agentsCovers`: the text of the Covers column of the
+`AGENTS.md` block, in place of the `paths` of the rule.
+
+After a landing, the land command prints each warning of the page render as
+`land: page: warning: ...`, so a placeholder image shows in the landing.
+
+Three behaviors differ from 0.2.11:
+
+- A landing with `LAND_GATE=0` leaves no green gate mark, also when the base moves during the
+  landing.
+- The `codex` rule has `paths`, so Claude Code loads it only for `AGENTS.md` and `.codex/**`.
+  The `AGENTS.md` block still says `every file` for it. An upgrade writes
+  `.claude/rules/lw/codex.md` and the `AGENTS.md` block again once.
+- The line for a tree with a green gate names the mode:
+  `land: gate: already green on this tree (<tree id>) in mode <mode>, not running it again`.
 
 ## Changes in 0.2.11
 

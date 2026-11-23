@@ -66,10 +66,41 @@ def test_prints_the_files_of_a_log_named_on_the_command_line(
     assert capsys.readouterr().out == "a.test.mts\nb.test.mts\n"
 
 
+def test_prints_one_line_per_failed_step_with_its_exit_code_and_files(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    checks = {**RED, "typecheck": {"code": 2, "attributable": False, "failedFiles": []}}
+    log = tmp_path / "gate.log"
+    log.write_text(record(checks) + "\n", encoding="utf-8")
+
+    code = land_results.main(["steps", str(log)])
+
+    assert code == 0
+    assert capsys.readouterr().out == (
+        "e2e: exit 1, failed files: a.test.mts\n"
+        "test: exit 1, failed files: b.test.mts, a.test.mts\n"
+        "typecheck: exit 2, no failed file\n"
+    )
+
+
+def test_prints_no_step_and_exits_3_for_a_log_without_a_valid_record(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    log = tmp_path / "gate.log"
+    log.write_text("verify: red\n", encoding="utf-8")
+
+    code = land_results.main(["steps", str(log)])
+
+    assert code == 3
+    assert capsys.readouterr().out == ""
+
+
 def test_refuses_an_unknown_mode_with_the_usage(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    code = land_results.main(["steps", str(tmp_path / "gate.log")])
+    code = land_results.main(["lines", str(tmp_path / "gate.log")])
 
     assert code == 2
-    assert capsys.readouterr().err.startswith("usage: ah land-results files|unaccounted <log>")
+    assert capsys.readouterr().err.startswith(
+        "usage: ah land-results files|unaccounted|steps <log>"
+    )

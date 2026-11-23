@@ -50,4 +50,5 @@ Edit and at the end of a turn. At the end of a turn it also checks each page lin
 renders a missing page whose source is in that checkout, else it holds the turn.
 
 Markdown links, tables, fenced code, and images and videos under the spec folder's `assets/`
-render. A `mermaid` block renders as a labelled code block.
+render. A `mermaid` block renders as a labelled code block. An image with no file refuses the
+render. With `specs.missingAssets = "placeholder"` it renders as a box and a warning.

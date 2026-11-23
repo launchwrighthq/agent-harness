@@ -125,3 +125,35 @@ def test_writes_the_paths_front_matter_over_the_source_front_matter(tmp_path: Pa
     file = PlannedFile(".claude/rules/lw/rule.md", source, paths=("**/tests/**",))
 
     assert file.content() == b'---\npaths:\n  - "**/tests/**"\n---\n# Rule\n'
+
+
+def test_ends_a_rule_with_its_generated_line_after_the_project_notes(tmp_path: Path) -> None:
+    source = tmp_path / "rule.md"
+    source.write_text("# Rule\n\n- One.\n")
+    notes = tmp_path / "notes.md"
+    notes.write_text("A note.\n")
+
+    file = PlannedFile(".claude/rules/lw/rule.md", source, notes=notes, line="A generated line.")
+
+    assert file.content() == (
+        b"# Rule\n\n- One.\n\n## Project notes\n\nA note.\n\nA generated line.\n"
+    )
+
+
+def test_plans_a_rule_with_the_paths_and_the_line_that_the_caller_gives(tmp_path: Path) -> None:
+    package = manifest(tmp_path, "agent-harness", PACKAGE, extra=False)
+
+    plan = build_plan(
+        [package], rule_paths={"style": ["web/**"]}, rule_lines={"style": "A line.", "none": "x"}
+    )
+
+    rule = next(f for f in plan.files if f.target == ".claude/rules/lw/style.md")
+    assert plan.rules[0].paths == ("web/**",)
+    assert (rule.paths, rule.line) == (("web/**",), "A line.")
+
+
+def test_refuses_paths_for_an_id_that_is_no_rule(tmp_path: Path) -> None:
+    package = manifest(tmp_path, "agent-harness", PACKAGE, extra=False)
+
+    with pytest.raises(HarnessError, match="names lw-demo, which no manifest defines as a rule"):
+        build_plan([package], rule_paths={"lw-demo": ["web/**"]})

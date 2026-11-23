@@ -153,7 +153,7 @@ def test_passes_every_codex_fixture_of_a_subfolder_project(repo: Path, package: 
     )
 
     assert done.returncode == 0, done.stdout + done.stderr
-    assert done.stdout.splitlines()[-1] == "ah selftest: 7 of 7 fixture runs pass"
+    assert done.stdout.splitlines()[-1] == "ah selftest: 11 of 11 fixture runs pass"
     assert "ok   rm-guard codex Bash rm -rf build" in done.stdout
 
 
@@ -190,4 +190,4 @@ def test_passes_an_ask_fixture_as_an_ask_in_claude_and_a_deny_in_codex(
     assert done.returncode == 0, done.stdout + done.stderr
     assert "ok   reveal-guard claude Bash show API_KEY --reveal" in done.stdout
     assert "ok   reveal-guard codex Bash show API_KEY --reveal" in done.stdout
-    assert done.stdout.splitlines()[-1] == "ah selftest: 9 of 9 fixture runs pass"
+    assert done.stdout.splitlines()[-1] == "ah selftest: 13 of 13 fixture runs pass"

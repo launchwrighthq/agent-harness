@@ -305,3 +305,80 @@ def test_uses_the_guarded_files_and_hint_of_the_config(tmp_path: Path) -> None:
         in json.loads(done.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
     )
     assert silent == ["silent"]
+
+
+PLAIN_CONFIG = (
+    "[harness]\n"
+    'plainEnvFiles = [".env.local", ".env.production", ".env.shared", ".env.shared.web",'
+    ' ".env.shared.keys"]\n'
+    'secretFiles = [".env.shared.keys"]\n'
+)
+PLAIN_ALLOWED = [".env.local", "apps/.env.local", ".env.shared", ".env.shared.web"]
+# A guarded name, a secret name, a backup, an env file that no entry names, and a name that
+# starts with a plain name.
+PLAIN_REFUSED = [
+    ".env.production",
+    ".env.shared.keys",
+    ".env.local.bak",
+    ".env.shared.old",
+    ".local/secrets/.env.local",
+    ".env",
+    ".env.staging",
+    ".env.local~",
+    ".env.local.bak.1",
+    ".env.local.swp",
+    ".env.production.copy",
+]
+# Names that a pattern entry would match. An entry is an exact name, so a pattern opens nothing.
+PATTERN_CONFIG = '[harness]\nplainEnvFiles = [".env.loc*", ".env.?ocal", ".env.dev"]\n'
+
+
+def file_verdicts(root: Path, tool: str, names: list[str]) -> list[tuple[str, str]]:
+    return [
+        (
+            name,
+            hook_project.decision(
+                hook_project.run_hook(
+                    root, HOOK, "PreToolUse", hook_project.file_payload(tool, root / name)
+                )
+            ),
+        )
+        for name in names
+    ]
+
+
+@pytest.mark.parametrize("tool", ["Read", "Edit", "Grep"])
+def test_lets_a_plain_env_file_pass_a_file_tool(tool: str, tmp_path: Path) -> None:
+    root = hook_project.make_project(tmp_path / "project", PLAIN_CONFIG)
+
+    got = file_verdicts(root, tool, PLAIN_ALLOWED + PLAIN_REFUSED)
+
+    assert got == [(n, "silent") for n in PLAIN_ALLOWED] + [(n, "deny") for n in PLAIN_REFUSED]
+
+
+def test_opens_no_file_through_a_plain_entry_that_is_a_pattern(tmp_path: Path) -> None:
+    root = hook_project.make_project(tmp_path / "project", PATTERN_CONFIG)
+
+    got = file_verdicts(root, "Read", [".env.local", ".env.loc", ".env.dev"])
+
+    assert got == [(".env.local", "deny"), (".env.loc", "deny"), (".env.dev", "silent")]
+
+
+def test_refuses_each_plain_name_of_another_project_with_the_default_config(
+    tmp_path: Path,
+) -> None:
+    root = hook_project.make_project(tmp_path / "project")
+
+    got = file_verdicts(root, "Read", PLAIN_ALLOWED)
+
+    assert got == [(n, "deny") for n in PLAIN_ALLOWED]
+
+
+def test_refuses_a_command_that_names_the_backup_of_a_plain_file(tmp_path: Path) -> None:
+    root = hook_project.make_project(tmp_path / "project", PLAIN_CONFIG)
+
+    got = hook_project.verdicts(
+        root, HOOK, ["cat .env.local", "cat .env.local.bak", "cp .env.local .env.local.orig"]
+    )
+
+    assert got == ["silent", "deny", "deny"]

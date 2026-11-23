@@ -6,6 +6,8 @@
 #   2. the harness hook of this name in `harness/`
 #   3. `.git/hooks/<name>`, only with no global path: a global dispatcher runs that file itself
 # Each hook gets the same arguments and the same stdin. A nonzero exit stops with that code.
+# The git config key `harness.globalHooks` holds `harness.githooks.global` of the project. With
+# `skip`, step 1 does not run and step 3 does.
 set -u
 name=$(basename -- "$0")
 here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P) || exit 1
@@ -29,7 +31,11 @@ run() {
   [ "$code" -eq 0 ] || exit "$code"
 }
 
-global=$(git config --global --type=path --get core.hooksPath 2>/dev/null) || global=""
+mode=$(git config --get harness.globalHooks 2>/dev/null) || mode=""
+global=""
+if [ "$mode" != skip ]; then
+  global=$(git config --global --type=path --get core.hooksPath 2>/dev/null) || global=""
+fi
 if [ -n "$global" ]; then
   global_dir=$(CDPATH='' cd -- "$global" 2>/dev/null && pwd -P) || global_dir=""
   if [ "$global_dir" = "$here" ]; then

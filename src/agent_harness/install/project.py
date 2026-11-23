@@ -8,7 +8,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from agent_harness import HarnessError, __version__
+from agent_harness import HarnessError, __version__, hookio
 from agent_harness.config import CONFIG_FILE, Config
 from agent_harness.install import registry
 from agent_harness.install.lock import (
@@ -29,6 +29,7 @@ from agent_harness.install.plan import (
     ENGINE_DIR,
     ENGINE_PARTS,
     EXTRA_DIR,
+    FRONT_MATTER,
     GITHOOK_DIR,
     INTERPRETERS,
     LOCK_FILE,
@@ -161,6 +162,88 @@ def registries(
     return Registries(plan, skills, links, block)
 
 
+# The rule that states which env files an agent may read.
+SECRETS_RULE = "secrets"
+GUARD_KEYS = ("harness.guardedFiles", "harness.secretFiles")
+
+
+def plain_env_files(cfg: Config) -> list[str]:
+    """`harness.plainEnvFiles`: exact file names.
+
+    An entry with `*` or `?`, and an entry that a pattern of a guard key matches as the hooks
+    match it, is a config error.
+    """
+    plain = _texts(cfg, "harness.plainEnvFiles")
+    for entry in plain:
+        if not hookio.is_exact_name(entry):
+            raise HarnessError(
+                f"harness.plainEnvFiles names {entry!r}, which is no exact file name; write each"
+                " file name in full, with no * and no ?"
+            )
+    for key in GUARD_KEYS:
+        for guard in hookio.patterns(cfg.get(key), "ah"):
+            matches = hookio.name_pattern(guard["pattern"])
+            for entry in plain:
+                if matches.fullmatch(entry):
+                    raise HarnessError(
+                        f"harness.plainEnvFiles names {entry}, which the entry {guard['pattern']}"
+                        f" of {key} matches, so the guards still refuse it; remove it from one"
+                        " of the two lists"
+                    )
+    return plain
+
+
+def rule_lines(cfg: Config) -> dict[str, str]:
+    """The generated line of each rule id: the plain env files in the secrets rule."""
+    plain = plain_env_files(cfg)
+    if not plain:
+        return {}
+    names = ", ".join(f"`{name}`" for name in plain)
+    return {SECRETS_RULE: f"This project lets an agent read these env files: {names}."}
+
+
+def rule_paths(cfg: Config) -> dict[str, list[str]]:
+    """`[harness.rules.paths]`: the globs of the `paths:` block of a rule, by rule id."""
+    value = cfg.get("harness.rules.paths")
+    if not isinstance(value, Mapping):
+        raise HarnessError("config key harness.rules.paths must be a table of <rule id> = [globs]")
+    for rule_id, globs in value.items():
+        if (
+            not isinstance(globs, list)
+            or not globs
+            or not all(isinstance(g, str) and g and not set(g) & set('"\\\n') for g in globs)
+        ):
+            raise HarnessError(
+                f"config key harness.rules.paths.{rule_id} must be a list of one or more globs,"
+                " each with no double quote, backslash or line break"
+            )
+    return {str(rule_id): list(globs) for rule_id, globs in value.items()}
+
+
+def rule_cap(cfg: Config) -> int:
+    """`harness.rules.maxChars`: the cap on the always-loaded rule text, 0 for none."""
+    value = cfg.get("harness.rules.maxChars")
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise HarnessError(
+            f"config key harness.rules.maxChars must be 0 or a positive integer, not {value!r}"
+        )
+    return value
+
+
+GLOBAL_HOOKS_KEY = "harness.globalHooks"
+GLOBAL_HOOK_MODES = ("run", "skip")
+
+
+def global_hooks(cfg: Config) -> str:
+    """`harness.githooks.global`: whether the dispatcher runs the global git hooks."""
+    value = cfg.get("harness.githooks.global")
+    if value not in GLOBAL_HOOK_MODES:
+        raise HarnessError(
+            f'config key harness.githooks.global must be "run" or "skip", not {value!r}'
+        )
+    return str(value)
+
+
 def plan_for(root: Path, cfg: Config, manifests: Sequence[Manifest]) -> Plan:
     return build_plan(
         manifests,
@@ -168,7 +251,19 @@ def plan_for(root: Path, cfg: Config, manifests: Sequence[Manifest]) -> Plan:
         enable=_texts(cfg, "harness.enable"),
         project_skills=list_skill_dirs(root),
         rule_notes=root / str(cfg.get("harness.adapterDir")) / "rules",
+        rule_paths=rule_paths(cfg),
+        rule_lines=rule_lines(cfg),
     )
+
+
+def scoped_hashes(cfg: Config, plan: Plan) -> dict[str, str]:
+    """A sha256 per installed rule whose paths or generated line come from the config."""
+    paths, lines = rule_paths(cfg), rule_lines(cfg)
+    return {
+        rule.target: sha256(json.dumps([paths.get(rule.id), lines.get(rule.id)]).encode())
+        for rule in plan.rules
+        if rule.id in paths or rule.id in lines
+    }
 
 
 def adapter_hashes(root: Path, plan: Plan) -> dict[str, str]:
@@ -247,6 +342,22 @@ def _set_receive(root: Path, out: Out) -> int:
     if current != "updateInstead":
         out(f"{key} is {current}, so the lw-land push cannot update the base checkout")
     return 0
+
+
+def _stored_global_hooks(root: Path) -> str | None:
+    done = _git(root, "config", "--local", "--get", GLOBAL_HOOKS_KEY)
+    return done.stdout.strip() if done.returncode == 0 else None
+
+
+def _set_global_hooks(root: Path, mode: str, out: Out) -> int:
+    """Write the choice where the dispatcher reads it: the git config of the repository."""
+    if _git(root, "rev-parse", "--git-dir").returncode != 0 or _stored_global_hooks(root) == mode:
+        return 0
+    done = _git(root, "config", GLOBAL_HOOKS_KEY, mode)
+    if done.returncode != 0:
+        raise HarnessError(f"git config {GLOBAL_HOOKS_KEY} failed: {done.stderr.strip()}")
+    out(f"set {GLOBAL_HOOKS_KEY} {mode}")
+    return 1
 
 
 def project_copies(
@@ -342,6 +453,7 @@ def install_project(
     manifests = order([package, *extras])
     previous = read_lock(root / LOCK_FILE)
     plan = plan_for(root, cfg, manifests)
+    mode, cap = global_hooks(cfg), rule_cap(cfg)
     files = merge(
         engine_files(package_root, ENGINE_PARTS),
         plan.files,
@@ -379,6 +491,7 @@ def install_project(
     if plan.githooks:
         changes += _set_hooks_path(root, out)
         changes += _set_receive(root, out)
+        changes += _set_global_hooks(root, mode, out)
 
     lock = Lock(
         version=__version__,
@@ -389,12 +502,14 @@ def install_project(
         skills=[s.id for s in plan.skills],
         links=list(regs.links),
         adapters=adapter_hashes(root, plan),
+        scoped=scoped_hashes(cfg, plan),
     )
     if write_text(root, LOCK_FILE, lock.to_text(), lambda _line: None):
         changes += 1
     # Information only: the project removes an old copy itself (docs/install.md).
     for line in [*likely_duplicates(root, plan), *machine_paths(cfg)]:
         out(line)
+    out(always_loaded_line(root, cap))
     out(
         f"ah install: {len(plan.hooks)} hooks, {len(plan.rules)} rules, {len(plan.skills)} skills,"
         f" {len(plan.githooks)} git hooks; "
@@ -546,6 +661,42 @@ def project_rule_sizes(root: Path) -> list[tuple[str, int, int]]:
     return [_size(root, rel) for rel in own]
 
 
+def always_loaded(root: Path) -> tuple[int, int]:
+    """The count and the characters of the rule files that Claude Code loads in every session:
+    each `.md` file under `.claude/rules/` whose front matter holds no `paths:` key."""
+    folder = root / PROJECT_RULE_DIR
+    files = chars = 0
+    for path in sorted(folder.rglob("*.md")) if folder.is_dir() else []:
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        found = FRONT_MATTER.match(text)
+        if found and any(line.startswith("paths:") for line in found.group(0).split("\n")):
+            continue
+        files, chars = files + 1, chars + len(text)
+    return files, chars
+
+
+def always_loaded_line(root: Path, cap: int) -> str:
+    files, chars = always_loaded(root)
+    line = f"always-loaded rules: {files} files {chars} chars"
+    if cap == 0:
+        return line
+    return f"{line}, over the cap {cap}" if chars > cap else f"{line}, cap {cap}"
+
+
+def over_cap(root: Path, cap: int) -> str | None:
+    """Why the always-loaded rule text fails the check, or None when it is under the cap."""
+    chars = always_loaded(root)[1]
+    if cap == 0 or chars <= cap:
+        return None
+    return (
+        f"the always-loaded rules hold {chars} characters, over harness.rules.maxChars {cap}."
+        " Three ways down: leave a rule out with harness.disable, scope a rule with"
+        " [harness.rules.paths], or replace a rule body with a rule adapter"
+    )
+
+
 def _size(root: Path, rel: str) -> tuple[str, int, int]:
     text = (root / rel).read_text(encoding="utf-8")
     return rel, len(text.splitlines()), len(text)
@@ -572,10 +723,15 @@ def check_project(root: Path, cfg: Config) -> list[tuple[str, str]]:
     if any(not (root / m.get("file", "")).is_file() for m in lock.manifests):
         return sorted(diffs)
     plan = plan_for(root, cfg, installed_manifests(root, lock))
-    adapters = adapter_hashes(root, plan)
-    for rel in sorted(set(adapters) | set(lock.adapters)):
-        if adapters.get(rel) != lock.adapters.get(rel):
-            diffs.append((rel, "stale"))
+    mode = global_hooks(cfg)
+    recorded = (
+        (adapter_hashes(root, plan), lock.adapters),
+        (scoped_hashes(cfg, plan), lock.scoped),
+    )
+    for now, then in recorded:
+        for rel in sorted(set(now) | set(then)):
+            if now.get(rel) != then.get(rel):
+                diffs.append((rel, "stale"))
     regs = registries(root, cfg, plan, lock, from_lock=True)
     expected = {
         registry.SETTINGS_FILE: registry.settings_file(_read(root / registry.SETTINGS_FILE), plan),
@@ -604,4 +760,7 @@ def check_project(root: Path, cfg: Config) -> list[tuple[str, str]]:
     is_repo = _git(root, "rev-parse", "--git-dir").returncode == 0
     if plan.githooks and is_repo and hooks_path(root) is None:
         diffs.append(("core.hooksPath", "missing"))
+    # An unset key is `run` to the dispatcher.
+    if plan.githooks and is_repo and (_stored_global_hooks(root) or "run") != mode:
+        diffs.append((GLOBAL_HOOKS_KEY, "differs"))
     return sorted(diffs)

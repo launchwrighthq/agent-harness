@@ -1,6 +1,6 @@
 """Render a spec Markdown file into the HTML review page.
 
-    ah spec render docs/specs/<name>.md [--out docs/specs/dist/review]
+    ah spec render [--strict] docs/specs/<name>.md [--out docs/specs/dist/review]
 
 docs/spec.md ("The renderer") lists the constructs that it reads. Anything else fails with a
 `SpecError` that names the file and the 1-based line, so no literal Markdown mark reaches a page.
@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn
 
+from agent_harness import HarnessError, config
 from agent_harness.spec.layout import Domain, Layout
 
 TEMPLATE = Path(__file__).resolve().parent / "spec-template.html"
@@ -247,16 +248,22 @@ def asset_folder(source: str, layout: Layout) -> str:
 
 
 def _check_images(
-    line: str, fail: Callable[[str], NoReturn], asset_check: AssetCheck | None = None
+    line: str,
+    fail: Callable[[str], NoReturn],
+    asset_check: AssetCheck | None = None,
+    warn: Callable[[str], None] | None = None,
 ) -> None:
     """Fail on the first image or link of the line that `_image_problem`, `asset_check` or
-    `_link_problem` refuses."""
+    `_link_problem` refuses. With `warn`, an image that `asset_check` refuses goes to `warn`."""
     for match in IMAGE_RE.finditer(line):
         problem = _image_problem(match.group(2))
-        if problem is None and asset_check is not None:
-            problem = asset_check(match.group(2))
         if problem:
             fail(problem)
+        missing = asset_check(match.group(2)) if asset_check is not None else None
+        if missing and warn is not None:
+            warn(missing)
+        elif missing:
+            fail(missing)
     for match in MD_LINK_RE.finditer(IMAGE_RE.sub("", line)):
         problem = _link_problem(match.group(2))
         if problem:
@@ -359,8 +366,10 @@ def without_code_spans(text: str) -> str:
     return "".join(piece.text for piece in split_code_spans(text) if not piece.code)
 
 
-def inline(text: str, asset_prefix: str = "") -> str:
-    """Escape, then apply the inline marks. Code spans, images and links are kept apart first."""
+def inline(text: str, asset_prefix: str = "", missing: AssetCheck | None = None) -> str:
+    """Escape, then apply the inline marks. Code spans, images and links are kept apart first.
+
+    An image that `missing` names becomes the placeholder box."""
     codes: list[str] = []
     links: list[str] = []
 
@@ -378,7 +387,9 @@ def inline(text: str, asset_prefix: str = "") -> str:
         if problem:
             raise SpecError(problem)
         src = esc(asset_prefix + url, True)
-        if VIDEO_RE.search(url):
+        if missing is not None and missing(url):
+            links.append(f'<span class="missing-asset">image missing: {esc(url)}</span>')
+        elif VIDEO_RE.search(url):
             links.append(
                 f'<video src="{src}" controls playsinline preload="metadata">{esc(alt)}</video>'
             )
@@ -410,7 +421,11 @@ def inline(text: str, asset_prefix: str = "") -> str:
 
 
 def parse_head(
-    lines: list[str], source: str, layout: Layout, asset_check: AssetCheck | None = None
+    lines: list[str],
+    source: str,
+    layout: Layout,
+    asset_check: AssetCheck | None = None,
+    warnings: list[str] | None = None,
 ) -> tuple[Head, int]:
     """The H1, the fields and the standfirst, and the index of the first body line.
 
@@ -476,7 +491,11 @@ def parse_head(
         def fail(message: str, n: int = n) -> NoReturn:
             raise SpecError(f"{source}:{n + 1}: {message}")
 
-        _check_images(line, fail, asset_check)
+        def warn(message: str, n: int = n) -> None:
+            assert warnings is not None
+            warnings.append(f"{source}:{n + 1}: {message}")
+
+        _check_images(line, fail, asset_check, None if warnings is None else warn)
         if js_trim(line):
             current.append(js_trim(line))
         elif current:
@@ -492,7 +511,9 @@ def parse_head(
         status_text=status_text,
         subject=fields.get("Subject"),
         range=fields.get("Range"),
-        standfirst=inline(" ".join(paragraphs), asset_prefix),
+        standfirst=inline(
+            " ".join(paragraphs), asset_prefix, None if warnings is None else asset_check
+        ),
     )
     return head, end
 
@@ -525,9 +546,12 @@ class Renderer:
         start: int,
         asset_prefix: str,
         asset_check: AssetCheck | None = None,
+        warnings: list[str] | None = None,
     ) -> None:
         self.lines = lines
         self.asset_check = asset_check
+        # A list turns the refusal of `asset_check` into a warning and a placeholder box.
+        self.warnings = warnings
         self.source = source
         self.start = start
         self.asset_prefix = asset_prefix
@@ -563,13 +587,21 @@ class Renderer:
     def fail(self, index: int, message: str) -> NoReturn:
         raise SpecError(f"{self.source}:{self.start + index + 1}: {message}")
 
+    def warn(self, index: int, message: str) -> None:
+        assert self.warnings is not None
+        self.warnings.append(f"{self.source}:{self.start + index + 1}: {message}")
+
     def check_line(self, line: str, index: int) -> None:
         _check_images(
-            without_code_spans(line), lambda message: self.fail(index, message), self.asset_check
+            without_code_spans(line),
+            lambda message: self.fail(index, message),
+            self.asset_check,
+            None if self.warnings is None else lambda message: self.warn(index, message),
         )
 
     def inline(self, text: str) -> str:
-        return inline(text, self.asset_prefix)
+        missing = None if self.warnings is None else self.asset_check
+        return inline(text, self.asset_prefix, missing)
 
     def anchor(self, text: str) -> str:
         """A slug unique in this page: a repeated heading gets `-2`, `-3` and so on."""
@@ -778,17 +810,27 @@ class Renderer:
 
 
 def render_with_template(
-    markdown: str, source: str, shell: str, layout: Layout, asset_check: AssetCheck | None = None
+    markdown: str,
+    source: str,
+    shell: str,
+    layout: Layout,
+    asset_check: AssetCheck | None = None,
+    warnings: list[str] | None = None,
 ) -> tuple[str, int]:
-    """The page for `markdown` in `shell`, and its number of `##` sections."""
+    """The page for `markdown` in `shell`, and its number of `##` sections.
+
+    With a `warnings` list, an image that `asset_check` refuses renders as a placeholder box
+    and adds one line to the list."""
     missing = [slot for slot in PLACEHOLDERS if slot not in shell]
     if missing:
         raise SpecError(f"{TEMPLATE}: missing {', '.join(missing)} placeholder(s)")
 
     domain = domain_of(source, layout)
     lines = markdown.split("\n")
-    head, start = parse_head(lines, source, layout, asset_check)
-    renderer = Renderer(lines[start:], source, start, asset_prefix_for(source, layout), asset_check)
+    head, start = parse_head(lines, source, layout, asset_check, warnings)
+    renderer = Renderer(
+        lines[start:], source, start, asset_prefix_for(source, layout), asset_check, warnings
+    )
     body = renderer.run()
     nav = "".join(
         f'<li><a href="#{entry.anchor}"><span class="n">{entry.eyebrow}</span>'
@@ -828,10 +870,27 @@ def render_with_template(
 
 
 def render(
-    markdown: str, source: str, layout: Layout, asset_check: AssetCheck | None = None
+    markdown: str,
+    source: str,
+    layout: Layout,
+    asset_check: AssetCheck | None = None,
+    warnings: list[str] | None = None,
 ) -> tuple[str, int]:
     shell = TEMPLATE.read_text(encoding="utf-8")
-    return render_with_template(markdown, source, shell, layout, asset_check)
+    return render_with_template(markdown, source, shell, layout, asset_check, warnings)
+
+
+MISSING_ASSETS = ("refuse", "placeholder")
+
+
+def placeholder_mode(cfg: config.Config) -> bool:
+    """Whether `specs.missingAssets` asks for a placeholder in place of a refusal."""
+    mode = cfg.get("specs.missingAssets")
+    if mode not in MISSING_ASSETS:
+        raise HarnessError(
+            f"specs.missingAssets must be one of {', '.join(MISSING_ASSETS)}, got {mode!r}"
+        )
+    return bool(mode == "placeholder")
 
 
 def _tracked(dst: str, cwd: Path | None) -> bool:
@@ -849,11 +908,16 @@ def _tracked(dst: str, cwd: Path | None) -> bool:
 
 
 def render_file(
-    src: str, layout: Layout, dst: str | None = None, cwd: Path | None = None
+    src: str,
+    layout: Layout,
+    dst: str | None = None,
+    cwd: Path | None = None,
+    warnings: list[str] | None = None,
 ) -> tuple[str, int]:
     """Render `src` to `dst`, or to its derived page. Paths resolve against `cwd`.
 
-    Returns the page path as given or derived, and the number of sections.
+    Returns the page path as given or derived, and the number of sections. With a `warnings`
+    list, an image with no file renders as a placeholder box and adds one line to the list.
     """
     page = dst if dst is not None else dist_for(src, layout)
     if not inside_out(page, layout):
@@ -880,7 +944,7 @@ def render_file(
             return None
         return f"the image {url} has no file at {folder}/{url}"
 
-    html, sections = render(markdown, src, layout, asset_check)
+    html, sections = render(markdown, src, layout, asset_check, warnings)
     target = base / page
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -891,7 +955,7 @@ def render_file(
     return page, sections
 
 
-USAGE = "usage: ah spec render <file.md> [--out <dir>] | --all"
+USAGE = "usage: ah spec render [--strict] <file.md> [--out <dir>] | --all"
 
 
 def refusal_line(src: str, error: SpecError) -> str:
@@ -900,16 +964,23 @@ def refusal_line(src: str, error: SpecError) -> str:
     return text if text.startswith(src) else f"{src}: {text}"
 
 
-def render_all(layout: Layout, cwd: Path) -> int:
+def warning_lines(warnings: list[str]) -> list[str]:
+    return [f"warning: {line}; the page shows a placeholder" for line in warnings]
+
+
+def render_all(layout: Layout, cwd: Path, placeholder: bool = False) -> int:
     """Render every source of every spec folder. A refused source does not stop the rest."""
     found = layout.sources(cwd)
     written = 0
     for src in found:
+        warnings: list[str] | None = [] if placeholder else None
         try:
-            page, sections = render_file(src, layout, cwd=cwd)
+            page, sections = render_file(src, layout, cwd=cwd, warnings=warnings)
         except SpecError as error:
             print(refusal_line(src, error), file=sys.stderr)
             continue
+        for line in warning_lines(warnings or []):
+            print(line, file=sys.stderr)
         written += 1
         print(f"wrote {page} ({sections} sections)")
     print(f"rendered {written} of {len(found)} specs")
@@ -918,8 +989,12 @@ def render_all(layout: Layout, cwd: Path) -> int:
 
 def main(argv: list[str], layout: Layout) -> int:
     args = list(argv)
+    placeholder = placeholder_mode(config.load())
+    if "--strict" in args:
+        args.remove("--strict")
+        placeholder = False
     if args == ["--all"]:
-        return render_all(layout, Path.cwd())
+        return render_all(layout, Path.cwd(), placeholder)
     out_dir: str | None = None
     if "--out" in args:
         at = args.index("--out")
@@ -936,10 +1011,13 @@ def main(argv: list[str], layout: Layout) -> int:
     if out_dir is not None:
         stem = EXTENSION_RE.sub("", _basename(src))
         dst = f"{out_dir.rstrip('/')}/{stem}.html"
+    warnings: list[str] | None = [] if placeholder else None
     try:
-        page, sections = render_file(src, layout, dst)
+        page, sections = render_file(src, layout, dst, warnings=warnings)
     except SpecError as error:
         print(str(error), file=sys.stderr)
         return 1
+    for line in warning_lines(warnings or []):
+        print(line, file=sys.stderr)
     print(f"wrote {page} ({sections} sections)")
     return 0

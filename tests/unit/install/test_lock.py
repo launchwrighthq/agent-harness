@@ -76,3 +76,15 @@ def test_refuses_a_lock_that_is_not_json(tmp_path: Path) -> None:
 
     with pytest.raises(HarnessError, match="is not valid JSON"):
         read_lock(tmp_path / "lock.json")
+
+
+def test_writes_the_scoped_table_only_when_it_holds_a_rule(tmp_path: Path) -> None:
+    plain = Lock(version="1", mode="project")
+    scoped = Lock(version="1", mode="project", scoped={".claude/rules/lw/a.md": "abc"})
+    (tmp_path / "lock.json").write_text(scoped.to_text())
+
+    read = read_lock(tmp_path / "lock.json")
+
+    assert '"scoped"' not in plain.to_text()
+    assert read is not None
+    assert read.scoped == {".claude/rules/lw/a.md": "abc"}

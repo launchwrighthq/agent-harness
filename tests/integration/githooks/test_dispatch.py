@@ -109,6 +109,68 @@ def test_runs_the_global_hook_before_the_harness_hook(
     assert (tmp_path / "log").read_text() == "global\nharness\n"
 
 
+def skip_global_hooks(repo: Path, package: Path, ah: Ah) -> None:
+    (repo / ".agents").mkdir(exist_ok=True)
+    (repo / ".agents/harness.toml").write_text('[harness.githooks]\nglobal = "skip"\n')
+    done = ah("install", "--project", "--from", str(package))
+    assert done.returncode == 0, done.stderr
+
+
+def test_runs_no_global_hook_and_the_local_git_hook_when_the_config_skips_them(
+    installed: tuple[Path, Path], package: Path, ah: Ah, tmp_path: Path
+) -> None:
+    repo, _ = installed
+    skip_global_hooks(repo, package, ah)
+    global_hooks = tmp_path / "global-hooks"
+    hook(global_hooks / "commit-msg", f'echo global >>"{tmp_path}/log"')
+    hook(repo / ".git/hooks/commit-msg", f'echo local >>"{tmp_path}/log"')
+    config = tmp_path / "global.gitconfig"
+    config.write_text(f"[core]\n\thooksPath = {global_hooks}\n", encoding="utf-8")
+
+    commit(Git(config), repo, "a.txt")
+
+    assert (tmp_path / "log").read_text() == "harness\nlocal\n"
+
+
+def test_skips_a_global_pre_push_that_would_refuse_the_push(
+    installed: tuple[Path, Path], package: Path, ah: Ah, tmp_path: Path
+) -> None:
+    repo, remote = installed
+    skip_global_hooks(repo, package, ah)
+    global_hooks = tmp_path / "global-hooks"
+    hook(global_hooks / "pre-push", "cat >/dev/null\nexit 1")
+    hook(repo / ".git/hooks/pre-push", f'cat >"{tmp_path}/stdin"')
+    config = tmp_path / "global.gitconfig"
+    config.write_text(f"[core]\n\thooksPath = {global_hooks}\n", encoding="utf-8")
+    git = Git(config)
+    first = commit(git, repo, "a.txt")
+
+    pushed = git(repo, "push", "--quiet", "origin", "main", check=False)
+
+    assert pushed.returncode == 0, pushed.stderr
+    assert git(remote, "rev-parse", "main").stdout.strip() == first
+    assert (tmp_path / "stdin").read_text() == (
+        f"refs/heads/main {first} refs/heads/main {'0' * 40}\n"
+    )
+
+
+def test_runs_the_global_hook_again_when_the_config_goes_back_to_run(
+    installed: tuple[Path, Path], package: Path, ah: Ah, tmp_path: Path
+) -> None:
+    repo, _ = installed
+    skip_global_hooks(repo, package, ah)
+    (repo / ".agents/harness.toml").write_text('[harness.githooks]\nglobal = "run"\n')
+    assert ah("install", "--project", "--from", str(package)).returncode == 0
+    global_hooks = tmp_path / "global-hooks"
+    hook(global_hooks / "commit-msg", f'echo global >>"{tmp_path}/log"')
+    config = tmp_path / "global.gitconfig"
+    config.write_text(f"[core]\n\thooksPath = {global_hooks}\n", encoding="utf-8")
+
+    commit(Git(config), repo, "a.txt")
+
+    assert (tmp_path / "log").read_text() == "global\nharness\n"
+
+
 def test_runs_the_local_git_hook_once_when_no_global_path_is_set(
     installed: tuple[Path, Path], tmp_path: Path
 ) -> None:

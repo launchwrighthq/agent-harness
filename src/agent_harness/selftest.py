@@ -6,22 +6,39 @@ adapter turns an ask into a deny, so an `ask` fixture expects a deny through it.
 
 The portability checks follow: each skill resolves through its `.agents/skills` link, and the
 guards whose answer depends on the checkout run from a worktree subfolder of a scratch repository.
+
+A fixture of `ENV_GUARDS` that expects a deny and names a plain env file of the project
+(`harness.plainEnvFiles`) does not run: the project opened that name. It prints one SKIP line.
+
+The case `global-hooks` follows: the installed git hook dispatcher runs each global git hook once
+with `harness.globalHooks` at `run` and never at `skip`.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 from agent_harness import HarnessError
-from agent_harness.install.plan import ENGINE_DIR, Plan, PlannedHook, interpreter_for
+from agent_harness.install.plan import (
+    DISPATCHED,
+    DISPATCHER,
+    ENGINE_DIR,
+    GITHOOK_DIR,
+    Plan,
+    PlannedHook,
+    interpreter_for,
+)
 from agent_harness.install.registry import CODEX_ADAPTER, LINK_DIR
 from agent_harness.manifest import Fixture
 
@@ -36,12 +53,16 @@ class Result:
     fixture: str
     # Why the case failed, empty when it passed.
     detail: str
+    # Why the fixture did not run, empty when it ran. A skipped fixture is no run.
+    skipped: str = ""
 
     @property
     def ok(self) -> bool:
         return self.detail == ""
 
     def line(self) -> str:
+        if self.skipped:
+            return f"SKIP {self.hook} {self.fixture}: {self.skipped}"
         if self.ok:
             return f"ok   {self.hook} {self.client} {self.fixture}"
         return f"FAIL {self.hook} {self.client} {self.fixture}: {self.detail}"
@@ -235,8 +256,28 @@ def _at(payload: dict[str, Any], decoy: Path | None) -> dict[str, Any]:
     return out
 
 
-def run_selftest(plan: Plan, root: Path) -> list[Result]:
-    """Run every fixture of every enabled hook in the installed project at `root`."""
+# The hooks that pass a plain env file of the project.
+ENV_GUARDS = ("deny-env-reads", "bash-read-guard")
+PLAIN_SKIP = "names a plain env file of this project"
+# The characters of a file name. A plain name next to one of them is part of a longer name.
+NAME_CHARS = r"[\w.~-]"
+
+
+def names_plain(hook_id: str, f: Fixture, plain: Sequence[str]) -> bool:
+    """True for a deny fixture of an env guard whose command or file names a name of `plain`."""
+    if hook_id not in ENV_GUARDS or f.expect != "deny":
+        return False
+    text = (f.command if f.tool == "Bash" else f.file) or ""
+    return any(
+        re.search(f"(?<!{NAME_CHARS}){re.escape(name)}(?!{NAME_CHARS})", text) for name in plain
+    )
+
+
+def run_selftest(plan: Plan, root: Path, plain: Sequence[str] = ()) -> list[Result]:
+    """Run every fixture of every enabled hook in the installed project at `root`.
+
+    `plain` holds the plain env file names of the project (see `names_plain`).
+    """
     results: list[Result] = []
     with tempfile.TemporaryDirectory(prefix="ah-selftest-") as tmp_name:
         tmp = Path(tmp_name)
@@ -247,6 +288,9 @@ def run_selftest(plan: Plan, root: Path) -> list[Result]:
                 if event is None:
                     detail = "the hook does not run on the fixture event"
                     results.append(Result(hook.id, "claude", label(fixture), detail))
+                    continue
+                if names_plain(hook.id, fixture, plain):
+                    results.append(Result(hook.id, "", label(fixture), "", PLAIN_SKIP))
                     continue
                 n += 1
                 session = f"ah-selftest-{os.getpid()}-{n}"
@@ -447,11 +491,129 @@ def run_portability(plan: Plan, root: Path) -> list[Result]:
     return results
 
 
+# The hooks that one commit and one push to a checkout run.
+COMMIT_AND_PUSH = (
+    *("pre-commit", "prepare-commit-msg", "commit-msg", "post-commit"),
+    *("pre-push", "push-to-checkout"),
+)
+# A global hook that only records its run, and one that also runs `.git/hooks/<name>`, as a
+# global dispatcher does.
+GLOBAL_HOOK_VARIANTS = {
+    "a plain global hook": "",
+    "a global hook that runs .git/hooks": (
+        'own="$(git rev-parse --path-format=absolute --git-common-dir)/hooks/$name"\n'
+        'if [ -x "$own" ]; then "$own" "$@" || exit $?; fi\n'
+    ),
+}
+
+
+def _recorder(path: Path, who: str, log: Path, more: str = "") -> None:
+    """A hook at `path` that appends `<who> <hook name>` to `log`."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f'#!/bin/sh\nname=$(basename -- "$0")\necho "{who} $name" >>"{log}"\n{more}',
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
+def _global_hooks_run(tmp: Path, dispatcher: Path, mode: str, more: str) -> Counter[str]:
+    """One commit and one push to a checkout in a scratch repository whose `.githooks/` holds
+    the dispatcher. Returns how often each hook ran, by `<global|local> <name>`.
+
+    The global config is a scratch file, so the hooks of this machine stay out.
+    """
+    log = tmp / "runs.log"
+    global_config = tmp / "global.gitconfig"
+    global_config.write_text(
+        f'[core]\n\thooksPath = "{tmp / "global-hooks"}"\n[gc]\n\tauto = 0\n'
+        "[user]\n\tname = ah selftest\n\temail = selftest@example.invalid\n",
+        encoding="utf-8",
+    )
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env.update(GIT_CONFIG_GLOBAL=str(global_config), GIT_CONFIG_NOSYSTEM="1")
+
+    def git(cwd: Path, *args: str) -> None:
+        done = subprocess.run(
+            ["git", "-C", str(cwd), *args],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        if done.returncode != 0:
+            raise HarnessError(f"git {' '.join(args)} failed: {done.stderr.strip()}")
+
+    repo, tree = tmp / "checkout", tmp / "tree"
+    repo.mkdir()
+    git(repo, "init", "-q", "-b", "main")
+    git(repo, "commit", "-q", "--allow-empty", "-m", "base")
+    git(repo, "worktree", "add", "-q", "-b", "task", str(tree))
+    for name in DISPATCHED:
+        _recorder(tmp / "global-hooks" / name, "global", log, more)
+        _recorder(repo / ".git" / "hooks" / name, "local", log)
+        target = repo / GITHOOK_DIR / name
+        target.parent.mkdir(exist_ok=True)
+        shutil.copyfile(dispatcher, target)
+        target.chmod(0o755)
+    git(repo, "config", "core.hooksPath", str(repo / GITHOOK_DIR))
+    git(repo, "config", "receive.denyCurrentBranch", "updateInstead")
+    git(repo, "config", "harness.globalHooks", mode)
+    # The setup ran the global hooks through git itself. The count starts here.
+    log.unlink(missing_ok=True)
+    (tree / "a.txt").write_text("a\n", encoding="utf-8")
+    git(tree, "add", "a.txt")
+    git(tree, "commit", "-q", "-m", "add a.txt")
+    git(tree, "push", "-q", ".", "HEAD:refs/heads/main")
+    return Counter(log.read_text(encoding="utf-8").splitlines() if log.is_file() else [])
+
+
+def _global_hooks_detail(runs: Counter[str], mode: str, chained: bool) -> str:
+    """Why the counted runs are wrong for `mode`, or ''."""
+    once = dict.fromkeys(COMMIT_AND_PUSH, 1)
+    # With `run`, `.git/hooks/<name>` runs only through a global hook that starts it.
+    wanted = {
+        "global": once if mode == "run" else {},
+        "local": once if mode == "skip" or chained else {},
+    }
+    for who, expected in wanted.items():
+        found = {k.split(" ", 1)[1]: n for k, n in runs.items() if k.startswith(f"{who} ")}
+        if found != expected:
+            shown = ", ".join(f"{name} {n}" for name, n in sorted(found.items())) or "none"
+            want = "each of " + ", ".join(expected) + " once" if expected else "none"
+            return f"the {who} hooks ran: {shown}; expected {want}"
+    return ""
+
+
+def run_global_hooks(plan: Plan, root: Path) -> list[Result]:
+    """The case `global-hooks`: each global hook variant with `run` and with `skip`.
+
+    A plan with no git hook installs no dispatcher, so it has no case.
+    """
+    if not plan.githooks:
+        return []
+    dispatcher = root / ENGINE_DIR / DISPATCHER
+    results: list[Result] = []
+    for variant, more in GLOBAL_HOOK_VARIANTS.items():
+        for mode in ("run", "skip"):
+            with tempfile.TemporaryDirectory(prefix="ah-global-hooks-") as tmp_name:
+                try:
+                    runs = _global_hooks_run(Path(tmp_name).resolve(), dispatcher, mode, more)
+                except (HarnessError, OSError, subprocess.TimeoutExpired) as error:
+                    detail = str(error)
+                else:
+                    detail = _global_hooks_detail(runs, mode, chained=more != "")
+            results.append(Result("global-hooks", "git", f"{variant} with {mode}", detail))
+    return results
+
+
 def main(argv: list[str]) -> int:
     from agent_harness import config
     from agent_harness.install.project import (
         check_project,
         installed_manifests,
+        plain_env_files,
         plan_for,
         require_lock,
     )
@@ -469,9 +631,14 @@ def main(argv: list[str]) -> int:
             " so run ah install --project first"
         )
     plan = plan_for(root, cfg, installed_manifests(root, require_lock(root)))
-    results = run_selftest(plan, root) + run_portability(plan, root)
+    results = [
+        *run_selftest(plan, root, plain_env_files(cfg)),
+        *run_portability(plan, root),
+        *run_global_hooks(plan, root),
+    ]
     for result in results:
         print(result.line())
-    failed = sum(1 for r in results if not r.ok)
-    print(f"ah selftest: {len(results) - failed} of {len(results)} fixture runs pass")
+    ran = [r for r in results if not r.skipped]
+    failed = sum(1 for r in ran if not r.ok)
+    print(f"ah selftest: {len(ran) - failed} of {len(ran)} fixture runs pass")
     return 0 if failed == 0 else 1

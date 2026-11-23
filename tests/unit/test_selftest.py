@@ -3,7 +3,15 @@ from pathlib import Path
 
 from agent_harness.install.plan import PlannedHook
 from agent_harness.manifest import Fixture
-from agent_harness.selftest import codex_payload, event_of, judge, label
+from agent_harness.selftest import (
+    PLAIN_SKIP,
+    Result,
+    codex_payload,
+    event_of,
+    judge,
+    label,
+    names_plain,
+)
 
 ASK = Fixture(expect="context", prompt="x")
 DENY = Fixture(expect="deny", tool="Bash", command="x", contains="no")
@@ -25,6 +33,34 @@ def test_accepts_context_under_the_right_event_and_rejects_other_shapes() -> Non
     assert '{"prompt"' in judge("UserPromptSubmit", ASK, 0, json.dumps({"prompt": "x"}), "")
     assert "not JSON" in judge("UserPromptSubmit", ASK, 0, "plain text", "")
     assert "hookEventName" in judge("UserPromptSubmit", ASK, 0, wrong, "")
+
+
+def test_reads_only_a_deny_fixture_of_an_env_guard_with_the_whole_plain_name_as_skipped() -> None:
+    def bash(command: str, expect: str = "deny") -> Fixture:
+        return Fixture(expect=expect, tool="Bash", command=command)
+
+    read = Fixture(expect="deny", tool="Read", file="apps/.env.local")
+    plain = [".env.local"]
+
+    assert [
+        names_plain("bash-read-guard", bash("cat .env.local"), plain),
+        names_plain("bash-read-guard", bash("git show HEAD:.env.local\nx"), plain),
+        names_plain("deny-env-reads", read, plain),
+        names_plain("bash-read-guard", bash("cat .env.local.bak"), plain),
+        names_plain("bash-read-guard", bash("cat .env.local~"), plain),
+        names_plain("bash-read-guard", bash("cat x~.env.local"), plain),
+        names_plain("bash-read-guard", bash("cat .env.local", "silent"), plain),
+        names_plain("workspace-guard", bash("cat .env.local"), plain),
+        names_plain("bash-read-guard", bash("cat .env.local"), []),
+    ] == [True, True, True, False, False, False, False, False, False]
+
+
+def test_prints_a_skipped_fixture_as_one_line_that_is_no_run() -> None:
+    result = Result("bash-read-guard", "", "Bash cat .env.local", "", PLAIN_SKIP)
+
+    assert result.line() == (
+        "SKIP bash-read-guard Bash cat .env.local: names a plain env file of this project"
+    )
 
 
 def test_takes_a_json_deny_or_exit_two_as_a_deny() -> None:

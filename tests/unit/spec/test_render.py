@@ -70,6 +70,32 @@ def test_prefixes_an_asset_image_with_the_walk_back_from_the_page() -> None:
     )
 
 
+def test_renders_an_image_that_the_check_names_as_a_placeholder_box() -> None:
+    assert (
+        inline(
+            "![x](assets/<a>.png) ![y](assets/b.png)",
+            "../",
+            lambda url: "gone" if "<a>" in url else None,
+        )
+        == '<span class="missing-asset">image missing: assets/&lt;a&gt;.png</span>'
+        ' <img src="../assets/b.png" alt="y" loading="lazy">'
+    )
+
+
+def test_collects_one_warning_per_missing_image_of_the_header_and_the_body() -> None:
+    warnings: list[str] = []
+    markdown = HEAD + "![s](assets/s.png)\n\n## One\n\n| a |\n|---|\n| ![t](assets/t.mp4) |\n"
+
+    html, _ = render_with_template(
+        markdown, "docs/specs/a.md", SHELL, LAYOUT, lambda url: f"no {url}", warnings
+    )
+
+    assert warnings == ["docs/specs/a.md:6: no assets/s.png", "docs/specs/a.md:12: no assets/t.mp4"]
+    assert html.count('<span class="missing-asset">image missing: assets/') == 2
+    assert "<img" not in html
+    assert "<video" not in html
+
+
 def test_refuses_an_inline_data_image_and_names_the_line() -> None:
     with pytest.raises(SpecError, match=r"^docs/specs/a\.md:6: an inline data: image"):
         body_of(HEAD + "![x](data:image/png;base64,AAAA)\n")

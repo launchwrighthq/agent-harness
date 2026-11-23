@@ -75,6 +75,22 @@ def test_reads_on_and_off_as_the_default_of_an_item(tmp_path: Path) -> None:
     assert m.skills[0].default is False
 
 
+def test_reads_the_agents_covers_text_of_a_rule_beside_its_paths(tmp_path: Path) -> None:
+    text = (
+        '[[rule]]\nid = "r"\nsummary = "s"\nfile = "r.md"\npaths = ["docs/**"]\n'
+        'agentsCovers = "every file"\n'
+        '[[rule]]\nid = "q"\nsummary = "s"\nfile = "q.md"\n'
+    )
+    m = parse_manifest(
+        text, name="pkg", dir=tmp_path, file=tmp_path / "h.toml", extra=False, check_files=False
+    )
+
+    assert [(r.paths, r.agents_covers) for r in m.rules] == [
+        (("docs/**",), "every file"),
+        ((), None),
+    ]
+
+
 @pytest.mark.parametrize(
     ("text", "problem"),
     [
@@ -82,6 +98,10 @@ def test_reads_on_and_off_as_the_default_of_an_item(tmp_path: Path) -> None:
         ('[[rule]]\nid = "r"\nsummary = "s"\nfile = "r.txt"\n', "a rule is a .md file"),
         ('[[rule]]\nid = "r"\nsummary = "s"\nfile = "../r.md"\n', "inside the manifest folder"),
         ('[[rule]]\nid = "r"\nsummary = "s"\nfile = "r.md"\ncolour = 1\n', "rule.0.colour"),
+        (
+            '[[rule]]\nid = "r"\nsummary = "s"\nfile = "r.md"\nagentsCovers = "a | b"\n',
+            "rule.0.agentsCovers: must be one line with no |",
+        ),
         ('[[hook]]\nid = "h"\nsummary = "s"\nevents = ["Start"]\nscript = "h.py"\n', "Start"),
         (
             '[[hook]]\nid = "h"\nsummary = "s"\nevents = ["Stop"]\nmatcher = "Bash"\n'

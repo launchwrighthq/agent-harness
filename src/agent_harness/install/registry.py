@@ -334,6 +334,7 @@ def agents_block(plan: Plan, skills: Sequence[str], adapter_dir: str) -> str:
         lines += ["| Rule | Covers | File |", "|---|---|---|"]
         for rule in plan.rules:
             covers = ", ".join(f"`{p}`" for p in rule.paths) if rule.paths else "every file"
+            covers = rule.agents_covers or covers
             lines.append(f"| {rule.summary} | {covers} | `{rule.target}` |")
         lines.append("")
     if skills:

@@ -30,6 +30,92 @@ def test_refuses_an_image_whose_file_is_missing_and_names_the_line(tmp_path: Pat
     assert not (tmp_path / "docs/specs/dist/a.html").exists()
 
 
+PLACEHOLDER = '[specs]\nmissingAssets = "placeholder"\n'
+NO_FILE = "the image assets/boadr.svg has no file at docs/specs/assets/boadr.svg"
+
+
+def test_renders_a_missing_image_as_a_box_and_warns_in_placeholder_mode(tmp_path: Path) -> None:
+    write(tmp_path, ".agents/harness.toml", PLACEHOLDER)
+    body = "![Board](assets/boadr.svg)\n\n![Ok](assets/ok.svg)\n"
+    write(tmp_path, "docs/specs/a.md", HEAD + body)
+    write(tmp_path, "docs/specs/assets/ok.svg", "<svg/>")
+
+    done = run_ah(tmp_path, "spec", "render", "docs/specs/a.md")
+
+    assert done.returncode == 0, done.stderr
+    assert done.stderr == f"warning: docs/specs/a.md:8: {NO_FILE}; the page shows a placeholder\n"
+    page = (tmp_path / "docs/specs/dist/a.html").read_text(encoding="utf-8")
+    assert '<span class="missing-asset">image missing: assets/boadr.svg</span>' in page
+    assert 'boadr.svg"' not in page
+    assert '<img src="../assets/ok.svg"' in page
+
+
+def test_refuses_a_missing_image_with_strict_in_placeholder_mode(tmp_path: Path) -> None:
+    write(tmp_path, ".agents/harness.toml", PLACEHOLDER)
+    write(tmp_path, "docs/specs/a.md", HEAD + "![Board](assets/boadr.svg)\n")
+
+    done = run_ah(tmp_path, "spec", "render", "--strict", "docs/specs/a.md")
+
+    assert done.returncode == 1
+    assert done.stderr == f"docs/specs/a.md:8: {NO_FILE}\n"
+    assert not (tmp_path / "docs/specs/dist/a.html").exists()
+
+
+def test_refuses_a_missing_image_with_strict_in_refuse_mode(tmp_path: Path) -> None:
+    write(tmp_path, "docs/specs/a.md", HEAD + "![Board](assets/boadr.svg)\n")
+
+    done = run_ah(tmp_path, "spec", "render", "docs/specs/a.md", "--strict")
+
+    assert done.returncode == 1
+    assert done.stderr == f"docs/specs/a.md:8: {NO_FILE}\n"
+
+
+def test_refuses_a_data_image_and_a_path_outside_assets_in_placeholder_mode(
+    tmp_path: Path,
+) -> None:
+    write(tmp_path, ".agents/harness.toml", PLACEHOLDER)
+    write(tmp_path, "docs/specs/a.md", HEAD + "![x](data:image/png;base64,AAAA)\n")
+    write(tmp_path, "docs/specs/b.md", HEAD + "![x](../board.svg)\n")
+
+    data = run_ah(tmp_path, "spec", "render", "docs/specs/a.md")
+    outside = run_ah(tmp_path, "spec", "render", "docs/specs/b.md")
+
+    assert data.returncode == 1
+    assert data.stderr.startswith("docs/specs/a.md:8: an inline data: image")
+    assert outside.returncode == 1
+    assert outside.stderr == (
+        "docs/specs/b.md:8: an image must be referenced as assets/<file>, not '../board.svg'\n"
+    )
+
+
+def test_warns_for_each_spec_with_a_missing_image_with_all_in_placeholder_mode(
+    tmp_path: Path,
+) -> None:
+    write(tmp_path, ".agents/harness.toml", PLACEHOLDER)
+    write(tmp_path, "docs/specs/a.md", HEAD + "![Board](assets/boadr.svg)\n")
+    write(tmp_path, "docs/specs/b.md", HEAD + "Text.\n")
+
+    done = run_ah(tmp_path, "spec", "render", "--all")
+    strict = run_ah(tmp_path, "spec", "render", "--all", "--strict")
+
+    assert done.returncode == 0, done.stderr
+    assert done.stderr == f"warning: docs/specs/a.md:8: {NO_FILE}; the page shows a placeholder\n"
+    assert "rendered 2 of 2 specs" in done.stdout
+    assert strict.returncode == 1
+    assert strict.stderr == f"docs/specs/a.md:8: {NO_FILE}\n"
+
+
+def test_refuses_a_missing_assets_value_outside_the_two_modes(tmp_path: Path) -> None:
+    write(tmp_path, ".agents/harness.toml", '[specs]\nmissingAssets = "skip"\n')
+    write(tmp_path, "docs/specs/a.md", HEAD + "Text.\n")
+
+    done = run_ah(tmp_path, "spec", "render", "docs/specs/a.md")
+
+    assert done.returncode != 0
+    assert "specs.missingAssets must be one of refuse, placeholder, got 'skip'" in done.stderr
+    assert not (tmp_path / "docs/specs/dist/a.html").exists()
+
+
 def test_finds_the_image_of_an_archived_spec_in_the_folder_assets(tmp_path: Path) -> None:
     write(tmp_path, "docs/specs/archive/a.md", HEAD + "![Board](assets/board.svg)\n")
     write(tmp_path, "docs/specs/assets/board.svg", "<svg/>")

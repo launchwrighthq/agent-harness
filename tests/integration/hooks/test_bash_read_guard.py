@@ -1209,3 +1209,94 @@ def test_names_the_listing_in_its_deny(session_tree: Path) -> None:
 
     assert hook_project.decision(done) == "deny"
     assert "`ls -a` lists file names, and a reader reads each one" in done.stdout
+
+
+PLAIN_CONFIG = (
+    "[harness]\n"
+    'plainEnvFiles = [".env.local", ".env.production", ".env.shared", ".env.shared.web",'
+    ' ".env.shared.keys"]\n'
+    'secretFiles = [".env.shared.keys"]\n'
+)
+PLAIN_READS_ALLOWED = [
+    "cat .env.local",
+    "grep -n API_URL apps/web/.env.local",
+    "head -3 < .env.local",
+    "set -a; . ./.env.local; set +a",
+    "cat .env.shared .env.shared.web",
+]
+# A guarded name, a secret name, a backup, an env file that no entry names, and a glob: the
+# literal part of a glob is no plain name.
+PLAIN_READS_REFUSED = [
+    "cat .env.production",
+    "cat .env.shared.keys",
+    "cat .env.local.bak",
+    "cat .env.shared.old",
+    "cat .env",
+    "cat .env.local .env.staging",
+    "cat .env*",
+    "cat .env.loc*",
+    "cat apps/web/.env.loc*",
+]
+# A name that starts with a plain name is another file: an entry is an exact name.
+PLAIN_NEAR_NAMES = [
+    "cat .env.local~",
+    "cat .env.local.bak.1",
+    "cat .env.local.swp",
+    "cat .env.production.copy",
+]
+
+
+@pytest.fixture
+def plain_tree(tmp_path: Path) -> Path:
+    """A project with plain env files. `apps/web` holds a backup beside its plain file."""
+    root = hook_project.make_project(tmp_path / "project", PLAIN_CONFIG)
+    for name in (".env.local", ".env", "apps/web/.env.local", "apps/web/.env.local.bak"):
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text("API_URL=http://localhost\n", encoding="utf-8")
+    return root
+
+
+@pytest.mark.parametrize(
+    ("commands", "expected"),
+    [(PLAIN_READS_ALLOWED, "silent"), (PLAIN_READS_REFUSED, "deny")],
+)
+def test_lets_a_reader_read_only_a_plain_env_file_that_no_entry_closes(
+    commands: list[str], expected: str, plain_tree: Path
+) -> None:
+    got = hook_project.verdicts(plain_tree, HOOK, commands)
+
+    assert list(zip(commands, got, strict=True)) == [(c, expected) for c in commands]
+
+
+def test_refuses_a_reader_of_a_name_that_only_starts_with_a_plain_name(tmp_path: Path) -> None:
+    root = hook_project.make_project(
+        tmp_path / "project", '[harness]\nplainEnvFiles = [".env.local"]\n'
+    )
+
+    got = hook_project.verdicts(root, HOOK, ["cat .env.local", *PLAIN_NEAR_NAMES])
+
+    assert got == ["silent", *("deny" for _ in PLAIN_NEAR_NAMES)]
+
+
+def test_opens_no_file_to_a_reader_through_a_plain_entry_that_is_a_pattern(
+    tmp_path: Path,
+) -> None:
+    root = hook_project.make_project(
+        tmp_path / "project", '[harness]\nplainEnvFiles = [".env.loc*", ".env.?ocal", ".env.dev"]\n'
+    )
+
+    got = hook_project.verdicts(root, HOOK, ["cat .env.local", "cat .env.loc", "cat .env.dev"])
+
+    assert got == ["deny", "deny", "silent"]
+
+
+def test_refuses_a_reader_of_each_plain_name_of_another_project_with_the_default_config(
+    tmp_path: Path,
+) -> None:
+    root = hook_project.make_project(tmp_path / "project")
+    (root / ".env.local").write_text("API_URL=http://localhost\n", encoding="utf-8")
+    commands = [c for c in PLAIN_READS_ALLOWED if "set -a" not in c]
+
+    got = hook_project.verdicts(root, HOOK, commands)
+
+    assert list(zip(commands, got, strict=True)) == [(c, "deny") for c in commands]

@@ -131,7 +131,8 @@ Put the file in the `assets/` folder of the spec folder, and reference it relati
   and diff it.
 - A diagram is an `.svg` or `.png` in `assets/`. A `mermaid` block renders as a labelled code
   block, not as a drawing.
-- The image file must exist. A typo in the name refuses the render.
+- The image file must exist. A typo in the name refuses the render, or gives a placeholder box
+  when the project sets `specs.missingAssets = "placeholder"`.
 - A spec that adds or changes a screen, a state, a dialog or a flow needs a picture. Load
   `/lw-spec-mockup` and draw the board before the spec goes to review.
 - A visual that Markdown cannot express (a mockup built from nested elements) stays a hand-written
@@ -169,7 +170,7 @@ Markdown.
 | `missing 'Status:' below the H1` | Add a `Status:` line. |
 | `an inline data: image belongs in the domain's assets/` | Save the image under `assets/` and link it there. |
 | `an image must be referenced as assets/<file>` | Move the image under `assets/`. |
-| `the image assets/<file> has no file at <folder>/assets/<file>` | Fix the name, or add the file. |
+| `the image assets/<file> has no file at <folder>/assets/<file>` | Fix the name, or add the file. With `specs.missingAssets = "placeholder"` this is a `warning:` line and the page shows a box `image missing: assets/<file>`. `--strict` refuses it again. |
 | `a fenced code block in a list item has a line at or left of the item marker` | Indent every line of the block, the closing fence too, under the item text. Or end the list with a blank line and start the fence at the left margin below it. |
 | `a rendered page belongs under its domain's dist/` | The destination is wrong. Pass no destination. |
 | `already tracked by git` | A hand-written page has that path. Find out which kind it is. Never remove it only to make the render pass. |

@@ -106,3 +106,86 @@ def test_takes_the_last_segment_as_node_basename_does() -> None:
         ".env",
         "",
     ]
+
+
+@pytest.mark.parametrize(
+    ("path", "plain"),
+    [
+        (".env.local", True),
+        ("apps/web/.env.local", True),
+        (".env.shared.web", True),
+        # The default `guardedFiles` and a `secretFiles` entry win over a plain entry.
+        (".env.production", False),
+        (".env.shared.keys", False),
+        (".env.local.bak", False),
+        (".env.shared.orig", False),
+        (".local/secrets/.env.local", False),
+        (".env", False),
+        (".env.staging", False),
+        # An entry opens an env file name only.
+        ("server.pem", False),
+    ],
+)
+def test_opens_only_a_plain_env_name_that_no_entry_closes(
+    path: str, plain: bool, tmp_path: Path
+) -> None:
+    (tmp_path / ".agents").mkdir()
+    (tmp_path / ".agents" / "harness.toml").write_text(
+        "[harness]\n"
+        'plainEnvFiles = [".env.local", ".env.production", ".env.shared.web",'
+        ' ".env.shared.keys", "server.pem"]\n'
+        'secretFiles = [".env.shared.keys"]\n'
+    )
+    cfg = hookio.hook_config("test-hook", installed_hook(tmp_path))
+
+    assert hookio.plain_env_test(cfg, "test-hook")(path) is plain
+
+
+@pytest.mark.parametrize(
+    "path",
+    [".env.dev", ".env.test", ".env.local~", ".env.local.swp", ".env.local.bak.1", ".ENV.LOCAL"],
+)
+def test_opens_no_name_that_differs_from_each_exact_plain_entry(path: str, tmp_path: Path) -> None:
+    (tmp_path / ".agents").mkdir()
+    (tmp_path / ".agents" / "harness.toml").write_text(
+        '[harness]\nplainEnvFiles = [".env.local", ".env.d*", { pattern = ".env.test" }]\n'
+    )
+    cfg = hookio.hook_config("test-hook", installed_hook(tmp_path))
+    test = hookio.plain_env_test(cfg, "test-hook")
+
+    assert (test(".env.local"), test(path)) == (True, False)
+
+
+def test_says_on_stderr_which_plain_entry_is_no_exact_name(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    names = hookio.plain_names([".env.local", ".env.d*", {"pattern": ".env.test"}], "test-hook")
+
+    assert names == [".env.local"]
+    assert capsys.readouterr().err.splitlines() == [
+        "test-hook: the plainEnvFiles entry '.env.d*' is no exact file name; it opens nothing",
+        "test-hook: the plainEnvFiles entry {'pattern': '.env.test'} is no exact file name;"
+        " it opens nothing",
+    ]
+
+
+def test_opens_no_env_file_with_the_default_config(tmp_path: Path) -> None:
+    cfg = hookio.hook_config("test-hook", installed_hook(tmp_path))
+
+    test = hookio.plain_env_test(cfg, "test-hook")
+
+    assert [test(p) for p in [".env.local", ".env", ".env.example"]] == [False, False, False]
+
+
+@pytest.mark.parametrize(
+    ("path", "backup"),
+    [
+        (".env.production.bak", True),
+        ("apps/.env.BACKUP", True),
+        (".local/secrets/api.json", True),
+        (".env.local", False),
+        ("notes.bak", False),
+    ],
+)
+def test_reads_a_backup_name_and_the_secrets_folder_as_a_backup(path: str, backup: bool) -> None:
+    assert hookio.is_backup(path) is backup

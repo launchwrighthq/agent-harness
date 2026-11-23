@@ -5,7 +5,7 @@ key of the format:
 
     [[hook]]          id, summary, events, matcher, script, files, timeout, codex, default
     [[hook.fixture]]  tool, command, file, prompt, content, expect, contains, decoy
-    [[rule]]          id, summary, file, paths, default
+    [[rule]]          id, summary, file, paths, agentsCovers, default
     [[skill]]         id, dir, default
     [[githook]]       id, summary, name, script, files, default
     [[tool]]          id, summary, files, default
@@ -88,6 +88,8 @@ class Rule:
     file: str
     # Globs of the files the rule covers. Empty means every file.
     paths: tuple[str, ...] = ()
+    # What the AGENTS.md block says the rule covers, in place of `paths`.
+    agents_covers: str | None = None
     default: bool = True
 
 
@@ -305,6 +307,10 @@ def _hook(problems: list[str], where: str, data: Any) -> Hook:
     return hook
 
 
+def _table_cell(text: str) -> str | None:
+    return "must be one line with no |" if set(text) & set("|\n\r") else None
+
+
 def _rule(problems: list[str], where: str, data: Any) -> Rule:
     r = _Reader(problems, where, data)
     file = r.rel_path("file", required=True)
@@ -315,6 +321,7 @@ def _rule(problems: list[str], where: str, data: Any) -> Rule:
         summary=r.text("summary", required=True) or "",
         file=file or "",
         paths=r.texts("paths"),
+        agents_covers=r.text("agentsCovers", check=_table_cell),
         default=r.on_off(),
     )
     r.done()

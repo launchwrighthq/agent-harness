@@ -4,8 +4,9 @@
 The guarded names are `harness.guardedFiles` of the config (default `.env.production` and any
 `*.secret`). In Bash, a command that holds such a name is refused, whatever program it runs: a
 list of readers misses `source`, `< file` and `python3 -c open(...)`. The file tools are refused
-every env file except a `.example`. A credential backup in the tree (`.env.production.bak`,
-`.local/secrets/`) is refused too. The one exemption is the words of an env engine step that
+every env file except a `.example` and a name of `harness.plainEnvFiles` that is not guarded. A
+credential backup in the tree (`.env.production.bak`, `.local/secrets/`) is refused too, also
+the backup of a plain file. The one exemption is the words of an env engine step that
 `env_guard.check_line` clears. docs/hooks.md, "The credential name guard", gives the reasons.
 """
 
@@ -26,14 +27,7 @@ HOOK = "deny-env-reads"
 # Characters a path is made of, so a guarded name ends where one of the others starts.
 NOT_PATH = re.compile(r"[^A-Za-z0-9._@+~/-]+")
 
-# A credential backup: an env file with a backup suffix, or anything under `.local/secrets/`.
-BACKUP_NAME = re.compile(r"\.env(\..+)?\.(bak|backup|orig|old|save)", re.IGNORECASE)
-BACKUP_DIR = re.compile(r"(^|/)\.local/secrets(/|$)")
-
 FILE_TOOLS = {"Read", "Edit", "Write", "MultiEdit", "NotebookEdit", "Grep", "Glob"}
-
-# Every env file but a committed `*.example`: the names that bash-read-guard refuses to a reader.
-ENV_FILE = re.compile(r"\.env(\..+)?")
 
 
 class Guard:
@@ -45,6 +39,7 @@ class Guard:
             (entry, hookio.name_pattern(entry["pattern"]))
             for entry in hookio.patterns(guarded, HOOK)
         ]
+        self.plain = hookio.plain_env_test(cfg, HOOK)
         self.env_commands = hookio.env_commands(cfg)
         configured = hookio.harness_value(cfg, "envCommand")
         self.env_command = configured if isinstance(configured, str) and configured else "ah env"
@@ -57,8 +52,12 @@ class Guard:
         return next((entry for entry, rx in self.guarded if rx.fullmatch(base)), None)
 
     def credential(self, path: str) -> bool:
-        """True for a guarded name, a backup or an env file that is no `.example`."""
-        return self.guarded_entry(path) is not None or is_backup(path) or env_file(path)
+        """True for a guarded name, a backup or a closed env file."""
+        return self.guarded_entry(path) is not None or is_backup(path) or self.closed_env(path)
+
+    def closed_env(self, path: str) -> bool:
+        """True for an env file that is no `.example` and no plain file of the config."""
+        return env_file(path) and not self.plain(path)
 
     def held(self, path: str) -> bool:
         """True for a guarded name or a backup: an `ah env run` of it always asks."""
@@ -88,7 +87,7 @@ class Guard:
         entry = self.guarded_entry(path)
         if entry is not None:
             self.refuse(hookio.basename(path), entry)
-        elif env_file(path):
+        elif self.closed_env(path):
             hookio.deny(
                 f"{hookio.basename(path)} is an env file, and `.claude/rules/lw/secrets.md` "
                 f"forbids reading one. Read `.env.example` for the key names, or run "
@@ -123,12 +122,13 @@ class Guard:
 
 
 def env_file(path: str) -> bool:
+    """True for every env file but a committed `*.example`: the names that bash-read-guard
+    refuses to a reader."""
     base = hookio.basename(path)
-    return ENV_FILE.fullmatch(base) is not None and not base.endswith(".example")
+    return hookio.ENV_NAME.fullmatch(base) is not None and not base.endswith(".example")
 
 
-def is_backup(path: str) -> bool:
-    return BACKUP_NAME.fullmatch(hookio.basename(path)) is not None or bool(BACKUP_DIR.search(path))
+is_backup = hookio.is_backup
 
 
 def main() -> None:

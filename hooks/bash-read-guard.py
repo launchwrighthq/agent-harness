@@ -3,7 +3,8 @@
 
 `deny-env-reads.py` refuses the `guardedFiles` of the config to any command. This hook gates on
 the reader: every other `.env*`, a session file, the key and certificate family and the
-`secretFiles` of the config are refused to `cat`, `awk`, `sed` and the rest. A command that
+`secretFiles` of the config are refused to `cat`, `awk`, `sed` and the rest. An env file of
+`harness.plainEnvFiles` that no guarded or secret entry matches is no credential. A command that
 names no secret gets no verdict, because an `allow` would bypass the permission rules. The hook
 prints only the path that matched, never the contents of a file. The words of an env engine
 step that `env_guard.check_line` clears are left out of the checks, and a reveal of a key that
@@ -487,6 +488,7 @@ class Names:
             hookio.harness_value(cfg, "guardedFiles"), HOOK
         )
         self.extra = [(entry, hookio.name_pattern(entry["pattern"])) for entry in extra]
+        self.plain = hookio.plain_env_test(cfg, HOOK)
         # Names a glob is tested against: a pattern that could expand to one of them reads it.
         self.glob_targets = [".env", ".env.local", ".env.production"] + [
             entry["pattern"] for entry in extra if not re.search(r"[*?]", entry["pattern"])
@@ -1724,7 +1726,7 @@ def is_credential(fragment: str, names: Names, keys: bool) -> bool:
     if base.rstrip(".").endswith(".example"):
         return False
     if SECRET_BASENAME.fullmatch(base) or any(rx.fullmatch(base) for _, rx in names.extra):
-        return True
+        return not names.plain(fragment)
     return keys and KEY_BASENAME.fullmatch(base) is not None
 
 

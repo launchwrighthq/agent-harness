@@ -11,6 +11,8 @@ from typing import Any
 Ah = Callable[..., subprocess.CompletedProcess[str]]
 
 FROM = "--from"
+# In the package of conftest.py, only `plain.md` has no paths.
+ALWAYS = "always-loaded rules: 1 files 13 chars"
 
 
 def read_json(path: Path) -> Any:
@@ -58,7 +60,7 @@ def test_installs_checks_and_selftests_a_plain_repository(
 
     assert checked.returncode == 0, checked.stdout + checked.stderr
     assert selftest.returncode == 0, selftest.stdout + selftest.stderr
-    assert selftest.stdout.splitlines()[-1] == "ah selftest: 7 of 7 fixture runs pass"
+    assert selftest.stdout.splitlines()[-1] == "ah selftest: 11 of 11 fixture runs pass"
     assert "ok   rm-guard codex Bash rm -rf build" in selftest.stdout
 
 
@@ -135,7 +137,7 @@ def test_fails_the_check_and_names_a_skill_edited_by_one_byte(
     checked = ah("check")
 
     assert checked.returncode == 1
-    assert checked.stdout == ".claude/skills/lw-demo/SKILL.md edited\n"
+    assert checked.stdout.splitlines() == [ALWAYS, ".claude/skills/lw-demo/SKILL.md edited"]
     assert "run ah install --project" in checked.stderr
 
 
@@ -149,6 +151,7 @@ def test_names_a_missing_an_extra_and_a_registry_part(repo: Path, package: Path,
 
     assert checked.returncode == 1
     assert checked.stdout.splitlines() == [
+        "always-loaded rules: 1 files 7 chars",
         ".claude/rules/lw/mine.md extra",
         ".claude/rules/lw/plain.md missing",
         ".codex/hooks.json differs",
@@ -167,7 +170,8 @@ def test_reinstalls_with_no_change_and_keeps_the_codex_entry_order(
 
     assert again.returncode == 0, again.stderr
     assert again.stdout.splitlines() == [
-        "ah install: 4 hooks, 2 rules, 1 skills, 1 git hooks; nothing changed"
+        ALWAYS,
+        "ah install: 4 hooks, 2 rules, 1 skills, 1 git hooks; nothing changed",
     ]
     assert snapshot(repo) == first
     codex = read_json(repo / ".codex/hooks.json")["hooks"]
@@ -302,7 +306,7 @@ def test_names_an_edited_harness_entry_beside_a_project_entry(
     ah("install", "--project", FROM, str(package))
 
     found = [line for line in checked.stdout.splitlines() if "a project hook" not in line]
-    assert found[0] == ".claude/settings.json differs"
+    assert found == [ALWAYS, ".claude/settings.json differs"]
     assert ".codex/hooks.json differs" not in found
     pre = read_json(settings)["hooks"]["PreToolUse"]
     assert pre[-1] == PROJECT_ENTRY
@@ -713,6 +717,7 @@ def test_names_each_project_hook_in_the_check_and_keeps_the_exit_code(
         " bash scripts/own-guard.sh",
         ".codex/hooks.json Stop -: a project hook that no manifest declares:"
         " bash scripts/own-guard.sh",
+        ALWAYS,
         "ah check: the installed files match the lockfile",
     ]
 
@@ -885,8 +890,8 @@ def test_reports_an_edited_rule_adapter_until_the_next_install(
     removed = ah("check")
 
     assert stale.returncode == 1
-    assert stale.stdout.splitlines() == [".claude/adapters/rules/plain.md stale"]
-    assert removed.stdout.splitlines() == [".claude/adapters/rules/plain.md stale"]
+    assert stale.stdout.splitlines()[1:] == [".claude/adapters/rules/plain.md stale"]
+    assert removed.stdout.splitlines()[1:] == [".claude/adapters/rules/plain.md stale"]
 
 
 def test_refuses_a_rule_adapter_with_an_unknown_front_matter_key(
@@ -918,6 +923,7 @@ def test_prints_the_size_of_each_installed_rule_and_the_total(
         f".claude/rules/lw/house-style.md {lines[0]} lines {chars[0]} chars",
         f".claude/rules/lw/plain.md {lines[1]} lines {chars[1]} chars",
         f"total {sum(lines)} lines {sum(chars)} chars",
+        f"always-loaded rules: 1 files {chars[1]} chars",
     ]
 
 
@@ -949,4 +955,333 @@ def test_lists_the_project_rules_apart_with_their_own_subtotal(
         ".claude/rules/web/ui.md 1 lines 5 chars",
         "project rules: 2 files 4 lines 24 chars",
         f"total {sum(lines) + 4} lines {sum(chars) + 24} chars",
+        f"always-loaded rules: 3 files {chars[1] + 24} chars",
     ]
+
+
+def write_config(repo: Path, text: str) -> None:
+    (repo / ".agents").mkdir(exist_ok=True)
+    (repo / ".agents/harness.toml").write_text(text, encoding="utf-8")
+
+
+def test_leaves_a_scoped_project_rule_out_of_the_always_loaded_size(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    ah("install", "--project", FROM, str(package))
+    (repo / ".claude/rules/web.md").write_text('---\npaths:\n  - "web/**"\n---\n# Web\n')
+    (repo / ".claude/rules/own.md").write_text("---\ntitle: Own\n---\n# Own\n")
+
+    done = ah("rules")
+
+    assert done.stdout.splitlines()[-1] == "always-loaded rules: 2 files 38 chars"
+
+
+def test_passes_the_check_under_the_rule_cap_and_fails_it_over_the_cap(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    write_config(repo, "[harness.rules]\nmaxChars = 13\n")
+    installed = ah("install", "--project", FROM, str(package))
+    under = ah("check")
+    write_config(repo, "[harness.rules]\nmaxChars = 12\n")
+
+    over = ah("check")
+
+    assert installed.stdout.splitlines()[-2] == f"{ALWAYS}, cap 13"
+    assert under.returncode == 0, under.stdout + under.stderr
+    assert under.stdout.splitlines() == [
+        f"{ALWAYS}, cap 13",
+        "ah check: the installed files match the lockfile",
+    ]
+    assert over.returncode == 1
+    assert over.stdout.splitlines() == [f"{ALWAYS}, over the cap 12"]
+    assert over.stderr == (
+        "ah check: the always-loaded rules hold 13 characters, over harness.rules.maxChars 12."
+        " Three ways down: leave a rule out with harness.disable, scope a rule with"
+        " [harness.rules.paths], or replace a rule body with a rule adapter\n"
+    )
+
+
+def test_refuses_a_rule_cap_that_is_no_count(repo: Path, package: Path, ah: Ah) -> None:
+    write_config(repo, '[harness.rules]\nmaxChars = "small"\n')
+
+    done = ah("install", "--project", FROM, str(package))
+
+    assert done.returncode == 1
+    assert "harness.rules.maxChars must be 0 or a positive integer, not 'small'" in done.stderr
+    assert not (repo / ".claude/agent-harness").exists()
+
+
+def test_installs_a_rule_with_the_paths_of_the_config_in_place_of_its_own(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    write_config(
+        repo,
+        '[harness.rules.paths]\nplain = ["src/**", "*.py"]\nhouse-style = ["guide/**"]\n',
+    )
+
+    installed = ah("install", "--project", FROM, str(package))
+    again = ah("install", "--project", FROM, str(package))
+    checked = ah("check")
+
+    assert installed.returncode == 0, installed.stderr
+    assert (repo / ".claude/rules/lw/plain.md").read_text() == (
+        '---\npaths:\n  - "src/**"\n  - "*.py"\n---\n# Plain rule\n'
+    )
+    house = (repo / ".claude/rules/lw/house-style.md").read_text()
+    agents = (repo / "AGENTS.md").read_text()
+    assert house.startswith('---\npaths:\n  - "guide/**"\n---\n# House style\n')
+    assert "| Plain rule | `src/**`, `*.py` | `.claude/rules/lw/plain.md` |" in agents
+    assert again.stdout.splitlines() == [
+        "always-loaded rules: 0 files 0 chars",
+        "ah install: 3 hooks, 2 rules, 1 skills, 1 git hooks; nothing changed",
+    ]
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+
+
+def test_reports_a_rule_as_stale_when_its_config_paths_change_after_the_install(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    ah("install", "--project", FROM, str(package))
+    write_config(repo, '[harness.rules.paths]\nplain = ["src/**"]\n')
+
+    stale = ah("check")
+    ah("install", "--project", FROM, str(package))
+    write_config(repo, "")
+    removed = ah("check")
+
+    assert stale.returncode == 1
+    assert ".claude/rules/lw/plain.md stale" in stale.stdout.splitlines()
+    assert removed.returncode == 1
+    assert ".claude/rules/lw/plain.md stale" in removed.stdout.splitlines()
+
+
+def test_refuses_config_paths_for_an_unknown_rule_id(repo: Path, package: Path, ah: Ah) -> None:
+    write_config(repo, '[harness.rules.paths]\nplane = ["src/**"]\n')
+
+    done = ah("install", "--project", FROM, str(package))
+
+    assert done.returncode == 1
+    assert (
+        "harness.rules.paths names plane, which no manifest defines as a rule;"
+        " the rule ids are: house-style, plain" in done.stderr
+    )
+    assert not (repo / ".claude/agent-harness").exists()
+
+
+def test_refuses_config_paths_that_are_no_list_of_globs(repo: Path, package: Path, ah: Ah) -> None:
+    write_config(repo, '[harness.rules.paths]\nplain = "src/**"\n')
+
+    done = ah("install", "--project", FROM, str(package))
+
+    assert done.returncode == 1
+    assert "harness.rules.paths.plain must be a list of one or more globs" in done.stderr
+
+
+def test_installs_the_codex_rule_of_the_package_with_its_manifest_paths(repo: Path, ah: Ah) -> None:
+    ah("install", "--project")
+
+    rule = (repo / ".claude/rules/lw/codex.md").read_text()
+
+    assert rule.startswith('---\npaths:\n  - "AGENTS.md"\n  - ".codex/**"\n---\n# Codex\n')
+
+
+SECRETS_RULE = """
+[[rule]]
+id = "secrets"
+summary = "Secrets"
+file = "rules/secrets.md"
+"""
+SECRETS_TEXT = "# Secrets\n\n- Never read a credential file.\n"
+PLAIN_FILES = '[harness]\nplainEnvFiles = ["env.public", "apps/web/env.dev"]\n'
+
+
+def add_secrets_rule(package: Path) -> None:
+    (package / "harness.toml").write_text((package / "harness.toml").read_text() + SECRETS_RULE)
+    (package / "rules/secrets.md").write_text(SECRETS_TEXT)
+
+
+def test_ends_the_secrets_rule_with_the_plain_env_files_of_the_config(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    add_secrets_rule(package)
+    write_config(repo, PLAIN_FILES)
+
+    installed = ah("install", "--project", FROM, str(package))
+    again = ah("install", "--project", FROM, str(package))
+    checked = ah("check")
+
+    assert installed.returncode == 0, installed.stderr
+    assert (repo / ".claude/rules/lw/secrets.md").read_text() == (
+        f"{SECRETS_TEXT}\n"
+        "This project lets an agent read these env files: `env.public`, `apps/web/env.dev`.\n"
+    )
+    assert again.stdout.splitlines()[-1].endswith("nothing changed")
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+
+
+def test_drops_the_line_of_the_plain_env_files_when_the_config_drops_them(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    add_secrets_rule(package)
+    write_config(repo, PLAIN_FILES)
+    ah("install", "--project", FROM, str(package))
+    write_config(repo, "")
+
+    stale = ah("check")
+    ah("install", "--project", FROM, str(package))
+
+    assert stale.returncode == 1
+    assert ".claude/rules/lw/secrets.md stale" in stale.stdout.splitlines()
+    assert (repo / ".claude/rules/lw/secrets.md").read_text() == SECRETS_TEXT
+
+
+def test_refuses_a_plain_env_file_that_a_guard_list_also_names(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    ah("install", "--project", FROM, str(package))
+    first = snapshot(repo)
+    write_config(
+        repo,
+        '[harness]\nplainEnvFiles = ["env.public", "env.keys"]\nsecretFiles = ["env.keys"]\n',
+    )
+
+    checked = ah("check")
+    installed = ah("install", "--project", FROM, str(package))
+
+    message = (
+        "harness.plainEnvFiles names env.keys, which the entry env.keys of harness.secretFiles"
+        " matches, so the guards still refuse it; remove it from one of the two lists"
+    )
+    assert checked.returncode == 1
+    assert checked.stderr == f"ah check: {message}\n"
+    assert installed.returncode == 1
+    assert installed.stderr == f"ah install: {message}\n"
+    now = snapshot(repo)
+    del first[".agents/harness.toml"], now[".agents/harness.toml"]
+    assert now == first
+
+
+def test_refuses_a_plain_env_file_that_the_default_guarded_files_name(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    write_config(repo, '[harness]\nplainEnvFiles = ["api.secret"]\n')
+
+    done = ah("install", "--project", FROM, str(package))
+
+    assert done.returncode == 1
+    assert (
+        "harness.plainEnvFiles names api.secret, which the entry *.secret of"
+        " harness.guardedFiles matches" in done.stderr
+    )
+
+
+def test_refuses_a_plain_env_file_that_a_guard_pattern_matches(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    ah("install", "--project", FROM, str(package))
+    write_config(
+        repo,
+        '[harness]\nplainEnvFiles = [".env.local.dev"]\n'
+        'guardedFiles = [{ pattern = ".env.local.*", hint = "Ask the owner." }]\n',
+    )
+
+    checked = ah("check")
+    installed = ah("install", "--project", FROM, str(package))
+
+    message = (
+        "harness.plainEnvFiles names .env.local.dev, which the entry .env.local.* of"
+        " harness.guardedFiles matches, so the guards still refuse it; remove it from one of"
+        " the two lists"
+    )
+    assert (checked.returncode, checked.stderr) == (1, f"ah check: {message}\n")
+    assert (installed.returncode, installed.stderr) == (1, f"ah install: {message}\n")
+
+
+def test_refuses_a_plain_env_file_entry_that_is_a_pattern(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    ah("install", "--project", FROM, str(package))
+    write_config(repo, '[harness]\nplainEnvFiles = [".env.local", ".env.dev?"]\n')
+
+    checked = ah("check")
+    installed = ah("install", "--project", FROM, str(package))
+
+    message = (
+        "harness.plainEnvFiles names '.env.dev?', which is no exact file name; write each file"
+        " name in full, with no * and no ?"
+    )
+    assert (checked.returncode, checked.stderr) == (1, f"ah check: {message}\n")
+    assert (installed.returncode, installed.stderr) == (1, f"ah install: {message}\n")
+
+
+def test_installs_with_a_guard_entry_that_is_a_table_with_a_hint(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    write_config(
+        repo,
+        "[harness]\n"
+        'guardedFiles = [".env.production", { pattern = "*.secret", hint = "Ask the owner." }]\n'
+        'secretFiles = [{ pattern = "deploy.keys" }]\n',
+    )
+
+    installed = ah("install", "--project", FROM, str(package))
+    checked = ah("check")
+    selftest = ah("selftest", engine=repo / ".claude/agent-harness/bin/ah")
+
+    assert installed.returncode == 0, installed.stderr
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+    assert selftest.returncode == 0, selftest.stdout + selftest.stderr
+
+
+def test_prints_every_file_for_the_codex_rule_in_the_agents_block(repo: Path, ah: Ah) -> None:
+    write_config(repo, '[harness.rules.paths]\ncodex = [".codex/**"]\n')
+
+    ah("install", "--project")
+
+    rule = (repo / ".claude/rules/lw/codex.md").read_text()
+    agents = (repo / "AGENTS.md").read_text()
+    assert rule.startswith('---\npaths:\n  - ".codex/**"\n---\n# Codex\n')
+    assert (
+        "| Codex: hooks, trust and the skill adapters | every file | `.claude/rules/lw/codex.md` |"
+        in agents.splitlines()
+    )
+
+
+def test_writes_the_global_hooks_choice_to_the_git_config_of_the_repository(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    first = ah("install", "--project", FROM, str(package))
+    default = git_config(repo, "harness.globalHooks")
+    write_config(repo, '[harness.githooks]\nglobal = "skip"\n')
+    stale = ah("check")
+
+    second = ah("install", "--project", FROM, str(package))
+    again = ah("install", "--project", FROM, str(package))
+    checked = ah("check")
+
+    assert "set harness.globalHooks run" in first.stdout.splitlines()
+    assert default == "run\n"
+    assert stale.returncode == 1
+    assert "harness.globalHooks differs" in stale.stdout.splitlines()
+    assert second.stdout.splitlines() == [
+        "set harness.globalHooks skip",
+        ALWAYS,
+        "ah install: 3 hooks, 2 rules, 1 skills, 1 git hooks; 1 changes",
+    ]
+    assert git_config(repo, "harness.globalHooks") == "skip\n"
+    assert again.stdout.splitlines()[-1].endswith("nothing changed")
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+
+
+def test_refuses_a_global_hooks_choice_other_than_run_and_skip(
+    repo: Path, package: Path, ah: Ah
+) -> None:
+    write_config(repo, '[harness.githooks]\nglobal = "off"\n')
+
+    done = ah("install", "--project", FROM, str(package))
+
+    assert done.returncode == 1
+    assert done.stderr == (
+        'ah install: config key harness.githooks.global must be "run" or "skip", not \'off\'\n'
+    )
+    assert not (repo / ".claude/agent-harness").exists()

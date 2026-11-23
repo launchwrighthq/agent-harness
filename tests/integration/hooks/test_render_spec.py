@@ -140,6 +140,22 @@ def test_reports_a_refused_render_with_the_renderer_message(root: Path) -> None:
     )
 
 
+def test_renders_a_missing_image_as_a_box_and_warns_in_placeholder_mode(root: Path) -> None:
+    write(root, ".agents/harness.toml", '[specs]\nmissingAssets = "placeholder"\n')
+    source = write(root, "docs/specs/2026-01-01-a.md", SPEC + "\n![Board](assets/board.svg)\n")
+
+    done = hook(root, {"hook_event_name": "PostToolUse", "tool_input": {"file_path": str(source)}})
+
+    context = json.loads(done.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert context.startswith("Rendered the spec.")
+    assert (
+        f"\nwarning: {source}:10: the image assets/board.svg has no file at "
+        f"{root}/docs/specs/assets/board.svg; the page shows a placeholder"
+    ) in context
+    page = (root / "docs/specs/dist/2026-01-01-a.html").read_text(encoding="utf-8")
+    assert "image missing: assets/board.svg" in page
+
+
 def test_renders_a_spec_in_a_folder_that_the_config_names(root: Path) -> None:
     write(root, ".agents/harness.toml", '[specs]\ndirs = ["design"]\n')
     source = write(root, "design/a.md", SPEC)

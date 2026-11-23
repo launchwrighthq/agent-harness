@@ -3,7 +3,8 @@
 `ah install [--project] [--manifest <path> ...] [--from <package root>] [--replace]`
 `ah install --global [--from <package root>]`
 `ah check [--global]`
-`ah rules`: each installed rule and each project rule of `.claude/rules/`, with subtotals
+`ah rules`: each installed rule and each project rule of `.claude/rules/`, with subtotals and the
+always-loaded size
 """
 
 from __future__ import annotations
@@ -85,10 +86,13 @@ def check(argv: list[str]) -> int:
     from agent_harness import config
     from agent_harness.install.home import check_global, claude_home
     from agent_harness.install.project import (
+        always_loaded_line,
         check_project,
         duplicate_lines,
         machine_paths,
+        over_cap,
         project_hooks,
+        rule_cap,
     )
 
     parser = argparse.ArgumentParser(
@@ -97,16 +101,20 @@ def check(argv: list[str]) -> int:
     )
     parser.add_argument("--global", dest="global_", action="store_true")
     args = parser.parse_args(argv)
+    over = None
     if args.global_:
         diffs, again, prefix = check_global(claude_home()), "ah install --global", "~/.claude/"
     else:
         root = config.find_root()
         cfg = config.load(root)
+        cap = rule_cap(cfg)
         diffs, again, prefix = check_project(root, cfg), "ah install --project", ""
         # Information only: a project hook, a likely duplicate or a machine path changes no
         # exit code.
         for line in [*project_hooks(root), *duplicate_lines(root, cfg), *machine_paths(cfg)]:
             print(line)
+        print(always_loaded_line(root, cap))
+        over = over_cap(root, cap)
     for path, kind in diffs:
         print(f"{prefix}{path} {kind}")
     if diffs:
@@ -115,6 +123,9 @@ def check(argv: list[str]) -> int:
             f" change facts in .agents/harness.toml, then run {again}",
             file=sys.stderr,
         )
+    if over:
+        print(f"ah check: {over}", file=sys.stderr)
+    if diffs or over:
         return 1
     print("ah check: the installed files match the lockfile")
     return 0
@@ -122,13 +133,18 @@ def check(argv: list[str]) -> int:
 
 def rules(argv: list[str]) -> int:
     from agent_harness import config
-    from agent_harness.install.project import project_rule_sizes, rule_sizes
+    from agent_harness.install.project import (
+        always_loaded_line,
+        project_rule_sizes,
+        rule_cap,
+        rule_sizes,
+    )
 
     argparse.ArgumentParser(
         prog="ah rules",
         description=(
             "Print each installed rule and each project rule of .claude/rules/ with its line"
-            " count and character count."
+            " count and character count, then the size of the rules that load in every session."
         ),
     ).parse_args(argv)
     root = config.find_root()
@@ -144,4 +160,5 @@ def rules(argv: list[str]) -> int:
             )
     both = [*sizes, *own]
     print(f"total {sum(s[1] for s in both)} lines {sum(s[2] for s in both)} chars")
+    print(always_loaded_line(root, rule_cap(config.load(root))))
     return 0

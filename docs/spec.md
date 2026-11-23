@@ -17,6 +17,7 @@ The `[specs]` section of `.agents/harness.toml` holds the spec facts. Every key 
 | `dirs` | `["docs/specs", "docs/superpowers/plans"]` | The spec folders. A folder whose last part is `plans` holds plans, and its pages carry the PLAN badge. Every other folder holds specifications. |
 | `archive` | `archive` | The folder name, inside each spec folder, for settled documents. |
 | `out` | `dist` | The folder name, inside each spec folder, for rendered pages. Keep it out of git. |
+| `missingAssets` | `refuse` | What `spec render` does with an image under `assets/` that has no file. `refuse` refuses the render. `placeholder` writes the page with a box in place of the image and prints a warning. Another value is a config error. See [Missing images](#missing-images). |
 | `auditDir` | `.claude/state` | The audit store, relative to the main checkout, so every worktree shares one store. An absolute path is used as it is. |
 | `kinds` | `{}` | Per spec folder, a table with `kind` (`spec`, `plan` or `qa`), `label` (the badge word) and `statuses` (the vocabulary the renderer accepts). `label` and `statuses` default to those of the kind. The key names a folder of `dirs` or a folder under one, else the config fails and names the key. A folder under a spec folder is a folder of its own, with its own `out` folder and, unless its kind is `qa`, its own `archive` folder: the longest folder that holds a file decides its kind and its page for `render`, `check` and `census`. See [QA reports](#qa-reports). |
 | `checks` | `["archive", "superseded", "pointers", "assets"]` | The checks that `spec check` runs. |
@@ -56,8 +57,8 @@ there. `spec audit digest` and `spec audit record` refuse a named report, and `-
 
 | Command | Behavior |
 |---|---|
-| `spec render <file.md> [--out <dir>]` | Writes the page to the `out` folder of the source's spec folder, mirroring any `archive/` below it. `--out` names another folder, which must sit inside an `out` folder. It refuses a page that git tracks and an image whose file is missing. |
-| `spec render --all` | Renders every source of every spec folder and its archive. A `README.md` describes its folder, so it is no source, as in `census` and `check`. A refused source does not stop the rest: it prints one line that starts with the source and gives the reason, and the command then exits 1. |
+| `spec render [--strict] <file.md> [--out <dir>]` | Writes the page to the `out` folder of the source's spec folder, mirroring any `archive/` below it. `--out` names another folder, which must sit inside an `out` folder. It refuses a page that git tracks. It refuses an image whose file is missing, unless `specs.missingAssets` is `placeholder`. `--strict` refuses such an image in each mode. |
+| `spec render [--strict] --all` | Renders every source of every spec folder and its archive. It follows `specs.missingAssets` and `--strict` like the render of one file. A `README.md` describes its folder, so it is no source, as in `census` and `check`. A refused source does not stop the rest: it prints one line that starts with the source and gives the reason, and the command then exits 1. |
 | `spec check` | Checks the tracked tree: a settled document outside the archive or an unsettled one inside it, a `superseded-by` path, every spec path in a file of `pointerFiles` outside an archive, and an asset that no document names. Exits 1 on a finding. |
 | `spec census [--json]` | Counts the tracked documents of each folder by status. Lists a name in an active folder and its archive, a settled status with no evidence, and a document with no status. |
 | `spec verify <old.html> <new.md>` | Renders the Markdown and lists each word of the old page that the new page lost. Exits 1 on a loss. |
@@ -92,6 +93,38 @@ marker stays code. A paragraph indented under the item after the block stays in 
 A fenced code block in an item refuses a line at or left of the item marker, and the refusal says
 to indent the line under the item text.
 
+### Missing images
+
+An image or a video names a file as `assets/<file>`. `specs.missingAssets` decides what the
+renderer does when that file does not exist:
+
+| Mode | Page | Output | Exit |
+|---|---|---|---|
+| `refuse` (default) | None. | On stderr: `<file>:<line>: the image assets/<file> has no file at <folder>/assets/<file>` | 1 |
+| `placeholder` | Written. Each such image is `<span class="missing-asset">image missing: assets/<file></span>`, a box with a dashed frame. | On stderr, one line per image: `warning: <file>:<line>: the image assets/<file> has no file at <folder>/assets/<file>; the page shows a placeholder`. On stdout: `wrote <page> (<n> sections)` | 0 |
+
+```toml
+[specs]
+missingAssets = "placeholder"
+```
+
+Use `placeholder` while a spec waits for its boards, so the text has a review page before the
+images exist. A missing `.mp4` or `.webm` gets the same box with the same text.
+
+`ah spec render --strict` refuses a missing image in each mode, with the message and the exit
+code of the mode `refuse`. Run it before a spec lands, so no page with a box reaches the base
+branch. `--strict` can stand at any position, and it works with `--all`. With `--all` in the
+mode `placeholder`, a spec with a box counts as rendered.
+
+Two refusals stay in each mode, with or without `--strict`: an inline `data:` image, and an
+image path outside `assets/`.
+
+A value other than `refuse` and `placeholder` stops the command at exit 1 with no page:
+`ah spec: specs.missingAssets must be one of refuse, placeholder, got '<value>'`.
+
+The template changed by the one CSS rule `.missing-asset`, so each page differs from a page of
+0.2.11 by that rule.
+
 ## The audit store
 
 | File | Writer | Reader |
@@ -105,5 +138,5 @@ to indent the line under the item text.
 
 | Hook | Events | Behavior |
 |---|---|---|
-| `render-spec` | PostToolUse (Write, Edit), Stop | Renders a changed spec. At Stop it also renders a spec that a shell command wrote, and holds a turn whose reply links a page that does not exist. It renders only inside `CLAUDE_PROJECT_DIR` and its `.claude/worktrees/`. |
+| `render-spec` | PostToolUse (Write, Edit), Stop | Renders a changed spec. At Stop it also renders a spec that a shell command wrote, and holds a turn whose reply links a page that does not exist. It renders only inside `CLAUDE_PROJECT_DIR` and its `.claude/worktrees/`. It follows `specs.missingAssets` of the checkout that it renders in: in the mode `placeholder` it adds each `warning:` line after the page link. It has no strict mode. |
 | `goal-spec` | Stop | Holds a turn until the saved audit of each goal spec shows zero open rows on the current base commit. |

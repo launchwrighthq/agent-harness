@@ -26,7 +26,7 @@ from urllib.parse import unquote
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from agent_harness import HarnessError  # noqa: E402
+from agent_harness import HarnessError, config  # noqa: E402
 from agent_harness.spec import layout, render  # noqa: E402
 
 # A folder's own README describes the folder. It has no header block and is not a spec.
@@ -139,14 +139,15 @@ def page_for(source: Path, root: Path) -> str:
 def render_line(root: Path, source: Path) -> str:
     """Render `source` with the engine beside this hook, and give the line for the model."""
     where = layout.for_root(root)
+    warnings: list[str] | None = [] if render.placeholder_mode(config.load(root)) else None
     try:
-        render.render_file(str(source), where, cwd=root)
+        render.render_file(str(source), where, cwd=root, warnings=warnings)
     except render.SpecError as error:
         return f"The spec did not render, so there is no page yet: {error}"
     page = render.dist_for(str(source), where)
-    note = ""
+    note = "".join(f"\n{line}" for line in render.warning_lines(warnings or []))
     if WORKTREES in str(root):
-        note = (
+        note += (
             "\nThis page exists in this worktree only. "
             "After a landing, give the link that land.sh prints."
         )

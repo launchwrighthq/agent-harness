@@ -282,6 +282,14 @@ article img,article video{
    video height crops every phone recording to a letterbox. */
 article video{background:#000}
 
+/* `specs.missingAssets = "placeholder"`: the box that stands for an image with no file. */
+.missing-asset{
+  display:block;margin:0 0 1.6rem;padding:2rem 1rem;text-align:center;
+  border:1px dashed var(--rule);border-radius:6px;background:var(--surface);
+  font-family:var(--mono);font-size:.85rem;overflow-wrap:anywhere;
+}
+td .missing-asset{margin-bottom:0}
+
 /* Every article image opens in the gallery below: fitted first, actual size on a second click,
    the arrow keys step through the page's images in document order. */
 article img{cursor:zoom-in}

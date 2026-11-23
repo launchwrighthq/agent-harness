@@ -131,11 +131,27 @@ SECTION_DEFAULTS: dict[str, dict[str, Any]] = {
         "testCommand": "",
         "landCommand": "bash .claude/skills/lw-land/land.sh",
         # The lw-land options. An empty value turns the option off.
-        "land": {"greenToken": "", "probeCommand": "", "afterMerge": "", "overlapExclude": []},
+        "land": {
+            "greenToken": "",
+            "probeCommand": "",
+            "afterMerge": "",
+            "overlapExclude": [],
+            # Named gate modes: `LAND_GATE=<name>` runs the command. `gateCommand` is `full`.
+            "gates": {},
+            "defaultGate": "full",
+            # Runs after a red gate, and the land command prints its output.
+            "explainCommand": "",
+        },
         "envCommand": "python3 .claude/agent-harness/bin/ah env",
         "memoryIndex": ".claude/memory/memory.md",
         "guardedFiles": [".env.production", "*.secret"],
         "secretFiles": [],
+        # Env files that an agent may read. A name that is also guarded stays refused.
+        "plainEnvFiles": [],
+        # `run` or `skip`: whether the git hook dispatcher runs the hooks of the global path.
+        "githooks": {"global": "run"},
+        # `maxChars`: a cap on the always-loaded rule text, 0 for none. `paths`: globs per rule id.
+        "rules": {"maxChars": 0, "paths": {}},
         "disable": [],
         "enable": [],
         # Extra manifests of the project, relative to the root. `ah install` adds `--manifest`.
@@ -158,6 +174,8 @@ SECTION_DEFAULTS: dict[str, dict[str, Any]] = {
         "dirs": ["docs/specs", "docs/superpowers/plans"],
         "archive": "archive",
         "out": "dist",
+        # `refuse` or `placeholder`: what `ah spec render` does with an image that has no file.
+        "missingAssets": "refuse",
         # Relative to the main checkout, so every worktree shares one audit store.
         "auditDir": ".claude/state",
         # The checks that `ah spec check` runs, and the git pathspecs it reads pointers from.

@@ -6,8 +6,10 @@
 # The base branch and the gate are `harness.baseBranch` and `harness.gateCommand` of
 # `.agents/harness.toml`, read with `ah config get`. The `ah` engine is the project install
 # (`.claude/agent-harness/bin/ah`), else the package beside this script, else the global install.
-# Dials: LAND_ATTEMPTS (3), LAND_GATE (1; 0 skips the gate and the report must say so),
-# LAND_PEER_WAIT (60 s), LAND_PEER_TRIES (10), LAND_TARGET (the base branch to land on).
+# Dials: LAND_ATTEMPTS (3), LAND_GATE (1 is the mode of `harness.land.defaultGate`; a mode name
+# runs that mode; 0 skips the gate and the report must say so), LAND_PEER_WAIT (60 s),
+# LAND_PEER_TRIES (10), LAND_TARGET (the base branch to land on).
+# The gate modes: `full` is `harness.gateCommand`, each other one is a key of `harness.land.gates`.
 # The optional `harness.land` keys are in the docs/hooks.md table of the package.
 #
 # Exit codes: 0 landed, 2 the gate is red, 3 a merge conflict, 4 the push did not land,
@@ -56,6 +58,14 @@ gate_command=$(setting harness.gateCommand) || die "cannot read harness.gateComm
 green_token=$(setting harness.land.greenToken) || die "cannot read harness.land.greenToken with $ah" 5
 probe_command=$(setting harness.land.probeCommand) || die "cannot read harness.land.probeCommand with $ah" 5
 after_merge=$(setting harness.land.afterMerge) || die "cannot read harness.land.afterMerge with $ah" 5
+explain_command=$(setting harness.land.explainCommand) || die "cannot read harness.land.explainCommand with $ah" 5
+default_gate=$(setting harness.land.defaultGate) || die "cannot read harness.land.defaultGate with $ah" 5
+gate_names=$(setting harness.land.gates | python3 -c 'import json, sys
+gates = json.load(sys.stdin)
+if not isinstance(gates, dict) or not all(isinstance(c, str) for c in gates.values()):
+    sys.exit(1)
+print("\n".join(gates))') ||
+  die "cannot read harness.land.gates with $ah. It is a table of mode names and commands." 5
 excluded=$(setting harness.land.overlapExclude |
   python3 -c 'import json, sys; print("\n".join(json.load(sys.stdin)))') ||
   die "cannot read harness.land.overlapExclude with $ah. It is a list of paths." 5
@@ -64,8 +74,43 @@ while IFS= read -r path; do
   [[ -z $path ]] || exclude+=(":(exclude,top)$path")
 done <<<"$excluded"
 [[ -n $base ]] || die "harness.baseBranch is empty. Set it in .agents/harness.toml." 5
-if [[ -z $gate_command && $GATE != 0 ]]; then
-  die "harness.gateCommand is empty. Set it in .agents/harness.toml, or ask the user for LAND_GATE=0." 5
+
+# The mode name is a part of the gate mark's file name.
+mode_name='^[A-Za-z][A-Za-z0-9_-]*$'
+known_modes="full, none"
+while IFS= read -r name; do
+  [[ -n $name ]] || continue
+  [[ $name != full && $name != none ]] ||
+    die "harness.land.gates holds the mode $name. harness.gateCommand is the mode full, and LAND_GATE=0 is the mode none. Remove the key." 5
+  [[ $name =~ $mode_name ]] ||
+    die "harness.land.gates holds the mode $name. A mode name starts with a letter and holds letters, digits, - and _." 5
+  known_modes="$known_modes, $name"
+done <<<"$gate_names"
+case $GATE in
+0 | none)
+  gate_mode=none
+  mode_source="LAND_GATE=$GATE"
+  ;;
+1)
+  gate_mode=$default_gate
+  mode_source="harness.land.defaultGate"
+  [[ $gate_mode != none ]] ||
+    die "harness.land.defaultGate is none. Only LAND_GATE=0 skips the gate. Set a mode that runs a command." 5
+  ;;
+*)
+  gate_mode=$GATE
+  mode_source="LAND_GATE=$GATE"
+  ;;
+esac
+if [[ $gate_mode == full ]]; then
+  [[ -n $gate_command ]] ||
+    die "harness.gateCommand is empty. Set it in .agents/harness.toml, or ask the user for LAND_GATE=0." 5
+elif [[ $gate_mode != none ]]; then
+  grep -qxF -- "$gate_mode" <<<"$gate_names" ||
+    die "the gate mode $gate_mode ($mode_source) is unknown. The modes are: $known_modes." 5
+  gate_command=$(setting "harness.land.gates.$gate_mode") ||
+    die "cannot read harness.land.gates.$gate_mode with $ah" 5
+  [[ -n $gate_command ]] || die "harness.land.gates.$gate_mode is empty. Set the command of the mode." 5
 fi
 
 # The checkout that holds the base branch, which is the one a push updates.
@@ -74,18 +119,38 @@ base_checkout() {
     awk -v ref="refs/heads/$base" '/^worktree /{w=substr($0,10)} $1=="branch" && $2==ref {print w; exit}'
 }
 
-# The gate per tree, so a retry after a peer collision does not pay for the gate twice.
+# The mark of a green gate: `<tree>` for the mode `full`, `<tree>.<mode>` for each other mode.
+gate_mark() {
+  if [[ $2 == full ]]; then
+    printf '%s\n' "$gate_marks/$1"
+  else
+    printf '%s\n' "$gate_marks/$1.$2"
+  fi
+}
+
+# The mode whose green gate covers the tree of the last `gate` call. Empty when no gate ran.
+green_mode=""
+
+# The gate per tree and mode, so a retry after a peer collision does not pay for the gate twice.
+# A `full` mark covers every mode. Another mark covers its own mode only.
 # A redirect and never a pipe: a pipeline reports the last command's status, not the gate's.
 gate() {
   local tree marker log
   tree=$(git rev-parse 'HEAD^{tree}')
-  marker="$gate_marks/$tree"
-  if [[ -f $marker ]]; then
-    say "gate: already green on this tree ($tree), not running it again"
+  marker=$(gate_mark "$tree" "$gate_mode")
+  green_mode=""
+  say "gate: mode $gate_mode"
+  if [[ -f $(gate_mark "$tree" full) ]]; then
+    green_mode=full
+  elif [[ $gate_mode != none && -f $marker ]]; then
+    green_mode=$gate_mode
+  fi
+  if [[ -n $green_mode ]]; then
+    say "gate: already green on this tree ($tree) in mode $green_mode, not running it again"
     return 0
   fi
-  if [[ $GATE == 0 ]]; then
-    say "gate: SKIPPED by LAND_GATE=0. The report must say the gate was not run."
+  if [[ $gate_mode == none ]]; then
+    say "gate: SKIPPED by LAND_GATE=$GATE. The report must say the gate was not run."
     return 0
   fi
   mkdir -p "$gate_marks"
@@ -94,9 +159,10 @@ gate() {
   log="$gate_marks/$tree-$$.log"
   say "gate: $gate_command, logging to $log"
   # A gate that can end early with exit 0, such as a cancelled run, proves green with a line.
-  if (cd "$root" && bash -c "$gate_command") >"$log" 2>&1; then
+  if (cd "$root" && LAND_MERGED_BASE=$merged LAND_ROOT=$root bash -c "$gate_command") >"$log" 2>&1; then
     if [[ -z $green_token ]] || grep -qxF -- "$green_token" "$log"; then
       : >"$marker"
+      green_mode=$gate_mode
       say "gate: green"
       return 0
     fi
@@ -108,6 +174,34 @@ gate() {
 
 results() {
   python3 "$ah" land-results "$1" "$2"
+}
+
+# One line per failed step of the result record: the step, its exit code and its failed files.
+failed_steps() {
+  local log=$1 lines verdict line
+  lines=$(results steps "$log" 2>&1)
+  verdict=$?
+  if [[ $verdict -eq 3 ]]; then
+    say "gate: the log has no result record" >&2
+  elif [[ $verdict -ne 0 ]]; then
+    say "gate: the result record of $log could not be read. $lines" >&2
+  elif [[ -z $lines ]]; then
+    say "gate: the result record names no failed step" >&2
+  else
+    say "gate: red at these steps of the result record:" >&2
+    while IFS= read -r line; do printf 'land:   %s\n' "$line" >&2; done <<<"$lines"
+  fi
+}
+
+# A gate such as a remote runner keeps the log of a failed step in its own store. The
+# `harness.land.explainCommand` command prints it. Its exit code never changes the landing's.
+explain() {
+  local log=$1 verdict
+  [[ -n $explain_command ]] || return 0
+  say "explain: $explain_command" >&2
+  (cd "$root" && LAND_GATE_LOG=$log LAND_ROOT=$root bash -c "$explain_command") >&2
+  verdict=$?
+  [[ $verdict -eq 0 ]] || say "explain: the command failed (exit $verdict). The gate verdict stays." >&2
 }
 
 # The base can be red, and its failures are not the branch's to fix. Run the failed files again
@@ -330,14 +424,18 @@ for attempt in $(seq 1 "$ATTEMPTS"); do
   run_after_merge "$before"
 
   if [[ $carry == 1 ]]; then
-    mkdir -p "$gate_marks"
-    : >"$gate_marks/$(git rev-parse 'HEAD^{tree}')"
+    # The mark keeps the mode of the gate it carries. A skipped gate leaves no mark.
+    if [[ -n $green_mode ]]; then
+      mkdir -p "$gate_marks"
+      : >"$(gate_mark "$(git rev-parse 'HEAD^{tree}')" "$green_mode")"
+    fi
     carry=0
   fi
 
   gate_green=1
   if ! gate; then
     gate_green=0
+    failed_steps "$gate_log"
     unaccounted=""
     [[ -z $probe_command ]] || unaccounted=$(results unaccounted "$gate_log") ||
       die "the gate is red, and its log $gate_log could not be read." 2
@@ -347,6 +445,7 @@ for attempt in $(seq 1 "$ATTEMPTS"); do
       say "gate: red, and $base moved. Merging it again, since it may carry the fix."
       continue
     else
+      explain "$gate_log"
       tail -30 "$gate_log" >&2
       if [[ -n $unaccounted ]]; then
         printf 'land:   %s\n' $unaccounted >&2
@@ -429,6 +528,9 @@ while read -r path; do
   if (cd "$checkout" && python3 "$ah" spec render "$checkout/$path") >"$report" 2>&1; then
     page=$(sed -n 's/^wrote \(.*\) ([0-9]* sections)$/\1/p' "$report")
     say "page: file://$page"
+    while IFS= read -r line; do
+      [[ $line != warning:* ]] || say "page: $line"
+    done <"$report"
   else
     say "page: $path did not render in $checkout: $(tail -1 "$report")"
   fi

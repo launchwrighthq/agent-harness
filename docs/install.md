@@ -10,8 +10,8 @@ a fact in `.agents/harness.toml`, never in an installed file.
 |---|---|
 | `ah install [--project] [--manifest <path> ...] [--from <package root>] [--replace]` | Installs the package and each extra manifest into the git repository of the current folder. `--project` is the default. `--replace` replaces a project copy (see below). |
 | `ah install --global [--from <package root>]` | Installs the engine and the skills into `~/.claude`. No hook, no rule, no registry and no git hook. |
-| `ah check [--global]` | Exits 1 and prints `<path> <kind>` for each part that differs. Exits 0 when every part matches. |
-| `ah rules` | Prints each installed rule and each project rule of `.claude/rules/` with its line count and character count, a subtotal per group, then the total. |
+| `ah check [--global]` | Exits 1 and prints `<path> <kind>` for each part that differs. Also exits 1 when the always-loaded rules are over `harness.rules.maxChars`. Exits 0 when every part matches. |
+| `ah rules` | Prints each installed rule and each project rule of `.claude/rules/` with its line count and character count, a subtotal per group, the total, then the size of the always-loaded rules. |
 | `ah selftest` | Runs every fixture of every enabled hook of the installed manifests, for Claude Code and through the Codex adapter. |
 | `ah lint <path ...>` | Prints `file:line:col rule message` for each banned word, banned filler or em dash in Markdown and in code comments. Exits 1 on a finding. |
 
@@ -29,10 +29,10 @@ another root, for a project in a subfolder of a larger repository. `install`, `c
 |---|---|
 | `.claude/agent-harness/` | The engine: `bin/`, `src/`, `hooks/`, `tools/`, `codex/` and `harness.toml` of the package. |
 | `.claude/agent-harness/manifests/<name>/` | The copy of each extra manifest and of its hook and tool files. |
-| `.claude/agent-harness/lock.json` | The package version, the installed manifests, a sha256 per file, the executable files, the skills and the skill links. |
+| `.claude/agent-harness/lock.json` | The package version, the installed manifests, a sha256 per file, the executable files, the skills and the skill links. It also holds a sha256 per rule adapter, and the table `scoped` when the config gives a rule its paths or its generated line. |
 | `.claude/skills/<id>/` | Every file of each enabled skill. |
-| `.claude/rules/lw/<file>` | Each enabled rule. A rule with `paths` gets a `paths:` front matter block. |
-| `.githooks/<name>` | The git hook dispatcher, one copy per client-side hook name (see "Git hooks" in `docs/hooks.md`). `.githooks/harness/` holds each enabled git hook and its files. `core.hooksPath` of the repository config becomes the absolute path of `.githooks/` in the main checkout when it is unset or the relative `.githooks`. `receive.denyCurrentBranch` becomes `updateInstead` when it is unset, so the `lw-land` push updates the base checkout. |
+| `.claude/rules/lw/<file>` | Each enabled rule. A rule with `paths` gets a `paths:` front matter block. `[harness.rules.paths]` replaces the paths of a rule. |
+| `.githooks/<name>` | The git hook dispatcher, one copy per client-side hook name (see "Git hooks" in `docs/hooks.md`). `.githooks/harness/` holds each enabled git hook and its files. `core.hooksPath` of the repository config becomes the absolute path of `.githooks/` in the main checkout when it is unset or the relative `.githooks`. `receive.denyCurrentBranch` becomes `updateInstead` when it is unset, so the `lw-land` push updates the base checkout. The git config key `harness.globalHooks` gets the value of `harness.githooks.global`. |
 | `.claude/settings.json` | Only the harness entries of the `hooks` key. Every other byte and every project hook stay as the project wrote them. |
 | `.codex/hooks.json` | Only the harness entries of the `hooks` key. Each one runs the hook through the Codex adapter. Every project hook stays. |
 | `.agents/skills/<id>` | A link to `../../.claude/skills/<id>` for each skill, project skills too. A project skill is a folder in `.claude/skills/` with a `SKILL.md` that no manifest installs and git does not ignore. An ignored folder is local to one checkout, so no link and no `AGENTS.md` line names it. The install never writes into a project skill. |
@@ -100,6 +100,75 @@ total 94 lines 5430 chars
 ```
 
 A project with no rule of its own gets no subtotal lines.
+
+## Rule sizes and scopes
+
+Claude Code loads a rule file with no `paths:` front matter in every session. It loads a rule
+file with `paths:` only for a file that matches. The always-loaded size is the cost that every
+session pays: the characters of every `.md` file under `.claude/rules/`, at any depth, whose
+front matter has no `paths:` key. The count takes the whole file, front matter included.
+
+One line gives that size:
+
+```
+always-loaded rules: 7 files 15257 chars
+always-loaded rules: 7 files 15257 chars, cap 16000
+always-loaded rules: 7 files 15257 chars, over the cap 12000
+```
+
+The second and the third form show `harness.rules.maxChars` when the project sets it. A size
+equal to the cap is under the cap.
+
+| Command | Where the line prints |
+|---|---|
+| `ah rules` | The last line. |
+| `ah install --project` | The line before the final `ah install:` line. |
+| `ah check` | After the information lines, before the lines of the parts that differ. `ah check --global` does not print it. |
+
+`harness.rules.maxChars` is a cap in characters. The default `0` is no cap. With a cap,
+`ah check` exits 1 when the size is over it and prints on stderr:
+
+```
+ah check: the always-loaded rules hold 15257 characters, over harness.rules.maxChars 12000. Three ways down: leave a rule out with harness.disable, scope a rule with [harness.rules.paths], or replace a rule body with a rule adapter
+```
+
+`ah install --project` does not fail over the cap. Its line says `over the cap`. A value that
+is not 0 or a positive integer fails `ah install`, `ah check` and `ah rules` at exit 1:
+`config key harness.rules.maxChars must be 0 or a positive integer, not <value>`.
+
+`[harness.rules.paths]` scopes a rule to the files it is about. Each key is a rule id, and the
+value is a list of globs:
+
+```toml
+[harness.rules]
+maxChars = 12000
+
+[harness.rules.paths]
+instance-agnostic = ["apps/**", "packages/**"]
+code-limits = ["**/*.ts", "**/*.py"]
+```
+
+The rule installs with these globs as its `paths:` block, in place of the paths of its
+manifest. The `AGENTS.md` table shows the globs in its Covers column, or the `agentsCovers` text of a
+rule that has one. The key works for a rule
+of the package and for a rule of an extra manifest. Each of these errors exits 1 and writes
+nothing:
+
+| Case | Message |
+|---|---|
+| An id that is no rule | `harness.rules.paths names <id>, which no manifest defines as a rule; the rule ids are: <ids>` |
+| A value that is no list, an empty list, or a glob with a double quote, a backslash or a line break | `config key harness.rules.paths.<id> must be a list of one or more globs, each with no double quote, backslash or line break` |
+| The key is no table | `config key harness.rules.paths must be a table of <rule id> = [globs]` |
+
+An empty list is refused, so the key cannot make a scoped rule load in every session. A change
+of the key needs `ah install`. Until then, `ah check` reports the rule file as `stale`.
+
+The package scopes two of its rules. `spec-format` loads for `docs/specs/**` and
+`docs/superpowers/plans/**`. `codex` loads for `AGENTS.md` and `.codex/**`, because only Codex
+needs it and Codex reads it from the `AGENTS.md` table. Its `agentsCovers` is `every file`, so
+the table tells Codex to read it before each change. An upgrade from 0.2.11 writes
+`.claude/rules/lw/codex.md` and the `AGENTS.md` block again once. With the default config, the
+always-loaded size of the package rules is 15257 characters in 7 files.
 
 ## Hook commands
 
@@ -226,8 +295,8 @@ one of these:
 | `edited` | The file differs from its lockfile hash. |
 | `mode` | The file is no longer executable. |
 | `extra` | A file in `.claude/agent-harness/`, `.claude/rules/lw/` or an installed skill folder that the lockfile does not list, or a stale skill link. |
-| `differs` | `.claude/settings.json`, `.codex/hooks.json`, `AGENTS.md`, `.gitignore` or a skill link differs from what the installed manifests and the config give. |
-| `stale` | A rule adapter changed, came or went after the install. The installed rule still holds the old text until the next install. |
+| `differs` | `.claude/settings.json`, `.codex/hooks.json`, `AGENTS.md`, `.gitignore` or a skill link differs from what the installed manifests and the config give. Also the git config key `harness.globalHooks`, when its value is not `harness.githooks.global`. An unset key counts as `run`. |
+| `stale` | A rule adapter changed, came or went after the install. Also a rule file whose `[harness.rules.paths]` entry changed, and the `secrets` rule after a change of `harness.plainEnvFiles`. The installed rule still holds the old text until the next install. |
 
 The check reads `.claude/settings.json` and `.codex/hooks.json` as JSON, so the layout of a
 hand-written hook is no difference. It prints one line for each project hook in the two files,
@@ -284,6 +353,11 @@ The portability checks follow. Each result line names `portability`.
   silent for `git status --short`. `worktree-path-guard` denies `git worktree add ../outside`.
   `bash-read-guard` denies a read of a local env file.
 
+The case `global-hooks` runs last, when the install has a git hook. It adds four result lines
+with `git` in the client column, and they count in the last line
+`ah selftest: N of N fixture runs pass`. The case proves that the dispatcher follows
+`harness.githooks.global` (see "Git hooks" in `docs/hooks.md`).
+
 ## The global install
 
 `ah install --global` writes `~/.claude/agent-harness/` (`bin/`, `src/`, `tools/`,
@@ -322,6 +396,7 @@ id = "spec-format"
 summary = "Spec format and rendering"
 file = "rules/spec-format.md"
 paths = ["docs/specs/**"]        # empty means every file
+# agentsCovers = "every file"    # optional: the Covers cell of the AGENTS.md block
 
 [[skill]]
 id = "lw-spec-write"             # a skill of the package needs the lw- prefix
@@ -342,6 +417,13 @@ files = ["tools/spec-template.html"]
 
 A key that the format does not name fails, and the message names the table and the key.
 
+`paths` of a rule scopes the rule for Claude Code. The `AGENTS.md` block prints the same globs in
+its Covers column, and Codex reads that column. `agentsCovers` is the text of that column for a
+rule that Claude Code loads for some paths and Codex needs for every file. It is one line with
+no `|`. It changes only the `AGENTS.md` block: the `paths:` block of the installed rule file
+stays. A `[harness.rules.paths]` entry for the rule changes the `paths:` block and keeps the
+`agentsCovers` text in the table.
+
 ## Config keys
 
 The installer reads these keys of `[harness]` in `.agents/harness.toml`:
@@ -352,6 +434,10 @@ The installer reads these keys of `[harness]` in `.agents/harness.toml`:
 | `enable` | `[]` | Ids of items that are off by default. |
 | `manifests` | `[".claude/githooks/harness.toml"]` when that file exists, else `[]` | Extra manifests of the project, relative to the root. `ah install` adds each `--manifest` to them. |
 | `adapterDir` | `.claude/adapters` | The folder of free-text notes per skill that the `AGENTS.md` block names, and of the rule adapters in `rules/`. |
+| `rules.maxChars` | `0` | A cap in characters on the always-loaded rules. `0` is no cap. `ah check` exits 1 over the cap. |
+| `rules.paths` | `{}` | Per rule id, the globs of the `paths:` block of the installed rule, in place of the paths of the manifest. |
+| `githooks.global` | `"run"` | `"run"` or `"skip"`. The install writes it to the git config key `harness.globalHooks`, which the git hook dispatcher reads. |
+| `plainEnvFiles` | `[]` | Env files that an agent may read, each as one exact file name. An entry with `*` or `?`, and an entry that a pattern of `guardedFiles` or `secretFiles` matches, fails the install and the check. A list that is not empty adds one line to the installed `secrets` rule. |
 | `lint.words`, `lint.allow` | `[]` | More banned words for `ah lint`, and banned words that this project allows. |
 
 A line that holds `lw-lint-ok` is not linted, for a line that must quote a banned form.

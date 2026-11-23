@@ -329,6 +329,13 @@ file = ".local/secrets/api.json"
 expect = "deny"
 contains = "credential backup"
 
+# No `harness.plainEnvFiles` entry opens a backup, so this one holds in every project.
+[[hook.fixture]]
+tool = "Read"
+file = ".env.local.bak"
+expect = "deny"
+contains = "credential backup"
+
 [[hook.fixture]]
 tool = "Bash"
 command = "python3 .claude/agent-harness/bin/ah env get API_KEY .env.production"
@@ -395,6 +402,13 @@ script = "hooks/bash-read-guard.py"
 [[hook.fixture]]
 tool = "Bash"
 command = "cat .env.local"
+expect = "deny"
+contains = "credential file"
+
+# No `harness.plainEnvFiles` entry opens a backup, so this one holds in every project.
+[[hook.fixture]]
+tool = "Bash"
+command = "cat .env.local.bak"
 expect = "deny"
 contains = "credential file"
 
@@ -962,6 +976,8 @@ file = "rules/operator-report.md"
 id = "codex"
 summary = "Codex: hooks, trust and the skill adapters"
 file = "rules/codex.md"
+paths = ["AGENTS.md", ".codex/**"]
+agentsCovers = "every file"
 
 [[rule]]
 id = "instance-agnostic"

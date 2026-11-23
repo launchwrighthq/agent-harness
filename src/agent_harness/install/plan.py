@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import posixpath
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -80,6 +80,8 @@ class PlannedRule:
     summary: str
     paths: tuple[str, ...]
     target: str
+    # The Covers cell of the AGENTS.md block, in place of the paths.
+    agents_covers: str | None = None
 
 
 @dataclass(frozen=True)
@@ -109,13 +111,15 @@ class PlannedFile:
     paths: tuple[str, ...] | None = None
     # The rule adapter of the project: notes to append, or a body that replaces the rule body.
     notes: Path | None = None
+    # A generated line that ends the rule, after the adapter.
+    line: str | None = None
 
     def content(self) -> bytes:
         try:
             raw = self.source.read_bytes()
         except OSError as error:
             raise HarnessError(f"cannot read {self.source}: {error}") from error
-        if self.paths is None and self.notes is None:
+        if self.paths is None and self.notes is None and self.line is None:
             return raw
         text = raw.decode("utf-8")
         found = FRONT_MATTER.match(text)
@@ -126,6 +130,8 @@ class PlannedFile:
             head = f"---\npaths:\n{lines}\n---\n"
         if self.notes is not None:
             body = with_notes(body, self.notes)
+        if self.line is not None:
+            body = f"{body.rstrip()}\n\n{self.line}\n"
         return f"{head}{body}".encode()
 
     def mode_executable(self) -> bool:
@@ -223,12 +229,16 @@ def build_plan(
     skill_dir: str = SKILL_DIR,
     engine_dir: str = ENGINE_DIR,
     rule_notes: Path | None = None,
+    rule_paths: Mapping[str, Sequence[str]] | None = None,
+    rule_lines: Mapping[str, str] | None = None,
 ) -> Plan:
     """The enabled items of `manifests` in a fixed order, and the files they install.
 
     Inside one manifest, the items keep the order it declares. `project_skills` are the skill
     folders of the project that `disable` and `enable` may also name. `rule_notes` is the folder
-    of the rule adapters of the project: `<rule id>.md` changes that rule.
+    of the rule adapters of the project: `<rule id>.md` changes that rule. `rule_paths` gives a
+    rule id the globs of its `paths:` block, in place of the manifest paths. `rule_lines` gives a
+    rule id one generated line that ends the installed rule.
     """
     ordered = order(manifests)
     disabled, enabled = set(disable), set(enable)
@@ -244,6 +254,14 @@ def build_plan(
             raise HarnessError(
                 f"harness config names {name}, which no manifest or project skill defines"
             )
+
+    scoped, lines = dict(rule_paths or {}), dict(rule_lines or {})
+    rule_ids = {rule.id for m in ordered for rule in m.rules}
+    for name in sorted(set(scoped) - rule_ids):
+        raise HarnessError(
+            f"harness.rules.paths names {name}, which no manifest defines as a rule;"
+            f" the rule ids are: {', '.join(sorted(rule_ids))}"
+        )
 
     def on(item: Item) -> bool:
         return item.id not in disabled and (item.default or item.id in enabled)
@@ -289,15 +307,19 @@ def build_plan(
         for rule in (r for r in m.rules if on(r)):
             target = f"{RULE_DIR}/{posixpath.basename(rule.file)}"
             notes = rule_notes / f"{rule.id}.md" if rule_notes is not None else None
+            paths = tuple(scoped.get(rule.id, rule.paths))
             add(
                 PlannedFile(
                     target,
                     m.dir / rule.file,
-                    paths=rule.paths or None,
+                    paths=paths or None,
                     notes=notes if notes is not None and notes.is_file() else None,
+                    line=lines.get(rule.id),
                 )
             )
-            plan.rules.append(PlannedRule(rule.id, m.name, rule.summary, rule.paths, target))
+            plan.rules.append(
+                PlannedRule(rule.id, m.name, rule.summary, paths, target, rule.agents_covers)
+            )
         for skill in (s for s in m.skills if on(s)):
             target = f"{skill_dir}/{skill.id}"
             source = m.dir / skill.dir

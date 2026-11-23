@@ -129,6 +129,15 @@ def test_lists_each_rule_and_skill_in_the_agents_block() -> None:
     assert block.endswith(BLOCK_END)
 
 
+def test_prints_the_agents_covers_text_of_a_rule_in_place_of_its_paths() -> None:
+    target = ".claude/rules/lw/c.md"
+    plan = Plan(rules=[PlannedRule("c", "pkg", "Codex", (".codex/**",), target, "every file")])
+
+    block = agents_block(plan, [], ".claude/adapters")
+
+    assert f"| Codex | every file | `{target}` |" in block.splitlines()
+
+
 def test_replaces_the_marked_block_and_keeps_the_rest() -> None:
     old = f"# Rules\n\nmine\n\n{BLOCK_START}\nold\n{BLOCK_END}\n\ntail\n"
 
