@@ -90,6 +90,14 @@ The hooks, the rules and the git hooks are in [docs/hooks.md](docs/hooks.md).
 | `docs/` | One document per area. |
 | `tests/unit/`, `tests/integration/` | The tests. |
 
+## Changes in 0.4.2
+
+This release has one change, and no behavior differs from 0.4.1.
+
+| Change | Keys and commands | Details |
+|---|---|---|
+| A shorter module docstring | No key. The module docstring of `hooks/local-run-guard.py` has 12 lines at most, so `ah comments` passes on the package itself. | [docs/hooks.md](docs/hooks.md) |
+
 ## Changes in 0.4.1
 
 This release has thirteen changes. Each default keeps the behavior of 0.4.0.
