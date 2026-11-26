@@ -1,3 +1,4 @@
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -80,3 +81,17 @@ def test_refuses_an_old_path_without_its_new_path(tmp_path: Path) -> None:
 
     assert done.returncode == 2
     assert done.stderr == "ah spec repoint: give pairs of two different paths\n"
+
+
+def test_repoints_the_spec_field_of_a_lab_experiment(tmp_path: Path) -> None:
+    root = make_repo(tmp_path)
+    meta = root / "lab" / "example" / "meta.json"
+    meta.parent.mkdir(parents=True)
+    meta.write_text('{\n  "spec": "docs/specs/a.md",\n  "status": "open"\n}\n', encoding="utf-8")
+    git(root, "add", "lab")
+
+    done = ah(root, "docs/specs/a.md", "docs/specs/archive/a.md", "--apply")
+
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == "repointed README.md\nrepointed lab/example/meta.json\n"
+    assert json.loads(meta.read_text())["spec"] == "docs/specs/archive/a.md"

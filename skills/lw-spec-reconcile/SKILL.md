@@ -103,7 +103,9 @@ file already in the archive. It stages the new status, runs `git mv` into the ar
 prints the `repoint` command for the old path. `repoint` takes one or more path pairs. Without
 `--apply` it lists each tracked file that names an old path. With `--apply` it writes the new path
 into each of them. Repoint in the same change as the move. A move without a repoint breaks the
-references in source comments, memory files and migrations.
+references in source comments, memory files and migrations. The `spec` field of each
+`lab/<slug>/meta.json` is such a reference: `repoint` rewrites it, and `lw lab check` fails on a
+`spec` path that does not exist.
 
 A reference inside the archive is history. Repoint it to the new location of the same file, but do
 not change what it claims.
