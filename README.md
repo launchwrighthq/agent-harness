@@ -90,6 +90,14 @@ The hooks, the rules and the git hooks are in [docs/hooks.md](docs/hooks.md).
 | `docs/` | One document per area. |
 | `tests/unit/`, `tests/integration/` | The tests. |
 
+## Changes in 0.4.3
+
+This release has one change, and no behavior differs from 0.4.2.
+
+| Change | Keys and commands | Details |
+|---|---|---|
+| Lab experiment links | No key. A test proves that `ah spec repoint --apply` rewrites the `spec` field of a `lab/<slug>/meta.json`, and the `lw-spec-reconcile` skill says so. | [skills/lw-spec-reconcile/SKILL.md](skills/lw-spec-reconcile/SKILL.md) |
+
 ## Changes in 0.4.2
 
 This release has one change, and no behavior differs from 0.4.1.
