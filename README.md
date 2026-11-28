@@ -90,6 +90,15 @@ The hooks, the rules and the git hooks are in [docs/hooks.md](docs/hooks.md).
 | `docs/` | One document per area. |
 | `tests/unit/`, `tests/integration/` | The tests. |
 
+## Changes in 0.5.0
+
+This release adds one store kind. A config with one of the eight other kinds needs no change.
+
+| Change | Keys and commands | Details |
+|---|---|---|
+| The command store | `[env.store] kind = "command"` with `push`, `pull` and `whole`. `ah env push`, `pull` and `diff --store` run the two commands of the project, with the values as one JSON object on standard input and standard output. A store with no `pull` is push only. | [docs/env.md](docs/env.md) |
+| The read guards and the command store | No key. `deny-env-reads` and `bash-read-guard` answer a push, a pull and a store diff of a command store as they answer `ah env run` on the live file of the store. The answers for the other kinds do not change. | [docs/hooks.md](docs/hooks.md) |
+
 ## Changes in 0.4.3
 
 This release has one change, and no behavior differs from 0.4.2.
