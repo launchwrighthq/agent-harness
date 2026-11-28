@@ -58,7 +58,9 @@ def _store(ctx: Context, env: str, name: str | None = None) -> tuple[stores.Stor
     settings = store_settings(ctx, name)
     store = stores.open_store(settings, env, ctx.root, ctx.runner)
     file_pattern = str(settings.get("file") or ".env.{env}")
-    return store, ctx.at(file_pattern.replace("{env}", env))
+    path = ctx.at(file_pattern.replace("{env}", env))
+    store.known = tuple(envfile.read(path).values().values()) if path.is_file() else ()
+    return store, path
 
 
 def store_diff(ctx: Context, env: str, name: str | None = None) -> int:

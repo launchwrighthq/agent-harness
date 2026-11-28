@@ -1375,3 +1375,43 @@ def test_refuses_a_reader_of_each_plain_name_of_another_project_with_the_default
     got = hook_project.verdicts(root, HOOK, commands)
 
     assert list(zip(commands, got, strict=True)) == [(c, "deny") for c in commands]
+
+
+COMMAND_STORE_CONFIG = (
+    '[env]\nprotected = ["staging"]\n\n'
+    '[[env.stores]]\nname = "host"\nkind = "command"\npush = ["node", "scripts/env-store.mjs"]\n'
+)
+STORE_STEPS = [
+    "ah env push production",
+    "ah env pull staging --store host",
+    "ah env diff staging --store",
+    "ah env push ci",
+    "ah env diff ci --store host",
+]
+
+
+def test_asks_before_a_command_store_step_as_before_a_run_on_its_live_file(
+    tmp_path: Path,
+) -> None:
+    root = hook_project.make_project(tmp_path / "project", COMMAND_STORE_CONFIG)
+    runs = [
+        "ah env run .env.production -- node x.mjs",
+        "ah env run .env.staging -- node x.mjs",
+        "ah env run .env.staging -- node x.mjs",
+        "ah env run .env.ci -- node x.mjs",
+        "ah env run .env.ci -- node x.mjs",
+    ]
+
+    got = hook_project.verdicts(root, HOOK, STORE_STEPS)
+
+    assert got == hook_project.verdicts(root, HOOK, runs)
+    assert got == ["ask", "ask", "ask", "silent", "silent"]
+
+
+def test_lets_each_store_step_of_a_built_in_kind_pass_as_before(tmp_path: Path) -> None:
+    config = '[env]\nprotected = ["staging"]\n\n[env.store]\nkind = "ssh-file"\n'
+    root = hook_project.make_project(tmp_path / "project", config)
+
+    got = hook_project.verdicts(root, HOOK, STORE_STEPS)
+
+    assert got == ["silent" for _ in STORE_STEPS]

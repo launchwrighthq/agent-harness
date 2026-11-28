@@ -3,7 +3,14 @@ from pathlib import Path
 import pytest
 
 from agent_harness import config, hookio
-from agent_harness.env_guard import EnvScope, blank, check_line, reveal_reason
+from agent_harness.env_guard import (
+    EnvScope,
+    Stores,
+    blank,
+    check_line,
+    env_scope,
+    reveal_reason,
+)
 
 ENGINE = ["python3 .claude/agent-harness/bin/ah env", "ah env", "lw env"]
 
@@ -310,3 +317,232 @@ def test_says_that_a_hidden_run_prints_a_key_it_cannot_name(tmp_path: Path) -> N
 
     assert answer.reason == reveal_reason("a key")
     assert answer.reason.startswith("This command prints the value of a key into the agent")
+
+
+COMMAND_STORE = {"kind": "command", "push": ["node", "env-store.mjs"], "file": ".env.{env}"}
+BUILT_IN_KINDS = [
+    *("aws-secrets-manager", "aws-ssm", "gcp-secret-manager", "github"),
+    *("infisical", "file", "digitalocean-app", "ssh-file"),
+]
+STORE_STEPS = [
+    "ah env push production",
+    "ah env push staging --yes --confirm staging",
+    "ah env pull production",
+    "ah env diff staging --store",
+    "ah env push ci",
+    "ah env pull ci --apps web",
+    "ah env diff ci --store",
+    "ah env push $E",
+]
+
+
+def held_name(path: str) -> bool:
+    return hookio.basename(path) == ".env.production"
+
+
+def store_scope(root: Path, stores: Stores | None) -> EnvScope:
+    return EnvScope(
+        root, root, env_name, held_name, protected=frozenset({"staging"}), stores=stores
+    )
+
+
+def store_decisions(command: str, root: Path, stores: Stores | None) -> list[str]:
+    answers = check_line(command, ENGINE, store_scope(root, stores)).answers
+    return [answer.decision for answer in answers]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "ah env push production",
+        "ah env pull production",
+        "ah env diff production --store",
+        "ah env push staging --yes --confirm staging",
+        "ah env pull staging",
+        "ah env diff staging --store",
+        "lw env --root . push production --dry-run",
+    ],
+)
+def test_asks_before_a_command_store_step_on_a_held_file_or_a_protected_environment(
+    command: str, tmp_path: Path
+) -> None:
+    assert store_decisions(command, tmp_path, Stores(COMMAND_STORE)) == ["ask"]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "ah env push ci",
+        "ah env pull ci --apps web",
+        "ah env diff ci --store",
+        "ah env push ci --drop OLD_KEY --yes",
+        "cd apps && ah env pull ci",
+    ],
+)
+def test_lets_a_command_store_step_pass_on_a_plain_project_file(
+    command: str, tmp_path: Path
+) -> None:
+    (tmp_path / "apps").mkdir()
+
+    assert store_decisions(command, tmp_path, Stores(COMMAND_STORE)) == []
+
+
+def test_gives_a_command_store_step_the_answer_of_a_run_on_the_live_file(tmp_path: Path) -> None:
+    stores = Stores(COMMAND_STORE)
+    environments = ["production", "staging", "ci"]
+
+    stepped = {
+        env: [
+            store_decisions(f"ah env {step}", tmp_path, stores)
+            for step in (f"push {env}", f"pull {env}", f"diff {env} --store")
+        ]
+        for env in environments
+    }
+    ran = {
+        env: [store_decisions(f"ah env run .env.{env} -- node x.mjs", tmp_path, stores)] * 3
+        for env in environments
+    }
+
+    assert stepped == ran
+
+
+def test_names_the_step_and_the_live_file_when_it_asks_about_a_command_store(
+    tmp_path: Path,
+) -> None:
+    scoped = store_scope(tmp_path, Stores(COMMAND_STORE))
+
+    (answer,) = check_line("ah env push staging", ENGINE, scoped).answers
+
+    assert answer.reason.startswith(
+        "ah env push with a command store gives the command every key of .env.staging"
+    )
+
+
+@pytest.mark.parametrize("kind", ["", *BUILT_IN_KINDS])
+@pytest.mark.parametrize("command", STORE_STEPS)
+def test_keeps_the_store_steps_of_each_built_in_kind_quiet(
+    kind: str, command: str, tmp_path: Path
+) -> None:
+    stores = Stores({"kind": kind}, ({"name": "backup", "kind": "file"},))
+
+    check = check_line(command, ENGINE, store_scope(tmp_path, stores))
+
+    assert check.answers == []
+    assert check.exempt != []
+
+
+def test_judges_the_live_file_that_the_file_setting_of_the_store_names(tmp_path: Path) -> None:
+    inside = Stores({**COMMAND_STORE, "file": "deploy/.env.production"})
+    outside = Stores({**COMMAND_STORE, "file": "../other/.env.{env}"})
+    renamed = Stores({**COMMAND_STORE, "file": "deploy/{env}.env"})
+
+    got = [
+        store_decisions("ah env push ci", tmp_path, inside),
+        store_decisions("ah env push ci", tmp_path, outside),
+        store_decisions("ah env push ci", tmp_path, renamed),
+        store_decisions("ah env push staging", tmp_path, renamed),
+    ]
+
+    assert got == [["ask"], ["deny"], [], ["ask"]]
+
+
+def test_judges_the_named_store_that_the_store_option_picks(tmp_path: Path) -> None:
+    stores = Stores(
+        {"kind": "github"},
+        ({"name": "host", **COMMAND_STORE}, {"name": "files", "kind": "ssh-file"}),
+    )
+    commands = [
+        "ah env push production",
+        "ah env push production --store files",
+        "ah env push production --store host",
+        "ah env diff production --store host",
+        "ah env diff production --store",
+        "ah env pull ci --store host",
+        "ah env pull production --store absent",
+    ]
+
+    got = [store_decisions(c, tmp_path, stores) for c in commands]
+
+    assert got == [[], [], ["ask"], ["ask"], [], [], []]
+
+
+@pytest.mark.parametrize("command", ["ah env push ci", "ah env pull ci", "ah env diff ci --store"])
+def test_asks_when_no_store_option_picks_one_of_several_named_stores(
+    command: str, tmp_path: Path
+) -> None:
+    stores = Stores(
+        {"kind": ""}, ({"name": "host", **COMMAND_STORE}, {"name": "files", "kind": "ssh-file"})
+    )
+
+    assert store_decisions(command, tmp_path, stores) == ["ask"]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "ah env push $E",
+        'ah env pull "$E"',
+        "ah env push ci --store $S",
+        "ah env diff ci $FLAG",
+        "ah env --root $R push ci",
+        "echo $(ah env push ci)",
+        'cd "$D" && ah env pull ci',
+    ],
+)
+def test_asks_about_a_command_store_step_whose_file_it_cannot_see(
+    command: str, tmp_path: Path
+) -> None:
+    assert store_decisions(command, tmp_path, Stores(COMMAND_STORE)) == ["ask"]
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("ah env push ci", ["ask"]),
+        ("ah env pull ci", ["ask"]),
+        ("ah env diff ci --store", ["ask"]),
+        ("ah env diff .env.ci .env.local", []),
+        ("ah env keys .env.ci", []),
+    ],
+)
+def test_asks_about_each_store_step_when_it_cannot_read_the_stores(
+    command: str, expected: list[str], tmp_path: Path
+) -> None:
+    assert store_decisions(command, tmp_path, None) == expected
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "ah env diff .env.ci .env.production",
+        "ah env keys .env.production",
+        "ah env push",
+        "ah env status",
+    ],
+)
+def test_keeps_every_other_step_quiet_in_a_project_with_a_command_store(
+    command: str, tmp_path: Path
+) -> None:
+    assert store_decisions(command, tmp_path, Stores(COMMAND_STORE)) == []
+
+
+def test_reads_the_stores_of_the_config_into_the_scope(tmp_path: Path) -> None:
+    values = {"env": {"store": {"kind": "command"}, "stores": [{"name": "host", "kind": "file"}]}}
+    cfg = config.Config(tmp_path, values, tmp_path / "harness.toml")
+
+    stores = env_scope(cfg, {}, env_name).stores
+
+    assert stores is not None
+    assert (stores.single["kind"], stores.single["file"]) == ("command", ".env.{env}")
+    assert stores.named == ({"name": "host", "kind": "file"},)
+
+
+def test_reads_no_stores_from_a_config_file_that_gave_no_values(tmp_path: Path) -> None:
+    (tmp_path / ".agents").mkdir()
+    (tmp_path / ".agents" / "harness.toml").write_text("[env\n", encoding="utf-8")
+    broken = config.Config(tmp_path, {}, None)
+    wrong = config.Config(tmp_path, {"env": {"stores": ["host"]}}, tmp_path / "harness.toml")
+
+    got = [env_scope(broken, {}, env_name).stores, env_scope(wrong, {}, env_name).stores]
+
+    assert got == [None, None]

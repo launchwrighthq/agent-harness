@@ -9,6 +9,7 @@ the call.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shlex
@@ -24,6 +25,7 @@ from typing import Any
 
 from agent_harness import HarnessError
 from agent_harness.env import envfile
+from agent_harness.env.redact import Redaction
 
 
 @dataclass
@@ -88,6 +90,8 @@ class Store:
     # A whole-file store replaces every key on push, so a key only the store holds is dropped.
     whole = False
     can_pull = True
+    # The values of the live env file. No failure message of the command store shows one.
+    known: tuple[str, ...] = ()
 
     def __init__(self, settings: Mapping[str, Any], env: str, root: Path, runner: Runner) -> None:
         self.settings = settings
@@ -531,6 +535,98 @@ class SshFile(Store):
             )
 
 
+class CommandStore(Store):
+    """Two commands of the project: `push` writes the values and `pull` prints them. Each one
+    starts with no shell in the repository root, and gets one JSON object on standard input.
+    docs/env.md ("The command store") holds the contract."""
+
+    kind = "command"
+    # The exit code of a pull command whose store holds nothing for the environment.
+    EMPTY = 3
+
+    def __init__(self, settings: Mapping[str, Any], env: str, root: Path, runner: Runner) -> None:
+        super().__init__(settings, env, root, runner)
+        push = self._argv("push")
+        if push is None:
+            raise StoreError("the command store needs [env.store] push")
+        self.push = push
+        self.pull = self._argv("pull")
+        self.can_pull = self.pull is not None
+        whole = settings.get("whole", False)
+        if not isinstance(whole, bool):
+            raise StoreError("[env.store] whole must be true or false")
+        self.whole = whole
+
+    def _argv(self, key: str) -> list[str] | None:
+        """The argument list of `key` with `{env}` replaced and its program resolved, or None
+        when the config does not set the key."""
+        raw = self.settings.get(key)
+        if raw is None:
+            return None
+        if not isinstance(raw, list) or not all(isinstance(part, str) for part in raw):
+            raise StoreError(f"[env.store] {key} must be a list of strings")
+        argv = [part.replace("{env}", self.env) for part in raw]
+        if not argv or not argv[0]:
+            raise StoreError(f"[env.store] {key} must start with a program")
+        program = argv[0]
+        found = shutil.which(str(self.root / program) if "/" in program else program)
+        if found is None:
+            where = "in the repository root" if "/" in program else "on PATH"
+            raise StoreError(
+                f"the command store found no program {program} {where}, "
+                f"the first element of [env.store] {key}"
+            )
+        return [found, *argv[1:]]
+
+    def _run(self, what: str, argv: list[str], payload: dict[str, Any], secrets: list[str]) -> Done:
+        # The runner takes no working folder, so the call changes the folder of this process.
+        with contextlib.chdir(self.root):
+            done = self.runner(argv, json.dumps(payload))
+        if done.code != 0 and not (what == "pull" and done.code == self.EMPTY):
+            shown = Redaction([*secrets, *self.known]).line(done.stderr.encode("utf-8"))
+            raise StoreError(
+                f"the command store failed to {what} for {self.env} (exit {done.code}): "
+                f"{_first_lines(shown.decode('utf-8'))}"
+            )
+        return done
+
+    def fetch(self) -> dict[str, str] | None:
+        if self.pull is None:
+            raise StoreError(
+                "the command store is push only: [env.store] has no pull. Set pull to the "
+                "command that prints the values, or keep another store as their source."
+            )
+        done = self._run("pull", self.pull, {"version": 1, "env": self.env}, [])
+        if done.code == self.EMPTY:
+            return None
+        fault = (
+            "the pull command of the command store printed no JSON object of string values "
+            f"for {self.env}"
+        )
+        try:
+            found = json.loads(done.stdout)
+        except ValueError as error:
+            raise StoreError(fault) from error
+        if not isinstance(found, dict) or not all(isinstance(v, str) for v in found.values()):
+            raise StoreError(fault)
+        return found
+
+    def send(
+        self,
+        values: Mapping[str, str],
+        current: Mapping[str, str] | None,
+        plain: frozenset[str] = frozenset(),
+    ) -> None:
+        payload = {
+            "version": 1,
+            "env": self.env,
+            "values": dict(values),
+            "plain": sorted(plain),
+            "current": None if current is None else dict(current),
+        }
+        self._run("push", self.push, payload, [*values.values(), *(current or {}).values()])
+
+
 KINDS: dict[str, type[Store]] = {
     store.kind: store
     for store in (
@@ -542,6 +638,7 @@ KINDS: dict[str, type[Store]] = {
         FileStore,
         DigitalOceanApp,
         SshFile,
+        CommandStore,
     )
 }
 

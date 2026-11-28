@@ -462,7 +462,7 @@ Each engine step gets one of these answers:
 | Step | Answer |
 |---|---|
 | Any expansion in the subcommand, or an unquoted `$`, backtick, glob or brace in a global option before it | Ask: the guard cannot see which subcommand runs. |
-| A quiet subcommand: `keys`, `status`, `check`, `where`, `layout`, `diff`, `template`, `init`, `set`, `unset`, `copy`, `move`, `rename`, `merge`, `slice`, `push`, `pull`, `help` | Pass, whatever its later arguments expand to. |
+| A quiet subcommand: `keys`, `status`, `check`, `where`, `layout`, `diff`, `template`, `init`, `set`, `unset`, `copy`, `move`, `rename`, `merge`, `slice`, `push`, `pull`, `help` | Pass, whatever its later arguments expand to. The store steps of a project with a command store have rows below. |
 | `get` with no `--reveal` | Pass. It prints the masked value. |
 | `get ... --reveal` of a key that `[env] publicKeys` names, every word literal | Pass, for any file, `.env.production` included. |
 | `get ... --reveal` of any other key | Ask, with the key name. |
@@ -471,6 +471,28 @@ Each engine step gets one of these answers:
 | `run` on a held file (a guarded or `secretFiles` name) or the `.env.<env>` of an environment in `[env] protected` | Ask, with the file name. |
 | `run` after a `cd` that the guard cannot follow, inside a substitution, or on a file that an expansion names | Ask. |
 | `run` on any other file | Pass, whatever program it starts. The engine redacts the output (docs/env.md). |
+| `push <env>`, `pull <env>` or `diff <env> --store [<name>]` that reaches a store of kind `command` | The answer of a `run` on the live file of that store. |
+| `push`, `pull` or `diff` in a project with a command store, when the guard cannot tell the store or the file | Ask. |
+
+A store of kind `command` gives the values of its live file to a program that the project config
+names, as `run` does (docs/env.md). So `push`, `pull` and `diff --store` are quiet steps only for
+the other kinds. The guard reads `[env.store]` and `[[env.stores]]`, and picks the store as the
+engine does: the entry that `--store <name>` names, else `[env.store]` when it sets `kind`, else
+the one entry of `[[env.stores]]`. The live file is the `file` setting of that store with `{env}`
+replaced, `.env.<env>` by default.
+
+For a command store, the step gets the rows of `run` for that file. It is refused for a file
+outside the project. It asks for a held file, for the `.env.<env>` of an environment in
+`[env] protected`, after a `cd` that the guard cannot follow, and inside a substitution. It
+passes on any other file. The step also asks when `<env>` itself is in `[env] protected`, so a
+`file` setting with another name pattern hides no protected environment.
+
+In a project whose config holds a command store, the step asks when the guard cannot tell the
+store or the file: several entries of `[[env.stores]]` and no `--store <name>`, or an expansion
+in an argument or in a global option. A config file that is no valid TOML, or whose store
+settings are no tables, makes `push`, `pull` and `diff --store` ask in every project, because
+the guard cannot rule a command store out. A project with no command store gets the answers of
+the table for every kind, and a `diff` of two files stays a quiet step.
 
 The credential name scan of both hooks skips the words of each step that passes or asks about a
 reveal: the engine reads a file that its arguments name, and it is no reader. For `run`, the scan

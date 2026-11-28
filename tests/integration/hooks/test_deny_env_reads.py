@@ -385,3 +385,64 @@ def test_refuses_a_command_that_names_the_backup_of_a_plain_file(tmp_path: Path)
     )
 
     assert got == ["silent", "deny", "deny"]
+
+
+COMMAND_STORE_CONFIG = (
+    '[env]\nprotected = ["staging"]\n\n'
+    '[env.store]\nkind = "command"\npush = ["node", "scripts/env-store.mjs", "push", "{env}"]\n'
+)
+BUILT_IN_STORE_CONFIG = '[env]\nprotected = ["staging"]\n\n[env.store]\nkind = "github"\n'
+# The store steps on a held file, on the file of a protected environment and on a plain file.
+STORE_STEPS = [
+    "ah env push production",
+    "ah env pull production",
+    "ah env diff production --store",
+    "ah env push staging --yes --confirm staging",
+    "ah env pull staging",
+    "ah env push ci",
+    "ah env pull ci",
+    "ah env diff ci --store",
+]
+
+
+def test_asks_before_a_command_store_step_as_before_a_run_on_its_live_file(
+    tmp_path: Path,
+) -> None:
+    root = hook_project.make_project(tmp_path / "project", COMMAND_STORE_CONFIG)
+
+    got = hook_project.verdicts(root, HOOK, STORE_STEPS)
+
+    assert list(zip(STORE_STEPS, got, strict=True)) == [
+        (c, "silent" if " ci" in c else "ask") for c in STORE_STEPS
+    ]
+
+
+def test_names_the_live_file_when_it_asks_about_a_command_store_push(tmp_path: Path) -> None:
+    root = hook_project.make_project(tmp_path / "project", COMMAND_STORE_CONFIG)
+
+    done = hook_project.run_hook(
+        root, HOOK, "PreToolUse", hook_project.bash_payload("ah env push production", root)
+    )
+
+    reason = json.loads(done.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "ah env push with a command store" in reason
+    assert "every key of .env.production" in reason
+
+
+@pytest.mark.parametrize("config", ["", BUILT_IN_STORE_CONFIG])
+def test_lets_each_store_step_of_a_built_in_kind_pass_as_before(
+    config: str, tmp_path: Path
+) -> None:
+    root = hook_project.make_project(tmp_path / "project", config)
+
+    got = hook_project.verdicts(root, HOOK, STORE_STEPS)
+
+    assert got == ["silent" for _ in STORE_STEPS]
+
+
+def test_asks_about_a_store_step_when_the_config_does_not_read(tmp_path: Path) -> None:
+    root = hook_project.make_project(tmp_path / "project", "[env\n")
+
+    got = hook_project.verdicts(root, HOOK, ["ah env push ci", "ah env keys .env.ci"])
+
+    assert got == ["ask", "silent"]

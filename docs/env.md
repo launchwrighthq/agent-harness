@@ -265,6 +265,7 @@ apps = ["worker"]
 | `file` | a copy of the env file | `path` | none |
 | `digitalocean-app` | the app-level envs of one App Platform app: SECRET, or GENERAL for a plain key; push only, because the API returns a SECRET value encrypted | `app` | `doctl` |
 | `ssh-file` | one env file on a host, backed up to `<path>.<unix time>` before a write | `host`, `path` | `ssh` |
+| `command` | what two commands of the project write and print; push only without `pull`. See The command store. | `push`, `pull`, `whole` | the program of each list |
 
 Every kind also reads `file` (the live file, default `.env.{env}`), `marker` (default `store`)
 and `apps`. The `env-drift` hook compares the marker `.env.<env>.pushed-<marker>` with the live
@@ -288,4 +289,98 @@ a person makes a protected environment with its rules.
 
 `aws-secrets-manager`, `gcp-secret-manager` and `file` replace the whole secret on push. A push
 to one of them refuses when the store holds a key that the file lacks. Pass `--drop <KEY>` for
-each key that nothing reads any more.
+each key that nothing reads any more. A `command` store with `whole = true` follows the same rule.
+
+## The command store
+
+The `command` kind is for a store that no other kind fits. The project names one push command
+and, when the store can give its values back, one pull command. The engine runs them, and a push
+and a pull keep every check of the engine.
+
+```toml
+[env.store]
+kind = "command"
+push = ["node", "scripts/env-store.mjs", "push", "{env}"]
+pull = ["node", "scripts/env-store.mjs", "pull", "{env}"]
+whole = false
+```
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `push` | list of strings, 1 or more | required | The program and the arguments of a push. |
+| `pull` | list of strings, 1 or more | none | The program and the arguments of a pull. Without it the store is push only. |
+| `whole` | boolean | `false` | `true` when a push replaces every key of the store. The engine then sends the kept keys too, and applies the `--drop` rule. |
+
+The engine starts the program with no shell, in the repository root. A `{env}` in an element is
+the environment name. The first element resolves on `PATH`, or against the repository root when
+it holds a `/`. A program that does not exist is an error that names the element. A wrong type,
+an empty list or an empty first element is an error that names the key.
+
+A store with no `pull` refuses `pull` and `diff <env> --store`, and a push to it lists every key
+of the scope.
+
+### Push
+
+The engine gives the push command one JSON object on standard input. No value is in an argument.
+
+```json
+{"version": 1, "env": "production", "values": {"API_KEY": "..."}, "plain": ["PUBLIC_URL"], "current": null}
+```
+
+| Field | Holds |
+|---|---|
+| `version` | `1`. |
+| `env` | The environment name. |
+| `values` | The keys and values to write. For a `whole` store, every key that the store holds after the push. |
+| `plain` | The keys of `values` that the declarations mark `secret = false`, sorted. |
+| `current` | What the pull command returned before this push, or `null` when the store is push only or holds nothing. |
+
+| Exit code | Meaning |
+|---|---|
+| 0 | The store holds the values. The engine writes the marker. |
+| any other | The push failed. The engine writes no marker. |
+
+The engine ignores the standard output of a push.
+
+### Pull
+
+The engine gives the pull command `{"version": 1, "env": "<env>"}` on standard input.
+
+| Result | Meaning |
+|---|---|
+| Exit 0 and one JSON object of string keys and string values on standard output | The values of the store. |
+| Exit 3 | The store holds nothing for this environment. |
+| Any other exit code | A failure. |
+| Exit 0 and output that is no such object | A failure. The message names the fault and no content of the output. |
+
+### Failure text
+
+A failed command gives `the command store failed to <push|pull> for <env> (exit N): <lines>`. The
+lines are the first three lines of the error output that are not empty. The engine first
+replaces each value it knows with `***`, with the redaction of `ah env run`. It knows the values
+of the push, the values of `current` and the values of the live env file.
+
+The redaction knows a value only as the env file holds it, and only a value of 6 characters or
+more. A command must print no value, and no encoded form of one.
+
+### Example
+
+```js
+// scripts/env-store.mjs
+import { readFileSync } from "node:fs";
+import { loadStore, saveStore } from "./store-client.mjs";
+
+const [action, env] = process.argv.slice(2);
+const input = JSON.parse(readFileSync(0, "utf8"));
+
+if (action === "pull") {
+  const values = await loadStore(env);
+  if (values === null) process.exit(3);
+  process.stdout.write(JSON.stringify(values));
+} else {
+  await saveStore(env, input.values, { plain: input.plain });
+}
+```
+
+`loadStore` and `saveStore` stand for the client of the project store. An error that the
+command does not catch ends it with exit code 1, which fails the push or the pull.

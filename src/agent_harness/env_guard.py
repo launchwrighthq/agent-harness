@@ -29,13 +29,21 @@ SUBCOMMAND = re.compile(r"[a-z][a-z-]*")
 
 # The subcommands that never print a value: key names, counts, file names, line numbers, layout
 # findings or a short digest. `push` and `pull` print what the store tool prints, as they do
-# alone. `get` and `run` have rules of their own.
+# alone. `get`, `run` and the steps of a command store have rules of their own.
 QUIET_SUBCOMMANDS = frozenset(
     {
         *("keys", "status", "check", "where", "layout", "diff", "template", "init", "help"),
         *("set", "unset", "copy", "move", "rename", "merge", "slice", "push", "pull"),
     }
 )
+
+# The subcommands that reach a secret store. With a store of kind `command`, each of them gives
+# the values of the live file of that store to a program that the project config names.
+STORE_SUBCOMMANDS = frozenset({"push", "pull", "diff"})
+COMMAND_KIND = "command"
+LIVE_FILE = ".env.{env}"
+# The options of `push` and `pull` that take a value, `--store` apart.
+STORE_VALUE_OPTIONS = frozenset({"--confirm", "--apps", "--drop"})
 
 # A program that runs the words it gets as a command, a package runner included, so an engine
 # run hides in its arguments.
@@ -72,10 +80,31 @@ def _never(path: str) -> bool:
 
 
 @dataclass(frozen=True)
+class Stores:
+    """The secret stores of the config: `[env.store]` and the entries of `[[env.stores]]`."""
+
+    single: Mapping[str, Any] = field(default_factory=dict)
+    named: tuple[Mapping[str, Any], ...] = ()
+
+    def has_command(self) -> bool:
+        return any(s.get("kind") == COMMAND_KIND for s in (self.single, *self.named))
+
+    def candidates(self, name: str | None) -> list[Mapping[str, Any]]:
+        """The stores that `--store <name>`, or no `--store`, can mean. The engine opens the
+        one store of the list, and refuses a list of none or of several."""
+        if name is not None:
+            return [entry for entry in self.named if entry.get("name") == name][:1]
+        if self.single.get("kind") or not self.named:
+            return [self.single]
+        return list(self.named)
+
+
+@dataclass(frozen=True)
 class EnvScope:
     """What the checks run against: the project root, the folder the command runs in, the
     guard's test for a credential path, its test for a file whose `run` always asks (`held`),
-    `[env] protected` and `[env] publicKeys`."""
+    `[env] protected`, `[env] publicKeys` and the secret stores. `stores` is None when the
+    guard cannot read them."""
 
     root: Path
     cwd: Path
@@ -83,6 +112,7 @@ class EnvScope:
     held: Callable[[str], bool] = _never
     protected: frozenset[str] = frozenset()
     public: tuple[str, ...] = ()
+    stores: Stores | None = Stores()
 
 
 def env_scope(
@@ -100,7 +130,21 @@ def env_scope(
         held,
         frozenset(_strings(cfg.get("env.protected"))),
         tuple(_strings(cfg.get("env.publicKeys"))),
+        _stores(cfg),
     )
+
+
+def _stores(cfg: config.Config) -> Stores | None:
+    """The stores of `cfg`. None when the config file exists and gave no values, as after a
+    TOML error, and when a store setting is no table."""
+    if cfg.file is None and (cfg.root / config.CONFIG_FILE).is_file():
+        return None
+    single, named = cfg.get("env.store"), cfg.get("env.stores")
+    if not isinstance(single, Mapping) or not isinstance(named, list):
+        return None
+    if not all(isinstance(entry, Mapping) for entry in named):
+        return None
+    return Stores(single, tuple(named))
 
 
 def _strings(value: Any) -> list[str]:
@@ -157,25 +201,41 @@ def reveal_reason(key: str) -> str:
     )
 
 
-def run_reason(file: str) -> str:
+RUN = "ah env run"
+
+
+def store_step(subcommand: str) -> str:
+    return f"ah env {subcommand} with a command store"
+
+
+def run_reason(file: str, step: str = RUN) -> str:
     return (
-        f"ah env run gives the command every key of {file}, a held file or the file of a "
+        f"{step} gives the command every key of {file}, a held file or the file of a "
         "protected environment. Allow it only when you asked for this run."
     )
 
 
-def run_place_reason(file: str) -> str:
+def run_place_reason(file: str, step: str = RUN) -> str:
     return (
-        f"ah env run reads {file}, and the guard cannot tell where that file is: a `cd`, an "
+        f"{step} reads {file}, and the guard cannot tell where that file is: a `cd`, an "
         "expansion or a substitution comes first. Allow it only when the file is an env file of "
         "this project."
     )
 
 
-def outside_reason(file: str) -> str:
+def outside_reason(file: str, step: str = RUN) -> str:
     return (
-        f"ah env run reads {file}, which is outside the project. Run it only on an env file of "
+        f"{step} reads {file}, which is outside the project. Run it only on an env file of "
         "this project."
+    )
+
+
+def store_unknown_reason(subcommand: str) -> str:
+    return (
+        f"ah env {subcommand} can give every key of an env file to the program of a command "
+        "store, and the guard cannot tell which store or which file the step means: the config "
+        "does not read, several stores are configured and no `--store` picks one, or an "
+        "expansion is in the words. Allow it only when you asked for this step."
     )
 
 
@@ -296,6 +356,8 @@ class _EngineStep:
             self.get()
         elif self.sub.text == "run":
             self.run()
+        elif self.sub.text in STORE_SUBCOMMANDS:
+            self.store()
         elif self.sub.text in QUIET_SUBCOMMANDS:
             self.exempt(self.words)
 
@@ -356,20 +418,59 @@ class _EngineStep:
         ]
         if not files:
             return
-        file = files[0]
-        if self.nested or self.cwd is None:
-            self.line.ask(run_place_reason(file))
+        if not self.gives_keys(files[0], RUN):
             return
-        if not self.inside_project(file):
-            self.line.check.answers.append(Answer("deny", outside_reason(file)))
-            return
-        name = basename(file)
-        environment = name.removeprefix(".env.") if name.startswith(".env.") else ""
-        if self.line.scope.held(file) or environment in self.line.scope.protected:
-            self.line.ask(run_reason(file))
         if runs_env_engine(normalized_words(" ".join(w.text for w in inner)), self.line.commands):
             self.line.ask(reveal_reason("a key"))
         self.exempt(self.words[: self.words.index(self.args[cut]) + 1])
+
+    def gives_keys(self, file: str, step: str, environment: str = "") -> bool:
+        """Judge a step that gives every key of `file` to a program: a file the guard cannot
+        place asks, a file outside the project is refused, and a held file or the file of a
+        protected environment asks. False when the guard could not place the file."""
+        if self.nested or self.cwd is None:
+            self.line.ask(run_place_reason(file, step))
+            return False
+        if not self.inside_project(file):
+            self.line.check.answers.append(Answer("deny", outside_reason(file, step)))
+            return False
+        name = basename(file)
+        named = name.removeprefix(".env.") if name.startswith(".env.") else ""
+        if self.line.scope.held(file) or {named, environment} & self.line.scope.protected:
+            self.line.ask(run_reason(file, step))
+        return True
+
+    def store(self) -> None:
+        """`push`, `pull` and `diff`. With no command store in the config, each is a quiet
+        step. A step that reaches a command store gets the answer of a `run` on the live file
+        of that store. A step whose store or file the guard cannot tell asks."""
+        assert self.sub is not None
+        stores = self.line.scope.stores
+        if stores is not None and not stores.has_command():
+            self.exempt(self.words)
+            return
+        texts = [w.text for w in self.args]
+        unseen = any(w.expands or w.hidden for w in self.args) or any(
+            dynamic(value) for _, value in self.options
+        )
+        if self.sub.text == "diff" and "--store" not in texts and not unseen:
+            self.exempt(self.words)
+            return
+        environment, name = store_arguments(texts)
+        chosen = [] if stores is None or environment is None else stores.candidates(name)
+        if stores is None or unseen or len(chosen) > 1:
+            self.line.ask(store_unknown_reason(self.sub.text))
+            return
+        # The engine refuses a step with no environment, and one that names no store.
+        if chosen and chosen[0].get("kind") == COMMAND_KIND:
+            assert environment is not None
+            pattern = chosen[0].get("file")
+            file = (pattern if isinstance(pattern, str) and pattern else LIVE_FILE).replace(
+                "{env}", environment
+            )
+            if not self.gives_keys(file, store_step(self.sub.text), environment):
+                return
+        self.exempt(self.words)
 
     def inside_project(self, file: str) -> bool:
         """The engine reads a relative file from `--root`, else from the checkout it runs in:
@@ -409,6 +510,26 @@ def unwrap(words: list[Word]) -> list[Word] | None:
     if at >= len(words) or any(dynamic(w) for w in words[:at]):
         return None
     return words[at:]
+
+
+def store_arguments(texts: list[str]) -> tuple[str | None, str | None]:
+    """The environment and the `--store` name of a `push`, a `pull` or a `diff --store`, as
+    the engine reads the literal words. A `--store` before an option, or at the end, names none."""
+    positionals: list[str] = []
+    name = None
+    at = 0
+    while at < len(texts):
+        word = texts[at]
+        if word == "--store" and at + 1 < len(texts) and not texts[at + 1].startswith("-"):
+            name = texts[at + 1]
+            at += 2
+        elif word in STORE_VALUE_OPTIONS:
+            at += 2
+        else:
+            if not word.startswith("--"):
+                positionals.append(word)
+            at += 1
+    return (positionals[0] if positionals else None), name
 
 
 def dynamic(word: Word) -> bool:
